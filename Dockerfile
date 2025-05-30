@@ -67,6 +67,7 @@ RUN apt update && apt install -y automake autoconf pkg-config libevent-dev libnc
 RUN apt update && apt install -y \
     ros-humble-tf2-eigen \
     ros-humble-tf2-geometry-msgs \
+    ros-humble-visualization-msgs \ 
     && apt clean && rm -rf /var/lib/apt/lists/*
 
 # Add user
