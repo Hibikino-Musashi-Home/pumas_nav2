@@ -13,19 +13,20 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(nav_msgs REQUIRED)
 
-set(msg_files
-  "msg/ObjectCentroid.msg"
-  "msg/ObjectCentroids.msg"
-)
+#set(msg_files
+#  "msg/CustomMessage.msg"
+#)
 
 set(srv_files
-  "srv/GetPointCenter.srv"
+  "srv/GetInflatedMap.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  ${msg_files}
+#  ${msg_files}
   ${srv_files}
+  DEPENDENCIES nav_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)
