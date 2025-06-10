@@ -51,11 +51,8 @@ public:
         this->declare_parameter("cloud_downsampling2",  0.05);
         this->declare_parameter("lidar_downsampling",   0.05);
         this->declare_parameter("point_cloud_topic",    "/point_cloud");
-        this->declare_parameter("point_cloud_frame",    "/point_cloud_frame");
         this->declare_parameter("point_cloud_topic2",   "/point_cloud2");
-        this->declare_parameter("point_cloud_frame2",   "/point_cloud_frame2");
         this->declare_parameter("laser_scan_topic",     "/scan");
-        this->declare_parameter("laser_scan_frame",     "/laser");
         this->declare_parameter("base_link_name",       "base_footprint");
 
         // Initialize internal variables from declared parameters
@@ -76,11 +73,8 @@ public:
         this->get_parameter("cloud_downsampling2",  cloud_downsampling2_);
         this->get_parameter("lidar_downsampling",   lidar_downsampling_);
         this->get_parameter("point_cloud_topic",    point_cloud_topic_);
-        this->get_parameter("point_cloud_frame",    point_cloud_frame_);
         this->get_parameter("point_cloud_topic2",   point_cloud_topic2_);
-        this->get_parameter("point_cloud_frame2",   point_cloud_frame2_);
         this->get_parameter("laser_scan_topic",     laser_scan_topic_);
-        this->get_parameter("laser_scan_frame",     laser_scan_frame_);
         this->get_parameter("base_link_name",       base_link_name_);
 
         // Setup parameter change callback
@@ -196,11 +190,8 @@ private:
     double lidar_downsampling_;
 
     std::string point_cloud_topic_;
-    std::string point_cloud_frame_;
     std::string point_cloud_topic2_;
-    std::string point_cloud_frame2_;
     std::string laser_scan_topic_;
-    std::string laser_scan_frame_;
 
     std::string base_link_name_;
 
@@ -286,7 +277,6 @@ private:
             else if (param.get_name() == "point_cloud_topic")     point_cloud_topic_    = param.as_string();
             else if (param.get_name() == "point_cloud_topic2")    point_cloud_topic2_   = param.as_string();
             else if (param.get_name() == "laser_scan_topic")      laser_scan_topic_     = param.as_string();
-            else if (param.get_name() == "laser_scan_frame")      laser_scan_frame_     = param.as_string();
 
             else if (param.get_name() == "base_link_name")        base_link_name_       = param.as_string();
 
@@ -305,15 +295,16 @@ private:
     // Initialize service clients (non-blocking)
     void init_service_clients()
     {
-        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>("/static_map");
-        clt_get_prohibition_map_ = this->create_client<nav_msgs::srv::GetMap>("/prohibition_map");
+        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>("/static_map_server/map");
+        clt_get_prohibition_map_ = this->create_client<nav_msgs::srv::GetMap>("/prohibition_map_server/map");
 
         service_check_timer_ = this->create_wall_timer(
             std::chrono::seconds(1),
             [this]()
             {
-                if (clt_get_static_map_->wait_for_service(std::chrono::seconds(0)) &&
-                    clt_get_prohibition_map_->wait_for_service(std::chrono::seconds(0)))
+                bool is_static_map = clt_get_static_map_->wait_for_service(std::chrono::seconds(0));
+                bool is_prohibition_map = clt_get_prohibition_map_->wait_for_service(std::chrono::seconds(0));
+                if (is_static_map && is_prohibition_map)
                 {
                     RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> All map services are now available.");
                     services_ready_ = true;
@@ -321,7 +312,11 @@ private:
                 }
                 else
                 {
-                    RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> Waiting for map services to become available...");
+                    if (!is_static_map)
+                        RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> Waiting for static_map service to become available...");
+
+                    if (!is_prohibition_map)
+                        RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> Waiting for prohibition_map service to become available...");
                 }
             });
     }
@@ -513,7 +508,7 @@ private:
 
     bool obstacles_map_with_cloud()
     {
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud from topic: %s", point_cloud_frame_.c_str());
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud from topic: %s", point_cloud_topic_.c_str());
         
         sensor_msgs::msg::PointCloud2::SharedPtr msg;
         {
@@ -531,7 +526,7 @@ private:
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, point_cloud_frame_);
+        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
         for (size_t i = 0; i < msg->width * msg->height; i += cloud_downsampling_)
@@ -567,7 +562,7 @@ private:
 
     bool obstacles_map_with_cloud2()
     {
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud2 from topic: %s", point_cloud_frame2_.c_str());
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud2 from topic: %s", point_cloud_topic2_.c_str());
 
         sensor_msgs::msg::PointCloud2::SharedPtr msg;
         {
@@ -585,7 +580,7 @@ private:
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, point_cloud_frame2_);
+        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
         for (size_t i = 0; i < msg->width * msg->height; i += cloud_downsampling2_)
@@ -638,7 +633,7 @@ private:
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d lidar_to_robot = get_relative_position(base_link_name_, laser_scan_frame_);
+        Eigen::Affine3d lidar_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
         for (size_t i = 0; i < msg->ranges.size(); i += lidar_downsampling_)

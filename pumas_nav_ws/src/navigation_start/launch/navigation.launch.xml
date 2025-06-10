@@ -15,8 +15,8 @@
   <arg name="use_point_cloud2" default="False"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
-  <arg name="cloud_downsampling" default="5"/>
-  <arg name="lidar_downsampling" default="1"/>
+  <arg name="cloud_downsampling" default="5.0"/>
+  <arg name="lidar_downsampling" default="1.0"/>
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
   <arg name="min_x" default="0.17"/>
@@ -27,36 +27,32 @@
   <arg name="max_z" default="1.00"/>
   <arg name="topic_name" default="/navigation/potential_fields/enable"/>
 
-  <node 
+  <node name="killer_node"
         pkg="node_killer"
         exec="killer_node.py"
-        output="screen"
-        name="killer_node"/>
+        output="screen"/>
   
-  <node 
+  <node name="fake_global_pose"
         pkg="node_killer"
         exec="fake_global_pose.py"
-        output="screen"
-        name="fake_global_pose"/>
+        output="screen"/>
 
   <!-- Map servers -->
-  <node 
-        name="navigation_map_server" 
+  <node name="static_map_server" 
         pkg="nav2_map_server" 
         exec="map_server" 
         output="screen">
     <param name="yaml_filename" value="$(var static_map_file)"/>
-    <remap from="/static_map" to="/nav_static_map"/>
+    <!--remap from="/map_server/map" to="/static_map"/-->
     <remap from="/map" to="/nav_map"/>
   </node>
 
-  <node 
-        name="prohibition_map_server" 
+  <node name="prohibition_map_server" 
         pkg="nav2_map_server" 
         exec="map_server" 
         output="screen">
     <param name="yaml_filename" value="$(var prohibition_map_file)"/>
-    <remap from="/static_map" to="/fixed_prohibition_map"/>
+    <!--remap from="/map_server/map" to="/fixed_prohibition_map"/-->
     <remap from="/map" to="/fixed_prohibition_layer_map"/>
   </node>
 
@@ -66,7 +62,45 @@
         output="screen">
     <param name="use_sim_time" value="$(var use_sim_time)"/>
     <param name="autostart" value="true"/>
-    <param name="node_names" value="['navigation_map_server', 'prohibition_map_server']"/>
+    <param name="node_names" value="['static_map_server', 'prohibition_map_server']"/>
   </node>
 
+  <!-- Map Enhancer -->
+  <node name="map_enhancer" 
+        pkg="augment_gridmap_online" 
+        exec="augment_gridmap_online_node" 
+        output="screen">
+    <param name="obstacle_radius" value="0.05"/>
+    <param name="input_map" value="/fixed_prohibition_layer_map"/>
+    <remap from="point_obstacle" to="/clicked_point"/>
+    <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
+    <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
+  </node>
+
+  <!-- Map Augmenters -->
+  <node name="map_augmenter" 
+        pkg="map_augmenter" 
+        exec="map_augmenter_node" 
+        output="screen">
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <param name="point_cloud_topic2" value="$(var point_cloud_topic2)"/>
+    
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_sonars" value="$(var use_sonars)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+    <param name="use_point_cloud2" value="$(var use_point_cloud2)"/>
+    
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+    
+    <param name="inflation_radius" value="0.22"/>
+    <param name="cost_radius" value="0.25"/> 
+    
+    <param name="max_x" value="$(var max_x)"/>
+    <param name="min_x" value="$(var min_x)"/>
+    <param name="max_y" value="$(var max_y)"/>
+    <param name="min_y" value="$(var min_y)"/>
+    <param name="max_z" value="$(var max_z)"/>
+    <param name="min_z" value="$(var min_z)"/>
+  </node>
 </launch>
