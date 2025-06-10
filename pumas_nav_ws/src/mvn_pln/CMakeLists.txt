@@ -50,7 +50,7 @@ ament_target_dependencies(mvn_pln_node
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-#  scripts/my_python.py
+#  ${PROJECT_NAME}/my_python.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

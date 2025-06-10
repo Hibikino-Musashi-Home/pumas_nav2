@@ -28,8 +28,8 @@ find_package(tf2_ros REQUIRED)
 ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
-  scripts/fake_global_pose.py
-  scripts/killer_node.py
+  ${PROJECT_NAME}/fake_global_pose.py
+  ${PROJECT_NAME}/killer_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

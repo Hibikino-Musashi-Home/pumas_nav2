@@ -1,0 +1,72 @@
+<launch>
+
+  <!-- Arguments -->
+  <arg name="use_sim_time" default="false"/>
+  <arg name="prohibition_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/prohibition_maps/tidbots/map.yaml"/>
+  <arg name="static_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/maps/tidbots/map.yaml"/>
+  <arg name="cmd_vel_name" default="/omni_base_controller/cmd_vel"/>
+  <arg name="laser_scan_topic" default="/scan"/>
+  <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
+  <arg name="point_cloud_topic2" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
+  <arg name="bumper_f_topic" default="/base_f_bumper_sensor"/>
+  <arg name="use_lidar" default="True"/>
+  <arg name="use_sonars" default="False"/>
+  <arg name="use_point_cloud" default="True"/>
+  <arg name="use_point_cloud2" default="False"/>
+  <arg name="use_bumper" default="False"/>
+  <arg name="use_pot_fields" default="True"/>
+  <arg name="cloud_downsampling" default="5"/>
+  <arg name="lidar_downsampling" default="1"/>
+  <arg name="cloud_points_threshold" default="100"/>
+  <arg name="lidar_points_threshold" default="20"/>
+  <arg name="min_x" default="0.17"/>
+  <arg name="max_x" default="0.50"/>
+  <arg name="min_y" default="-0.25"/>
+  <arg name="max_y" default="0.25"/>
+  <arg name="min_z" default="0.025"/>
+  <arg name="max_z" default="1.00"/>
+  <arg name="topic_name" default="/navigation/potential_fields/enable"/>
+
+  <node 
+        pkg="node_killer"
+        exec="killer_node.py"
+        output="screen"
+        name="killer_node"/>
+  
+  <node 
+        pkg="node_killer"
+        exec="fake_global_pose.py"
+        output="screen"
+        name="fake_global_pose"/>
+
+  <!-- Map servers -->
+  <node 
+        name="navigation_map_server" 
+        pkg="nav2_map_server" 
+        exec="map_server" 
+        output="screen">
+    <param name="yaml_filename" value="$(var static_map_file)"/>
+    <remap from="/static_map" to="/nav_static_map"/>
+    <remap from="/map" to="/nav_map"/>
+  </node>
+
+  <node 
+        name="prohibition_map_server" 
+        pkg="nav2_map_server" 
+        exec="map_server" 
+        output="screen">
+    <param name="yaml_filename" value="$(var prohibition_map_file)"/>
+    <remap from="/static_map" to="/fixed_prohibition_map"/>
+    <remap from="/map" to="/fixed_prohibition_layer_map"/>
+  </node>
+
+  <node name="lifecycle_manager_map"
+        pkg="nav2_lifecycle_manager"
+        exec="lifecycle_manager"
+        output="screen">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="autostart" value="true"/>
+    <param name="node_names" value="['navigation_map_server', 'prohibition_map_server']"/>
+  </node>
+
+</launch>
