@@ -15,8 +15,8 @@
   <arg name="use_point_cloud2" default="False"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
-  <arg name="cloud_downsampling" default="5.0"/>
-  <arg name="lidar_downsampling" default="1.0"/>
+  <arg name="cloud_downsampling" default="5"/>
+  <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
   <arg name="min_x" default="0.17"/>
@@ -25,7 +25,7 @@
   <arg name="max_y" default="0.25"/>
   <arg name="min_z" default="0.025"/>
   <arg name="max_z" default="1.00"/>
-  <arg name="topic_name" default="/navigation/potential_fields/enable"/>
+  <arg name="pub_topic_name" default="/navigation/potential_fields/enable"/>
 
   <node name="killer_node"
         pkg="node_killer"
@@ -43,7 +43,7 @@
         exec="map_server" 
         output="screen">
     <param name="yaml_filename" value="$(var static_map_file)"/>
-    <!--remap from="/map_server/map" to="/static_map"/-->
+    <!--remap from="/static_map_server/map" to="/static_map"/-->
     <remap from="/map" to="/nav_map"/>
   </node>
 
@@ -52,7 +52,7 @@
         exec="map_server" 
         output="screen">
     <param name="yaml_filename" value="$(var prohibition_map_file)"/>
-    <!--remap from="/map_server/map" to="/fixed_prohibition_map"/-->
+    <!--remap from="/prohibition_map_server/map" to="/fixed_prohibition_map"/-->
     <remap from="/map" to="/fixed_prohibition_layer_map"/>
   </node>
 
@@ -71,7 +71,9 @@
         exec="augment_gridmap_online_node" 
         output="screen">
     <param name="obstacle_radius" value="0.05"/>
+
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
+
     <remap from="point_obstacle" to="/clicked_point"/>
     <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
@@ -85,6 +87,8 @@
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="point_cloud_topic2" value="$(var point_cloud_topic2)"/>
+    <param name="static_map_server" value="/static_map_server/map"/>
+    <param name="prohibition_map_server" value="/prohibition_map_server/map"/>
     
     <param name="use_lidar" value="$(var use_lidar)"/>
     <param name="use_sonars" value="$(var use_sonars)"/>
@@ -103,4 +107,72 @@
     <param name="max_z" value="$(var max_z)"/>
     <param name="min_z" value="$(var min_z)"/>
   </node>
+
+  <!-- Path Planner -->
+  <node name="path_planner" 
+        pkg="path_planner" 
+        exec="path_planner_node" 
+        output="screen">
+    <param name="diagonal_paths" value="False"/>
+  </node>
+
+  <node name="simple_move"  
+        pkg="simple_move"  
+        exec="simple_move_node"  
+        output="screen">
+    <param name="max_linear_speed" value="0.8"/>
+    <param name="max_angular_speed" value="1.25"/>
+
+    <param name="control_alpha" value="0.2"/>
+    <param name="control_beta" value="0.8"/>
+
+    <param name="move_head" value="False"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <param name="cmd_vel_name" value="$(var cmd_vel_name)"/>
+  </node>
+
+  <!-- Potential Fields -->
+  <node name="potential_fields"  
+        pkg="potential_fields"  
+        exec="potential_fields_node"  
+        output="screen">
+    <param name="debug" value="False"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+
+    <param name="max_x" value="$(var max_x)"/>
+    <param name="min_x" value="$(var min_x)"/>
+    <param name="max_y" value="$(var max_y)"/>
+    <param name="min_y" value="$(var min_y)"/>
+    <param name="max_z" value="$(var max_z)"/>
+    <param name="min_z" value="$(var min_z)"/>
+
+    <param name="pot_fields_d0" value="0.40"/>
+    <param name="pot_fields_k_rej" value="1.0"/>
+
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+    <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
+    <param name="lidar_points_threshold" value="$(var lidar_points_threshold)"/>
+
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+  </node>
+
+  <node name="publish_enable"
+        pkg="potential_fields"
+        exec="publish_enable.py"
+        output="screen"/>
+
+  <!-- Motion Planner -->
+  <node name="mvn_pln"  
+        pkg="mvn_pln"  
+        exec="mvn_pln_node"  
+        output="screen">
+    <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
+    <param name="patience" value="True"/>
+  </node>
+
 </launch>

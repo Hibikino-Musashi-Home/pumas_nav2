@@ -23,7 +23,7 @@ public:
 
         //############
         // Publishers
-        map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/cartographer_map", 10);
+        map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/cartographer_map", rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers

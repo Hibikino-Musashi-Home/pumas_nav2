@@ -40,6 +40,7 @@ public:
         // Declare parameters
         this->declare_parameter<bool>("debug",           false);
         this->declare_parameter<bool>("use_pot_fields",  false);
+
         this->declare_parameter<bool>("use_lidar",       true);
         this->declare_parameter<bool>("use_point_cloud", false);
 
@@ -50,8 +51,8 @@ public:
         this->declare_parameter<float>("min_z", 0.05);
         this->declare_parameter<float>("max_z", 1.50);
 
-        this->declare_parameter<float>("pot_fields_k_rej",       1.0);
         this->declare_parameter<float>("pot_fields_d0",          1.0);
+        this->declare_parameter<float>("pot_fields_k_rej",       1.0);
         this->declare_parameter<float>("no_sensor_data_timeout", 0.5);
 
         this->declare_parameter<int>("cloud_points_threshold", 100);
@@ -66,6 +67,7 @@ public:
         // Load parameter values into variables
         this->get_parameter("debug",           debug_);
         this->get_parameter("use_pot_fields",  use_pot_fields_);
+
         this->get_parameter("use_lidar",       use_lidar_);
         this->get_parameter("use_point_cloud", use_cloud_);
 
@@ -76,8 +78,8 @@ public:
         this->get_parameter("min_z", min_z_);
         this->get_parameter("max_z", max_z_);
 
-        this->get_parameter("pot_fields_k_rej",       pot_fields_k_rej_);
         this->get_parameter("pot_fields_d0",          pot_fields_d0_);
+        this->get_parameter("pot_fields_k_rej",       pot_fields_k_rej_);
         this->get_parameter("no_sensor_data_timeout", no_sensor_data_timeout_);
 
         this->get_parameter("cloud_points_threshold", cloud_threshold_);
@@ -96,27 +98,27 @@ public:
         //############
         // Publishers
         pub_collision_risk_ = this->create_publisher<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/collision_risk", 1);
+            "/navigation/potential_fields/collision_risk", rclcpp::QoS(10).transient_local());
 
         pub_pot_fields_markers_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "/navigation/potential_fields/pot_field_markers", 1);
+            "/navigation/potential_fields/pot_field_markers", rclcpp::QoS(10).transient_local());
 
         pub_pot_fields_rejection_ = this->create_publisher<geometry_msgs::msg::Vector3>(
-            "/navigation/potential_fields/pf_rejection_force", 1);
+            "/navigation/potential_fields/pf_rejection_force", rclcpp::QoS(10).transient_local());
 
 
         //############
         // Subscribers
         sub_enable_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/enable", 1,
+            "/navigation/potential_fields/enable", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_enable, this, std::placeholders::_1));
 
         sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
-            "/cmd_vel", 1,
+            "/cmd_vel", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_cmd_vel, this, std::placeholders::_1));
 
         sub_goal_path_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/simple_move/goal_path", 10,
+            "/simple_move/goal_path", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_goal_path, this, std::placeholders::_1));
         
         //############
@@ -163,7 +165,7 @@ private:
     bool debug_, use_pot_fields_, use_lidar_, use_cloud_;
 
     float min_x_, max_x_, min_y_, max_y_, min_z_, max_z_;
-    float pot_fields_k_rej_, pot_fields_d0_, no_sensor_data_timeout_;
+    float pot_fields_d0_, pot_fields_k_rej_, no_sensor_data_timeout_;
     int cloud_threshold_, cloud_downsampling_;
     int lidar_threshold_, lidar_downsampling_;
 
@@ -214,6 +216,7 @@ private:
 
             if (name == "debug") debug_ = param.as_bool();
             else if (name == "use_pot_fields")  use_pot_fields_ = param.as_bool();
+
             else if (name == "use_lidar")       use_lidar_      = param.as_bool();
             else if (name == "use_point_cloud") use_cloud_      = param.as_bool();
 
@@ -224,8 +227,8 @@ private:
             else if (name == "min_z") min_z_ = param.as_double();
             else if (name == "max_z") max_z_ = param.as_double();
 
-            else if (name == "pot_fields_k_rej")        pot_fields_k_rej_       = param.as_double();
             else if (name == "pot_fields_d0")           pot_fields_d0_          = param.as_double();
+            else if (name == "pot_fields_k_rej")        pot_fields_k_rej_       = param.as_double();
             else if (name == "no_sensor_data_timeout")  no_sensor_data_timeout_ = param.as_double();
 
             else if (name == "cloud_points_threshold")  cloud_threshold_    = param.as_int();
@@ -429,13 +432,13 @@ private:
 
                 if (use_cloud_ && !sub_cloud_) {
                     sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                        point_cloud_topic_, 1,
+                        point_cloud_topic_, rclcpp::SensorDataQoS(),
                         std::bind(&PotentialFieldsNode::callback_point_cloud, this, std::placeholders::_1));
                 }
 
                 if (use_lidar_ && !sub_lidar_) {
                     sub_lidar_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-                        laser_scan_topic_, 1,
+                        laser_scan_topic_, rclcpp::SensorDataQoS(),
                         std::bind(&PotentialFieldsNode::callback_lidar, this, std::placeholders::_1));
                 }
             }

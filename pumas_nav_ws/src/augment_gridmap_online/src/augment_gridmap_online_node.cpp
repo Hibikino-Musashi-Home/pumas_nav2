@@ -31,17 +31,17 @@ public:
 
         // Subscribers
         sub_map_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-            input_map_, 10,
+            input_map_, rclcpp::SensorDataQoS(),
             std::bind(&AugmentedGridMapNode::callback_save_map, this, std::placeholders::_1));
 
         sub_point_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-            "point_obstacle", 10,
+            "point_obstacle", rclcpp::SensorDataQoS(),
             std::bind(&AugmentedGridMapNode::callback_add_point, this, std::placeholders::_1));
 
         // Publishers
-        pub_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/grid_map/augmented_map", 1);
-        pub_metadata_ = this->create_publisher<nav_msgs::msg::MapMetaData>("/grid_map/augmented_map_metadata", 1);
-        pub_marker_ = this->create_publisher<visualization_msgs::msg::Marker>("/grid_map/obstacle_markers", 1);
+        pub_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/grid_map/augmented_map", rclcpp::QoS(10).transient_local());
+        pub_metadata_ = this->create_publisher<nav_msgs::msg::MapMetaData>("/grid_map/augmented_map_metadata", rclcpp::QoS(10).transient_local());
+        pub_marker_ = this->create_publisher<visualization_msgs::msg::Marker>("/grid_map/obstacle_markers", rclcpp::QoS(10).transient_local());
 
         // Services
         srv_clear_map_ = this->create_service<std_srvs::srv::Empty>(

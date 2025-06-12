@@ -25,8 +25,8 @@ class PoseIntegratorKillerNode(Node):
 
                 # Insert custom shutdown logic here, like sending a shutdown signal
                 # It is here for compatibility 
-            else:
-                self.get_logger().info("/pose_integrator not running.")
+            #else:
+            #    self.get_logger().info("/pose_integrator not running.")
 
         except Exception:
             self.get_logger().error(traceback.format_exc())

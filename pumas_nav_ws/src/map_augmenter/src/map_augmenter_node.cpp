@@ -34,48 +34,52 @@ public:
     {
         //############
         // Declare parameters with default values
-        this->declare_parameter("use_lidar",            false);
-        this->declare_parameter("use_point_cloud",      false);
-        this->declare_parameter("use_point_cloud2",     false);
-        this->declare_parameter("use_online",           false);
-        this->declare_parameter("min_x",                -10.0);
-        this->declare_parameter("max_x",                10.0);
-        this->declare_parameter("min_y",                -10.0);
-        this->declare_parameter("max_y",                10.0);
-        this->declare_parameter("min_z",                -1.0);
-        this->declare_parameter("max_z",                2.0);
-        this->declare_parameter("decay_factor",         10);
-        this->declare_parameter("inflation_radius",     0.25);
-        this->declare_parameter("cost_radius",          0.25);
-        this->declare_parameter("cloud_downsampling",   0.05);
-        this->declare_parameter("cloud_downsampling2",  0.05);
-        this->declare_parameter("lidar_downsampling",   0.05);
-        this->declare_parameter("point_cloud_topic",    "/point_cloud");
-        this->declare_parameter("point_cloud_topic2",   "/point_cloud2");
-        this->declare_parameter("laser_scan_topic",     "/scan");
-        this->declare_parameter("base_link_name",       "base_footprint");
+        this->declare_parameter("use_lidar",              false);
+        this->declare_parameter("use_point_cloud",        false);
+        this->declare_parameter("use_point_cloud2",       false);
+        this->declare_parameter("use_online",             false);
+        this->declare_parameter("min_x",                  -10.0);
+        this->declare_parameter("max_x",                  10.0);
+        this->declare_parameter("min_y",                  -10.0);
+        this->declare_parameter("max_y",                  10.0);
+        this->declare_parameter("min_z",                  -1.0);
+        this->declare_parameter("max_z",                  2.0);
+        this->declare_parameter("decay_factor",           10);
+        this->declare_parameter("inflation_radius",       0.25);
+        this->declare_parameter("cost_radius",            0.25);
+        this->declare_parameter("cloud_downsampling",     1);
+        this->declare_parameter("cloud_downsampling2",    1);
+        this->declare_parameter("lidar_downsampling",     1);
+        this->declare_parameter("point_cloud_topic",      "/point_cloud");
+        this->declare_parameter("point_cloud_topic2",     "/point_cloud2");
+        this->declare_parameter("laser_scan_topic",       "/scan");
+        this->declare_parameter("static_map_server",      "/static_map_server/map");
+        this->declare_parameter("prohibition_map_server", "/prohibition_map_server/map");
+        this->declare_parameter("base_link_name",         "base_footprint");
 
         // Initialize internal variables from declared parameters
-        this->get_parameter("use_lidar",            use_lidar_);
-        this->get_parameter("use_point_cloud",      use_cloud_);
-        this->get_parameter("use_point_cloud2",     use_cloud2_);
-        this->get_parameter("use_online",           use_online_);
-        this->get_parameter("min_x",                min_x_);
-        this->get_parameter("max_x",                max_x_);
-        this->get_parameter("min_y",                min_y_);
-        this->get_parameter("max_y",                max_y_);
-        this->get_parameter("min_z",                min_z_);
-        this->get_parameter("max_z",                max_z_);
-        this->get_parameter("decay_factor",         decay_factor_);
-        this->get_parameter("inflation_radius",     inflation_radius_);
-        this->get_parameter("cost_radius",          cost_radius_);
-        this->get_parameter("cloud_downsampling",   cloud_downsampling_);
-        this->get_parameter("cloud_downsampling2",  cloud_downsampling2_);
-        this->get_parameter("lidar_downsampling",   lidar_downsampling_);
-        this->get_parameter("point_cloud_topic",    point_cloud_topic_);
-        this->get_parameter("point_cloud_topic2",   point_cloud_topic2_);
-        this->get_parameter("laser_scan_topic",     laser_scan_topic_);
-        this->get_parameter("base_link_name",       base_link_name_);
+        this->get_parameter("use_lidar",              use_lidar_);
+        this->get_parameter("use_point_cloud",        use_cloud_);
+        this->get_parameter("use_point_cloud2",       use_cloud2_);
+        this->get_parameter("use_online",             use_online_);
+        this->get_parameter("min_x",                  min_x_);
+        this->get_parameter("max_x",                  max_x_);
+        this->get_parameter("min_y",                  min_y_);
+        this->get_parameter("max_y",                  max_y_);
+        this->get_parameter("min_z",                  min_z_);
+        this->get_parameter("max_z",                  max_z_);
+        this->get_parameter("decay_factor",           decay_factor_);
+        this->get_parameter("inflation_radius",       inflation_radius_);
+        this->get_parameter("cost_radius",            cost_radius_);
+        this->get_parameter("cloud_downsampling",     cloud_downsampling_);
+        this->get_parameter("cloud_downsampling2",    cloud_downsampling2_);
+        this->get_parameter("lidar_downsampling",     lidar_downsampling_);
+        this->get_parameter("point_cloud_topic",      point_cloud_topic_);
+        this->get_parameter("point_cloud_topic2",     point_cloud_topic2_);
+        this->get_parameter("laser_scan_topic",       laser_scan_topic_);
+        this->get_parameter("static_map_server",      static_map_server_);
+        this->get_parameter("prohibition_map_server", prohibition_map_server_);
+        this->get_parameter("base_link_name",         base_link_name_);
 
         // Setup parameter change callback
         param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -86,16 +90,16 @@ public:
 
         //############
         // Publishers
-        pub_augmented_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/augmented_map", 10);
+        pub_augmented_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/augmented_map", rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers
         sub_clicked_point_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-            "/clicked_point", 10, 
+            "/clicked_point", rclcpp::SensorDataQoS(), 
             std::bind(&MapAugmenterNode::callback_point_obstacle, this, std::placeholders::_1));
 
         sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            point_cloud_topic_, 10,
+            point_cloud_topic_, rclcpp::SensorDataQoS(),
             [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(point_cloud_mutex_);
                 latest_point_cloud_ = msg;
@@ -103,7 +107,7 @@ public:
             });
 
         sub_point_cloud2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            point_cloud_topic2_, 10,
+            point_cloud_topic2_, rclcpp::SensorDataQoS(),
             [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(point_cloud2_mutex_);
                 latest_point_cloud2_ = msg;
@@ -111,7 +115,7 @@ public:
             });
 
         sub_laser_scan_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-            laser_scan_topic_, 10,
+            laser_scan_topic_, rclcpp::SensorDataQoS(),
             [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(laser_scan_mutex_);
                 latest_laser_scan_ = msg;
@@ -146,6 +150,8 @@ public:
 
         //############
         // Map Augmenter main processing
+        get_first_maps();
+
         processing_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(100), // 100 ms = 10 Hz
             std::bind(&MapAugmenterNode::map_augmenter_processing, this));
@@ -160,6 +166,7 @@ private:
     bool are_there_obstacles_;
 
     nav_msgs::msg::OccupancyGrid static_map_;
+    nav_msgs::msg::OccupancyGrid prohibition_map_;
     nav_msgs::msg::OccupancyGrid static_cost_map_;
     nav_msgs::msg::OccupancyGrid obstacles_map_;
     nav_msgs::msg::OccupancyGrid obstacles_inflated_map_;
@@ -182,16 +189,18 @@ private:
     double max_z_;
 
     int decay_factor_;
+    int cloud_downsampling_;
+    int cloud_downsampling2_;
+    int lidar_downsampling_;
 
     double inflation_radius_;
     double cost_radius_;
-    double cloud_downsampling_;
-    double cloud_downsampling2_;
-    double lidar_downsampling_;
 
     std::string point_cloud_topic_;
     std::string point_cloud_topic2_;
     std::string laser_scan_topic_;
+    std::string static_map_server_;
+    std::string prohibition_map_server_;
 
     std::string base_link_name_;
 
@@ -240,6 +249,8 @@ private:
     // Timer and readiness flag
     rclcpp::TimerBase::SharedPtr service_check_timer_;
     bool services_ready_ = false;
+    bool is_static_map_ = false;
+    bool is_prohibition_map_ = false;
 
     // Main processing loop
     rclcpp::TimerBase::SharedPtr processing_timer_;
@@ -255,30 +266,32 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "use_lidar")             use_lidar_            = param.as_bool();
-            else if (param.get_name() == "use_point_cloud")       use_cloud_            = param.as_bool();
-            else if (param.get_name() == "use_point_cloud2")      use_cloud2_           = param.as_bool();
-            else if (param.get_name() == "use_online")            use_online_           = param.as_bool();
+            if (param.get_name()      == "use_lidar")              use_lidar_              = param.as_bool();
+            else if (param.get_name() == "use_point_cloud")        use_cloud_              = param.as_bool();
+            else if (param.get_name() == "use_point_cloud2")       use_cloud2_             = param.as_bool();
+            else if (param.get_name() == "use_online")             use_online_             = param.as_bool();
 
-            else if (param.get_name() == "min_x")                 min_x_                = param.as_double();
-            else if (param.get_name() == "max_x")                 max_x_                = param.as_double();
-            else if (param.get_name() == "min_y")                 min_y_                = param.as_double();
-            else if (param.get_name() == "max_y")                 max_y_                = param.as_double();
-            else if (param.get_name() == "min_z")                 min_z_                = param.as_double();
-            else if (param.get_name() == "max_z")                 max_z_                = param.as_double();
+            else if (param.get_name() == "min_x")                  min_x_                  = param.as_double();
+            else if (param.get_name() == "max_x")                  max_x_                  = param.as_double();
+            else if (param.get_name() == "min_y")                  min_y_                  = param.as_double();
+            else if (param.get_name() == "max_y")                  max_y_                  = param.as_double();
+            else if (param.get_name() == "min_z")                  min_z_                  = param.as_double();
+            else if (param.get_name() == "max_z")                  max_z_                  = param.as_double();
 
-            else if (param.get_name() == "decay_factor")          decay_factor_         = param.as_int();
-            else if (param.get_name() == "inflation_radius")      inflation_radius_     = param.as_double();
-            else if (param.get_name() == "cost_radius")           cost_radius_          = param.as_double();
-            else if (param.get_name() == "cloud_downsampling")    cloud_downsampling_   = param.as_double();
-            else if (param.get_name() == "cloud_downsampling2")   cloud_downsampling2_  = param.as_double();
-            else if (param.get_name() == "lidar_downsampling")    lidar_downsampling_   = param.as_double();
+            else if (param.get_name() == "decay_factor")           decay_factor_           = param.as_int();
+            else if (param.get_name() == "cloud_downsampling")     cloud_downsampling_     = param.as_int();
+            else if (param.get_name() == "cloud_downsampling2")    cloud_downsampling2_    = param.as_int();
+            else if (param.get_name() == "lidar_downsampling")     lidar_downsampling_     = param.as_int();
+            else if (param.get_name() == "inflation_radius")       inflation_radius_       = param.as_double();
+            else if (param.get_name() == "cost_radius")            cost_radius_            = param.as_double();
 
-            else if (param.get_name() == "point_cloud_topic")     point_cloud_topic_    = param.as_string();
-            else if (param.get_name() == "point_cloud_topic2")    point_cloud_topic2_   = param.as_string();
-            else if (param.get_name() == "laser_scan_topic")      laser_scan_topic_     = param.as_string();
+            else if (param.get_name() == "point_cloud_topic")      point_cloud_topic_      = param.as_string();
+            else if (param.get_name() == "point_cloud_topic2")     point_cloud_topic2_     = param.as_string();
+            else if (param.get_name() == "laser_scan_topic")       laser_scan_topic_       = param.as_string();
+            else if (param.get_name() == "static_map_server")      static_map_server_      = param.as_string();
+            else if (param.get_name() == "prohibition_map_server") prohibition_map_server_ = param.as_string();
 
-            else if (param.get_name() == "base_link_name")        base_link_name_       = param.as_string();
+            else if (param.get_name() == "base_link_name")         base_link_name_         = param.as_string();
 
             else {
                 result.successful = false;
@@ -295,8 +308,8 @@ private:
     // Initialize service clients (non-blocking)
     void init_service_clients()
     {
-        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>("/static_map_server/map");
-        clt_get_prohibition_map_ = this->create_client<nav_msgs::srv::GetMap>("/prohibition_map_server/map");
+        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>(static_map_server_);
+        clt_get_prohibition_map_ = this->create_client<nav_msgs::srv::GetMap>(prohibition_map_server_);
 
         service_check_timer_ = this->create_wall_timer(
             std::chrono::seconds(1),
@@ -358,6 +371,59 @@ private:
             RCLCPP_INFO(this->get_logger(),
                         "MapAugmenter.-> Transform from '%s' to '%s' is now available.",
                         source_frame.c_str(), target_frame.c_str());
+        }
+    }
+
+    void get_first_maps() 
+    {
+        rclcpp::sleep_for(std::chrono::seconds(1));
+
+        auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+        clt_get_static_map_->async_send_request(static_map_req,
+            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
+                try {
+                    this->static_map_ = future_static.get()->map;
+                    is_static_map_ = true;
+                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
+                                static_map_.info.width, static_map_.info.height);
+                    process_maps();
+                } catch (const std::exception &e) {
+                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static map: %s", e.what());
+                }
+            });
+
+        auto prohibition_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+        clt_get_prohibition_map_->async_send_request(prohibition_map_req,
+            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_ptohibition) {
+                try {
+                    this->prohibition_map_ = future_ptohibition.get()->map;
+                    is_prohibition_map_ = true;
+                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got prohibition map with size %d x %d", 
+                                prohibition_map_.info.width, prohibition_map_.info.height);
+                    process_maps();
+                } catch (const std::exception &e) {
+                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get prohibition map: %s", e.what());
+                }
+            });
+    }
+
+    void process_maps()
+    {
+        if (is_static_map_ && is_prohibition_map_)
+        {
+            RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Updating static map with prohibition layer and static cost map...");
+            
+            static_map_ = merge_maps(static_map_, prohibition_map_);
+            static_map_ = inflate_map(static_map_, inflation_radius_);
+
+            static_cost_map_ = get_cost_map(static_map_, cost_radius_);
+            obstacles_map_ = this->static_map_;
+            for (size_t i = 0; i < obstacles_map_.data.size(); ++i)
+                obstacles_map_.data[i] = 0;
+            
+            is_static_map_ = false;
+            is_prohibition_map_ = false;
+            RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Statics maps have been updated.");
         }
     }
 
@@ -557,6 +623,8 @@ private:
             p += static_cast<std::size_t>(cloud_downsampling_ * msg->point_step);
         }
 
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud() done");
+
         return true;
     }
 
@@ -611,6 +679,7 @@ private:
             p += static_cast<std::size_t>(cloud_downsampling_ * msg->point_step);
         }
 
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud2() done");
         return true;
     }
 
@@ -660,6 +729,7 @@ private:
             }
         }
 
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_lidar() done");
         return true;
     }
 
@@ -679,35 +749,38 @@ private:
     //############
     //Map Augmenter subscribers callbacks
     void callback_point_obstacle(const geometry_msgs::msg::PointStamped::SharedPtr msg) 
-    {
+    {    
         rclcpp::sleep_for(std::chrono::seconds(1));
 
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> new PointStamped received...");
+
         auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+        clt_get_static_map_->async_send_request(static_map_req,
+            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
+                try {
+                    this->static_map_ = future_static.get()->map;
+                    is_static_map_ = true;
+                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
+                                static_map_.info.width, static_map_.info.height);
+                    process_maps();
+                } catch (const std::exception &e) {
+                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static map: %s", e.what());
+                }
+            });
+
         auto prohibition_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
-
-        auto static_map_result = clt_get_static_map_->async_send_request(static_map_req);
-        auto prohibition_map_result = clt_get_prohibition_map_->async_send_request(prohibition_map_req);
-
-        if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), static_map_result) != rclcpp::FutureReturnCode::SUCCESS ||
-            rclcpp::spin_until_future_complete(this->get_node_base_interface(), prohibition_map_result) != rclcpp::FutureReturnCode::SUCCESS)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get static or prohibition maps.");
-            return;
-        }
-
-        static_map_ = static_map_result.get()->map;
-        const auto &prohibition_map = prohibition_map_result.get()->map;
-
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Updating static map with prohibition layer and static cost map...");
-        static_map_ = merge_maps(static_map_, prohibition_map);
-        static_map_ = inflate_map(static_map_, inflation_radius_);
-
-        static_cost_map_ = get_cost_map(static_map_, cost_radius_);
-        obstacles_map_ = static_map_;
-        for (size_t i = 0; i < obstacles_map_.data.size(); ++i)
-            obstacles_map_.data[i] = 0;
-        
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Statics maps have been updated.");
+        clt_get_prohibition_map_->async_send_request(prohibition_map_req,
+            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_ptohibition) {
+                try {
+                    this->prohibition_map_ = future_ptohibition.get()->map;
+                    is_prohibition_map_ = true;
+                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got prohibition map with size %d x %d", 
+                                prohibition_map_.info.width, prohibition_map_.info.height);
+                    process_maps();
+                } catch (const std::exception &e) {
+                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get prohibition map: %s", e.what());
+                }
+            });
     }
 
     //############
@@ -742,30 +815,32 @@ private:
 
         if (use_online_) {
             auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+            clt_get_static_map_->async_send_request(static_map_req,
+                [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
+                    try {
+                        this->static_map_ = future_static.get()->map;
+                        is_static_map_ = true;
+                        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
+                                    static_map_.info.width, static_map_.info.height);
+                        process_maps();
+                    } catch (const std::exception &e) {
+                        RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static map: %s", e.what());
+                    }
+                });
+
             auto prohibition_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
-
-            auto static_map_result = clt_get_static_map_->async_send_request(static_map_req);
-            auto prohibition_map_result = clt_get_prohibition_map_->async_send_request(prohibition_map_req);
-
-            if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), static_map_result) != rclcpp::FutureReturnCode::SUCCESS ||
-                rclcpp::spin_until_future_complete(this->get_node_base_interface(), prohibition_map_result) != rclcpp::FutureReturnCode::SUCCESS)
-            {
-                RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get static or prohibition maps.");
-                return;
-            }
-
-            static_map_ = static_map_result.get()->map;
-            const auto &prohibition_map = prohibition_map_result.get()->map;
-
-            RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Updating static map and static cost map...");
-            static_map_ = merge_maps(static_map_, prohibition_map);
-            static_map_ = inflate_map(static_map_, inflation_radius_);
-
-            static_cost_map_ = get_cost_map(static_map_, cost_radius_);
-            obstacles_map_ = static_map_;
-            for (size_t i = 0; i < obstacles_map_.data.size(); ++i)
-                obstacles_map_.data[i] = 0;
-            RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Statics maps have been updated.");
+            clt_get_prohibition_map_->async_send_request(prohibition_map_req,
+                [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_ptohibition) {
+                    try {
+                        this->prohibition_map_ = future_ptohibition.get()->map;
+                        is_prohibition_map_ = true;
+                        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got prohibition map with size %d x %d", 
+                                    prohibition_map_.info.width, prohibition_map_.info.height);
+                        process_maps();
+                    } catch (const std::exception &e) {
+                        RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get prohibition map: %s", e.what());
+                    }
+                });
         }
 
         if ((use_lidar_  && !obstacles_map_with_lidar()) ||
@@ -821,21 +896,21 @@ private:
     {
         if (!services_ready_)
         {
-            RCLCPP_ERROR(this->get_logger(), "PathPMapAugmenterlanner.-> Services not ready. Cannot handle static map request.");
+            RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Services not ready. Cannot handle static map request.");
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), 
+        /*RCLCPP_INFO(this->get_logger(), 
             "MapAugmenter.-> Parameters: min_x=%.2f  max_x=%.2f  min_y=%.2f  max_y=%.2f  min_z=%.2f  max_z=%.2f",
-            min_x_, max_x_, min_y_, max_y_, min_z_, max_z_);
+            min_x_, max_x_, min_y_, max_y_, min_z_, max_z_);*/
 
-        RCLCPP_INFO(this->get_logger(),
+        /*RCLCPP_INFO(this->get_logger(),
             "MapAugmenter.-> Parameters: decay_factor=%.2f  inflation=%.2f  cost_radius=%.2f",
-            decay_factor_, inflation_radius_, cost_radius_);
+            decay_factor_, inflation_radius_, cost_radius_);*/
 
-        RCLCPP_INFO(this->get_logger(),
+        /*RCLCPP_INFO(this->get_logger(),
             "MapAugmenter.-> Parameters: cloud_downsampling=%.2f  cloud_downsampling2=%.2f  lidar_downsampling=%.2f  base_link_name=%s",
-            cloud_downsampling_, cloud_downsampling2_, lidar_downsampling_, base_link_name_.c_str());
+            cloud_downsampling_, cloud_downsampling2_, lidar_downsampling_, base_link_name_.c_str());*/
 
         static int counter = 0;
 

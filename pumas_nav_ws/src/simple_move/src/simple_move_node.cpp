@@ -89,50 +89,50 @@ public:
 
         //############
         // Publishers
-        pub_goal_reached_   = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/simple_move/goal_reached", 10);
-        pub_cmd_vel_        = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
-        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/hardware/head/goal_pose", 10);
+        pub_goal_reached_   = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/simple_move/goal_reached", rclcpp::QoS(10).transient_local());
+        pub_cmd_vel_        = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", rclcpp::QoS(10).transient_local());
+        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/hardware/head/goal_pose", rclcpp::QoS(10).transient_local());
 
 
         //############
         // Subscribers
         //// stop
         sub_generalStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/stop", 10, 
+            "/stop", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_general_stop, this, std::placeholders::_1));
 
         sub_navCtrlStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/navigation/stop", 10, 
+            "/navigation/stop", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_navigation_stop, this, std::placeholders::_1));
 
         sub_navSimpleMvStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/simple_move/stop", 10, 
+            "/simple_move/stop", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_simple_move_stop, this, std::placeholders::_1));
 
         //// goal
         sub_goalDistance_ = this->create_subscription<std_msgs::msg::Float32>(
-            "/simple_move/goal_dist", 10, 
+            "/simple_move/goal_dist", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_dist, this, std::placeholders::_1));
         
         sub_goalDistAngle_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            "/simple_move/goal_dist_angle", 10, 
+            "/simple_move/goal_dist_angle", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_dist_angle, this, std::placeholders::_1));
 
         sub_goalPath_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/simple_move/goal_path", 10, 
+            "/simple_move/goal_path", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_path, this, std::placeholders::_1));
 
         //// motion
         sub_moveLateral_ = this->create_subscription<std_msgs::msg::Float32>(
-            "/simple_move/goal_dist_lateral", 10, 
+            "/simple_move/goal_dist_lateral", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_move_lateral, this, std::placeholders::_1));
 
         sub_collisionRisk_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/collision_risk", 10, 
+            "/navigation/potential_fields/collision_risk", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_collision_risk, this, std::placeholders::_1));
 
         sub_rejectionForce_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-            "/navigation/potential_fields/pf_rejection_force", 10, 
+            "/navigation/potential_fields/pf_rejection_force", rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_rejection_force, this, std::placeholders::_1));
         
         //############
