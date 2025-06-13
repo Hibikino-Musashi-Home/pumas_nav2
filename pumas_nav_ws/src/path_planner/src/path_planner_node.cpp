@@ -225,21 +225,7 @@ private:
 
                         if (success) {
                             response->plan = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
-
-for (size_t i = 0; i < response->plan.poses.size(); ++i)
-{
-    const auto& pose_stamped = response->plan.poses[i];
-    std::cout << "Pose #" << i << " at time " << rclcpp::Time(pose_stamped.header.stamp).seconds() << "s:" << std::endl;
-    std::cout << "  Position: x=" << pose_stamped.pose.position.x
-              << ", y=" << pose_stamped.pose.position.y
-              << ", z=" << pose_stamped.pose.position.z << std::endl;
-    std::cout << "  Orientation: x=" << pose_stamped.pose.orientation.x
-              << ", y=" << pose_stamped.pose.orientation.y
-              << ", z=" << pose_stamped.pose.orientation.z
-              << ", w=" << pose_stamped.pose.orientation.w << std::endl;
-}
-                            
-                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path with augmented_map planned successfully.");
+                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path with augmented_map planned successfully."); 
                         } else {
                             RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
                             response->plan.poses.clear();
