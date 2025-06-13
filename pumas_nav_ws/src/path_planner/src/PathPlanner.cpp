@@ -136,8 +136,10 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     }
     std::cout << "PathPlanner.->A* Algorithm ended after " << steps << " steps" << std::endl;
 
-    if(current_node->index != idx_goal)
-	return false;
+    if(current_node->index != idx_goal){
+        std::cout << "PathPlanner.-> current_node->index != idx_goal " << std::endl;
+	    return false;
+    }
     
     result_path.header.frame_id = "map";
     result_path.poses.clear();
@@ -145,10 +147,10 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     p.header.frame_id = "map";
     while(current_node->parent != NULL)
     {
-	p.pose.position.x = current_node->index % map.info.width * map.info.resolution + map.info.origin.position.x;	
-	p.pose.position.y = current_node->index / map.info.width * map.info.resolution + map.info.origin.position.y;
-	result_path.poses.insert(result_path.poses.begin(), p);
-	current_node = current_node->parent;
+        p.pose.position.x = current_node->index % map.info.width * map.info.resolution + map.info.origin.position.x;	
+        p.pose.position.y = current_node->index / map.info.width * map.info.resolution + map.info.origin.position.y;
+        result_path.poses.insert(result_path.poses.begin(), p);
+        current_node = current_node->parent;
     }
     
     std::cout << "PathCalculator.->Resulting path by A* has " << result_path.poses.size() << " points." << std::endl;

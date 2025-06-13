@@ -61,22 +61,12 @@ private:
     OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
     // map services
-    nav_msgs::msg::OccupancyGrid static_map_;
-    nav_msgs::msg::OccupancyGrid static_cost_map_;
-    nav_msgs::msg::OccupancyGrid augmented_map_;
-    nav_msgs::msg::OccupancyGrid augmented_cost_map_;
-
-    // To hold the incoming request/response
-    std::shared_ptr<nav_msgs::srv::GetPlan::Request> pending_request_;
-    std::shared_ptr<nav_msgs::srv::GetPlan::Response> pending_response_;
+    nav_msgs::msg::OccupancyGrid map_;
+    nav_msgs::msg::OccupancyGrid cost_map_;
 
     // Timer and readiness flag
     rclcpp::TimerBase::SharedPtr service_check_timer_;
     bool services_ready_ = false;
-    bool is_static_map_ = false;
-    bool is_static_cost_map_ = false;
-    bool is_augmented_map_ = false;
-    bool is_augmented_cost_map_ = false;
 
     //############
     // Runtime parameter update callback
@@ -136,75 +126,57 @@ private:
 
     //############
     // Callback functions
-    void process_a_star()
-    {
-        if (is_static_map_ && is_static_cost_map_ && pending_request_ && pending_response_)
-        {
-            const auto &req = pending_request_;
-            auto &res = pending_response_;
-
-            bool success = PathPlanner::AStar(static_map_, static_cost_map_,
-                                            req->start.pose, req->goal.pose,
-                                            diagonal_paths_, res->plan);
-            if (success)
-            {
-                res->plan = PathPlanner::SmoothPath(res->plan, smooth_alpha_, smooth_beta_);
-                RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Static path planned successfully.");
-            }
-            else
-            {
-                res->plan.poses.clear();
-                RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan static path.");
-            }
-
-            // Clear state
-            pending_request_.reset();
-            pending_response_.reset();
-            is_static_map_ = false;
-            is_static_cost_map_ = false;
-        }
-    }
-
     void callback_a_star_with_static_map(
         const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
         std::shared_ptr<nav_msgs::srv::GetPlan::Response> response)
     {
-        if (!services_ready_)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. Cannot handle static map request.");
+        if (!services_ready_) {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. Cannot handle augmented map request.");
+            response->plan.poses.clear(); 
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Received planning request (static map).");
-        pending_request_ = request;
-        pending_response_ = response;
-
         auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
         clt_get_static_map_->async_send_request(static_map_req,
-            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
+            [this, request, response](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static)
+            {
                 try {
-                    this->static_map_ = future_static.get()->map;
-                    is_static_map_ = true;
-                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
-                                static_map_.info.width, static_map_.info.height);
-                    process_a_star();
+                    map_ = future_static.get()->map;
+                    RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got static map with size %d x %d", 
+                                map_.info.width, map_.info.height);
                 } catch (const std::exception &e) {
-                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static map: %s", e.what());
+                    RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get static map: %s", e.what());
+                    response->plan.poses.clear();
+                    return;
                 }
-            });
 
-        auto static_cost_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_static_cost_map_->async_send_request(static_cost_map_req,
-            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static_cost) {
-                try {
-                    this->static_cost_map_ = future_static_cost.get()->map;
-                    is_static_cost_map_ = true;
-                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static_cost map with size %d x %d", 
-                                static_cost_map_.info.width, static_cost_map_.info.height);
-                    process_a_star();
-                } catch (const std::exception &e) {
-                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static_cost map: %s", e.what());
-                }
+                auto static_cost_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+                clt_get_static_cost_map_->async_send_request(static_cost_map_req,
+                    [this, request, response](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static_cost)
+                    {
+                        try {
+                            cost_map_ = future_static_cost.get()->map;
+                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got static_cost map with size %d x %d", 
+                                        cost_map_.info.width, cost_map_.info.height);
+                        } catch (const std::exception &e) {
+                            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get augmented_cost map: %s", e.what());
+                            response->plan.poses.clear();
+                            return;
+                        }
+
+                        nav_msgs::msg::Path path;
+                        bool success = PathPlanner::AStar(map_, cost_map_,
+                            request->start.pose, request->goal.pose,
+                            diagonal_paths_, path);
+
+                        if (success) {
+                            response->plan = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
+                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path with static_map planned successfully.");
+                        } else {
+                            RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+                            response->plan.poses.clear();
+                        }
+                    });
             });
     }
 
@@ -212,43 +184,67 @@ private:
         const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
         std::shared_ptr<nav_msgs::srv::GetPlan::Response> response)
     {
-        if (!services_ready_)
-        {
+        if (!services_ready_) {
             RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. Cannot handle augmented map request.");
+            response->plan.poses.clear(); 
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Received planning request (augmented map).");
-
-        pending_request_ = request;
-        pending_response_ = response;
-
         auto augmented_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
         clt_get_augmented_map_->async_send_request(augmented_map_req,
-            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_augmented) {
+            [this, request, response](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_augmented)
+            {
                 try {
-                    this->augmented_map_ = future_augmented.get()->map;
-                    is_augmented_map_ = true;
-                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got augmented map with size %d x %d", 
-                                augmented_map_.info.width, augmented_map_.info.height);
-                    process_a_star();
+                    map_ = future_augmented.get()->map;
+                    RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got augmented map with size %d x %d", 
+                                map_.info.width, map_.info.height);
                 } catch (const std::exception &e) {
-                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get augmented map: %s", e.what());
+                    RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get augmented map: %s", e.what());
+                    response->plan.poses.clear();
+                    return;
                 }
-            });
 
-        auto augmented_cost_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_augmented_cost_map_->async_send_request(augmented_cost_map_req,
-            [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_augmented_cost) {
-                try {
-                    this->augmented_cost_map_ = future_augmented_cost.get()->map;
-                    is_augmented_cost_map_ = true;
-                    RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got augmented_cost map with size %d x %d", 
-                                augmented_cost_map_.info.width, augmented_cost_map_.info.height);
-                    process_a_star();
-                } catch (const std::exception &e) {
-                    RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get augmented_cost map: %s", e.what());
-                }
+                auto augmented_cost_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
+                clt_get_augmented_cost_map_->async_send_request(augmented_cost_map_req,
+                    [this, request, response](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_augmented_cost)
+                    {
+                        try {
+                            cost_map_ = future_augmented_cost.get()->map;
+                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got augmented_cost map with size %d x %d", 
+                                        cost_map_.info.width, cost_map_.info.height);
+                        } catch (const std::exception &e) {
+                            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Failed to get augmented_cost map: %s", e.what());
+                            response->plan.poses.clear();
+                            return;
+                        }
+
+                        nav_msgs::msg::Path path;
+                        bool success = PathPlanner::AStar(map_, cost_map_,
+                            request->start.pose, request->goal.pose,
+                            diagonal_paths_, path);
+
+                        if (success) {
+                            response->plan = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
+
+for (size_t i = 0; i < response->plan.poses.size(); ++i)
+{
+    const auto& pose_stamped = response->plan.poses[i];
+    std::cout << "Pose #" << i << " at time " << rclcpp::Time(pose_stamped.header.stamp).seconds() << "s:" << std::endl;
+    std::cout << "  Position: x=" << pose_stamped.pose.position.x
+              << ", y=" << pose_stamped.pose.position.y
+              << ", z=" << pose_stamped.pose.position.z << std::endl;
+    std::cout << "  Orientation: x=" << pose_stamped.pose.orientation.x
+              << ", y=" << pose_stamped.pose.orientation.y
+              << ", z=" << pose_stamped.pose.orientation.z
+              << ", w=" << pose_stamped.pose.orientation.w << std::endl;
+}
+                            
+                            RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path with augmented_map planned successfully.");
+                        } else {
+                            RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+                            response->plan.poses.clear();
+                        }
+                    });
             });
     }
 };

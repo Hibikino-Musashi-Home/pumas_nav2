@@ -51,11 +51,12 @@ class FakeGlobalPoseNode(Node):
             try:
                 transform = self.tf_buffer.lookup_transform(
                     'map', 'base_link',
-                    rclpy.time.Time(),  # time=0 means latest
+                    rclpy.time.Time(clock=self.get_clock())
                     timeout=rclpy.duration.Duration(seconds=0.5)
                 )
             except (LookupException, ConnectivityException, ExtrapolationException) as e:
-                self.get_logger().warn(f"TF lookup failed: {e}")
+                self.get_logger().debug(f"TF lookup failed: {e}")
+                #self.get_logger().warn(f"TF lookup failed: {e}")
                 return
 
             self.global_pose_.header.stamp = now

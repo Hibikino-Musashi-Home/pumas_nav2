@@ -37,6 +37,7 @@
 #define SM_INIT 0
 #define SM_WAITING_FOR_TASK 1
 #define SM_CALCULATE_PATH 2
+#define SM_WAIT_FOR_PATH 99
 #define SM_CHECK_IF_INSIDE_OBSTACLES 19
 #define SM_WAITING_FOR_MOVE_BACKWARDS 18
 #define SM_CHECK_IF_OBSTACLES 21
@@ -145,6 +146,7 @@ private:
 
     nav_msgs::msg::Path path_;
     bool is_path_ = false;
+    bool is_path_response_ = false;
 
     // Internal parameter values
     bool  patience_;
@@ -407,6 +409,7 @@ private:
         float goal_x, float goal_y)
     {
         is_path_ = false;
+        is_path_response_ = false;
         // Wait for service to be available
         if (!clt_plan_path_augmented_->wait_for_service(std::chrono::seconds(1))) {
             RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Service not available.");
@@ -425,10 +428,12 @@ private:
         clt_plan_path_augmented_->async_send_request(request,
             [this](rclcpp::Client<nav_msgs::srv::GetPlan>::SharedFuture result_future) {
                 try {
-                    path_ = result_future.get()->plan;
-                    is_path_ = true;
+                    this->path_ = result_future.get()->plan;
+                    this->is_path_ = true;
+                    this->is_path_response_ = true;
                     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Path planned successfully.");
                 } catch (const std::exception &e) {
+                    this->is_path_response_ = true;
                     RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to plan path from /path_planner/plan_path_with_augmented: %s", e.what());
                 }
             });
@@ -549,26 +554,30 @@ private:
                 get_robot_position();
                 plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
 
-                int counter = 0;
-                while(counter < 10){
-                    counter++;
-                    rclcpp::sleep_for(std::chrono::seconds(1));
-                }
+                state = SM_WAIT_FOR_PATH;
 
-                if(!is_path_)
-                {
-                    std::cout<<"MotionPlanner.-> Cannot calc path to "<< global_goal_.position.x <<" "<<global_goal_.position.y << std::endl;
-                    pub_simple_move_stop_->publish(std_msgs::msg::Empty());
-                    if(!patience_)
-                        state = SM_CHECK_IF_INSIDE_OBSTACLES;
-                    else
-                        state = SM_CHECK_IF_OBSTACLES;
-                }
-                else
-                    state = SM_ENABLE_POT_FIELDS;
                 break;
             }
-                
+            
+            
+            case SM_WAIT_FOR_PATH:
+            {
+                if (!is_path_response_) {
+                    // Still waiting, don't do anything yet
+                    break;
+                }
+
+                if (!is_path_) {
+                    std::cout << "MotionPlanner.-> Cannot calc path to " << global_goal_.position.x << " " << global_goal_.position.y << std::endl;
+                    pub_simple_move_stop_->publish(std_msgs::msg::Empty());
+
+                    state = patience_ ? SM_CHECK_IF_OBSTACLES : SM_CHECK_IF_INSIDE_OBSTACLES;
+                } else {
+                    state = SM_ENABLE_POT_FIELDS;
+                }
+                break;
+            }
+
 
             case SM_CHECK_IF_INSIDE_OBSTACLES:
             {

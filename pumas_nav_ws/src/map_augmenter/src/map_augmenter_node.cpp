@@ -847,12 +847,16 @@ private:
             (use_cloud_  && !obstacles_map_with_cloud())  ||
             (use_cloud2_ && !obstacles_map_with_cloud2()))
         {
+            RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to add obstacles with sensors.");
             return;
         }
 
         obstacles_inflated_map_ = inflate_map(obstacles_map_, inflation_radius_);
         augmented_map_ = merge_maps(static_map_, obstacles_inflated_map_);
         response->map = augmented_map_;
+
+        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Augmented map response has been sent with size %d x %d", 
+                    static_map_.info.width, static_map_.info.height);
     }
 
     void callback_augmented_cost_map(const std::shared_ptr<nav_msgs::srv::GetMap::Request> request,
