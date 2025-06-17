@@ -850,6 +850,7 @@ private:
             {
                 get_robot_position();
                 error = sqrt(pow(global_goal_.position.x - robot_x_, 2) + pow(global_goal_.position.y - robot_y_, 2));
+                
                 if(error < proximity_criterion_ && !near_goal_sent)
                 {
                     near_goal_sent = true;

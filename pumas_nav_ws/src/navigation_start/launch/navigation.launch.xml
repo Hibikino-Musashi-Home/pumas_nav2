@@ -129,7 +129,7 @@
     <param name="move_head" value="False"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
-    <param name="cmd_vel_name" value="$(var cmd_vel_name)"/>
+    <remap from="/cmd_vel" to="$(var cmd_vel_name)"/>
   </node>
 
   <!-- Potential Fields -->
@@ -137,7 +137,7 @@
         pkg="potential_fields"  
         exec="potential_fields_node"  
         output="screen">
-    <param name="debug" value="False"/>
+    <param name="debug" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
     <param name="use_lidar" value="$(var use_lidar)"/>
@@ -159,6 +159,8 @@
 
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+
+    <remap from="/cmd_vel" to="$(var cmd_vel_name)"/>
   </node>
 
   <node name="publish_enable"

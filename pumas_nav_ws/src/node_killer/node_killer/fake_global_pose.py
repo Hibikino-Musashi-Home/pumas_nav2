@@ -25,7 +25,7 @@ class FakeGlobalPoseNode(Node):
         #Subscribers
         self.subscriber_ = self.create_subscription(
             PoseWithCovarianceStamped, 
-            "/navigation/localization/amcl_pose", 
+            "/amcl_pose",
             self.callback_amcl, 
             10
         )
@@ -51,7 +51,7 @@ class FakeGlobalPoseNode(Node):
             try:
                 transform = self.tf_buffer.lookup_transform(
                     'map', 'base_link',
-                    rclpy.time.Time(clock=self.get_clock())
+                    rclpy.time.Time(),
                     timeout=rclpy.duration.Duration(seconds=0.5)
                 )
             except (LookupException, ConnectivityException, ExtrapolationException) as e:
