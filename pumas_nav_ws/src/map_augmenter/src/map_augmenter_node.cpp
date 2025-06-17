@@ -450,7 +450,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> TF Exception: %s", ex.what());
             return Eigen::Affine3d::Identity();
         }
     }
@@ -477,7 +477,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "TF Exception: %s", ex.what());
             robot_x = 0.0f;
             robot_y = 0.0f;
             robot_t = 0.0f;

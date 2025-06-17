@@ -529,7 +529,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
             return false;
         }
     }
@@ -558,7 +558,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
             return false;
         }
     }
@@ -596,7 +596,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
             return false;
         }
     }

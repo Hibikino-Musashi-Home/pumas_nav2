@@ -29,6 +29,7 @@
 #include <sstream>   // for std::stringstream
 #include <iostream>
 #include <vector>
+#include <chrono>
 #include <exception>
 ///
 
@@ -37,7 +38,6 @@
 #define SM_INIT 0
 #define SM_WAITING_FOR_TASK 1
 #define SM_CALCULATE_PATH 2
-#define SM_WAIT_FOR_PATH 99
 #define SM_CHECK_IF_INSIDE_OBSTACLES 19
 #define SM_WAITING_FOR_MOVE_BACKWARDS 18
 #define SM_CHECK_IF_OBSTACLES 21
@@ -51,6 +51,12 @@
 #define SM_CORRECT_FINAL_ANGLE 6
 #define SM_WAIT_FOR_ANGLE_CORRECTED 7
 #define SM_FINAL    17
+
+// Flags for clients WAIT casers
+#define SM_WAIT_FOR_PATH_RESPONSE 102
+#define SM_WAIT_FOR_INSIDE_OBSTACLES_RESPONSE 119
+#define SM_WAIT_FOR_IF_OBSTACLES_RESPONSE 121
+#define SM_WAIT_FOR_NO_OBSTACLES_RESPONSE 122
 
 class MotionPlannerNode : public rclcpp::Node
 {
@@ -171,6 +177,18 @@ private:
     std_srvs::srv::Trigger::Request srv_check_obstacles_request;
     std_srvs::srv::Trigger::Response srv_check_obstacles_response;
 
+    // Flags for waiting clients in Switch/Case
+    bool is_in_obstacles_ = false;
+    bool is_in_obstacles_response_ = false;
+    bool are_there_obs_ = false;
+    bool is_check_obs_response_ = false;
+    bool are_still_obs_ = false;
+    bool is_wait_obs_response_ = false;
+    bool wait_obs_failed_ = false;
+
+    bool pot_fields_received_ = false;
+    bool is_pot_fields_response_ = false;
+    rclcpp::Time pot_fields_start_time_;
 
     //############
     // Publishers
@@ -203,6 +221,7 @@ private:
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_are_there_obs_;
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_is_in_obstacles_;
 
+    std::vector<std::thread> threads_;
 
     //############
     // Parameter callback handle
@@ -394,16 +413,27 @@ private:
     {
         try 
         {
+            pot_fields_received_ = true;
+            is_pot_fields_response_ = true;
+
             collision_risk_ = msg->data;
         } 
         catch (const std::exception &e) 
         {
+            pot_fields_received_ = false;
+            is_pot_fields_response_ = false;
             RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Error processing callback_collision_risk: %s", e.what());
         }
     }
 
     //############
     //Motion Planner additional functions
+    void get_plan_path_from_augmented_map(float robot_x, float robot_y, float goal_x, float goal_y)
+    {
+        threads_.push_back(std::thread(std::bind(&MotionPlannerNode::plan_path_from_augmented_map, this, 
+                           robot_x, robot_y, goal_x, goal_y)));
+    }
+
     void plan_path_from_augmented_map(
         float robot_x, float robot_y,
         float goal_x, float goal_y)
@@ -425,18 +455,23 @@ private:
         request->goal.pose.position.y = goal_y;
         request->goal.header.frame_id = "map";
 
-        clt_plan_path_augmented_->async_send_request(request,
-            [this](rclcpp::Client<nav_msgs::srv::GetPlan>::SharedFuture result_future) {
-                try {
-                    this->path_ = result_future.get()->plan;
-                    this->is_path_ = true;
-                    this->is_path_response_ = true;
-                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Path planned successfully.");
-                } catch (const std::exception &e) {
-                    this->is_path_response_ = true;
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to plan path from /path_planner/plan_path_with_augmented: %s", e.what());
-                }
-            });
+        auto result_future = clt_plan_path_augmented_->async_send_request(request);
+
+        try
+        {
+            this->path_ = result_future.get()->plan;
+            if(path_.poses.size() > 0)
+                this->is_path_ = true;
+
+            this->is_path_response_ = true;
+
+            RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Path received successfully with size: %d", path_.poses.size());
+        }
+        catch (const std::exception &e)
+        {
+            this->is_path_response_ = true;
+            RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get path from /path_planner/plan_path_with_augmented: %s", e.what());
+        }
     }
 
     void get_robot_position()
@@ -463,7 +498,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s", ex.what());
             robot_x_ = robot_y_ = robot_t_ = 0.0f;
             return;
         }
@@ -552,15 +587,16 @@ private:
             case SM_CALCULATE_PATH:
             {
                 get_robot_position();
-                plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
+                //plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
+                get_plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
 
-                state = SM_WAIT_FOR_PATH;
+                state = SM_WAIT_FOR_PATH_RESPONSE;
 
                 break;
             }
             
             
-            case SM_WAIT_FOR_PATH:
+            case SM_WAIT_FOR_PATH_RESPONSE:
             {
                 if (!is_path_response_) {
                     // Still waiting, don't do anything yet
@@ -582,58 +618,48 @@ private:
             case SM_CHECK_IF_INSIDE_OBSTACLES:
             {
                 std::cout << "MotionPlanner.-> Checking if robot is inside an obstacle..." << std::endl;
+                is_in_obstacles_ = false;
+                is_in_obstacles_response_ = false;
 
                 auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-                auto result_future = clt_is_in_obstacles_->async_send_request(request);
-                /*if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) 
-                    != rclcpp::FutureReturnCode::SUCCESS)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacles.");
+                clt_is_in_obstacles_->async_send_request(request,
+                    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+                        try {
+                            is_in_obstacles_ = future.get()->success;
+                        } catch (const std::exception& e) {
+                            RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacles: %s", e.what());
+                            is_in_obstacles_ = false;
+                        }
+                        is_in_obstacles_response_ = true;
+                    });
+
+                state = SM_WAIT_FOR_INSIDE_OBSTACLES_RESPONSE;
+                break;
+            }
+
+
+            case SM_WAIT_FOR_INSIDE_OBSTACLES_RESPONSE:
+            {
+                if (!is_in_obstacles_response_) {
+                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for obstacle check response...");
+                    break;
+                }
+
+                if (is_in_obstacles_) {
+                    std::cout << "MotionPlanner.-> Robot is inside an obstacle. Moving backwards..." << std::endl;
+                    msg_goal_dist_angle.data[0] = -0.25;
+                    msg_goal_dist_angle.data[1] = 0;
+                    pub_goal_dist_angle_->publish(msg_goal_dist_angle);
+                    state = SM_WAITING_FOR_MOVE_BACKWARDS;
+                } else {
                     current_status = publish_status(
-                        actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id, 
+                        actionlib_msgs::msg::GoalStatus::ABORTED,
+                        goal_id,
                         "Cannot calc path from start to goal"
                     );
                     state = SM_INIT;
-
-                    break;
-                }*/
-
-                try
-                {
-                    auto result = result_future.get();
-
-                    if(result->success)
-                    {
-                        std::cout << "MotionPlanner.-> Robot is inside an obstacle. Moving backwards..." << std::endl;
-                        msg_goal_dist_angle.data[0] = -0.25;
-                        msg_goal_dist_angle.data[1] = 0;
-                        pub_goal_dist_angle_->publish(msg_goal_dist_angle);
-                        state = SM_WAITING_FOR_MOVE_BACKWARDS;
-                    }
-                    else
-                    {
-                        current_status = publish_status(
-                            actionlib_msgs::msg::GoalStatus::ABORTED, 
-                            goal_id, 
-                            "Cannot calc path from start to goal"
-                        );
-                        state = SM_INIT;
-                    }
-                    break;
                 }
-                catch (const std::exception &e)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacles.");
-                    current_status = publish_status(
-                        actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id, 
-                        "Cannot calc path from start to goal"
-                    );
-                    state = SM_INIT;
-
-                    break;
-                }
+                break;
             }
 
 
@@ -656,111 +682,106 @@ private:
 
             case SM_CHECK_IF_OBSTACLES:
             {
+                are_there_obs_ = false;
+                is_check_obs_response_ = false;
+
                 auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-                auto result_future = clt_are_there_obs_->async_send_request(request);
-                /*if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) 
-                    != rclcpp::FutureReturnCode::SUCCESS)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacles.");
+                clt_are_there_obs_->async_send_request(request,
+                    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+                        try {
+                            are_there_obs_ = future.get()->success;
+                        } catch (const std::exception& e) {
+                            RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacle check: %s", e.what());
+                            are_there_obs_ = false;
+                        }
+                        is_check_obs_response_ = true;
+                    });
+
+                state = SM_WAIT_FOR_IF_OBSTACLES_RESPONSE;
+                break;
+            }
+
+
+            case SM_WAIT_FOR_IF_OBSTACLES_RESPONSE:
+            {
+                if (!is_check_obs_response_) {
+                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for obstacle check response...");
+                    break;
+                }
+
+                if (!are_there_obs_) {
+                    std::cout << "MotionPlanner.->There are no temporal obstacles. Announcing failure." << std::endl;
                     current_status = publish_status(
                         actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id, 
+                        goal_id, 
                         "Cannot calculate path from start to goal point"
                     );
                     state = SM_INIT;
-
-                    break;
-                }*/
-
-                try
-                {
-                    auto result = result_future.get();
-                
-                    if(!result->success)
-                    {
-                        std::cout << "MotionPlanner.->There are no temporal obstacles. Announcing failure." << std::endl;
-                        current_status = publish_status(
-                            actionlib_msgs::msg::GoalStatus::ABORTED, 
-                            goal_id, 
-                            "Cannot calculate path from start to goal point"
-                        );
-                        state = SM_INIT;
-                    }
-                    else
-                    {
-                        std::cout << "MotionPlanner.->Temporal obstacles detected. Waiting for them to move." << std::endl;
-                        current_status = publish_status(
-                            actionlib_msgs::msg::GoalStatus::ACTIVE, 
-                            goal_id,
-                            "Waiting for temporal obstacles to move"
-                        );
-                        state = SM_WAIT_FOR_NO_OBSTACLES;
-                    }
-                    break;
-                }
-                catch (const std::exception &e)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Failed to get obstacles.");
+                } else {
+                    std::cout << "MotionPlanner.->Temporal obstacles detected. Waiting for them to move." << std::endl;
                     current_status = publish_status(
-                        actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id, 
-                        "Cannot calculate path from start to goal point"
+                        actionlib_msgs::msg::GoalStatus::ACTIVE, 
+                        goal_id,
+                        "Waiting for temporal obstacles to move"
                     );
-                    state = SM_INIT;
-
-                    break;
+                    state = SM_WAIT_FOR_NO_OBSTACLES;
                 }
+                break;
             }
 
 
             case SM_WAIT_FOR_NO_OBSTACLES:
             {
+                is_wait_obs_response_ = false;
+                are_still_obs_ = true;
+                wait_obs_failed_ = false;
+
                 auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-                auto result_future = clt_are_there_obs_->async_send_request(request);
+                clt_are_there_obs_->async_send_request(request,
+                    [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+                        try {
+                            are_still_obs_ = future.get()->success;
+                        } catch (const std::exception& e) {
+                            RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Cannot call service for checking temporal obstacles: %s", e.what());
+                            wait_obs_failed_ = true;
+                        }
+                        is_wait_obs_response_ = true;
+                    });
 
-                /*if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), result_future) 
-                    != rclcpp::FutureReturnCode::SUCCESS)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Cannot call service for checking temporal obstacles. Announcing failure.");
-
-                    current_status = publish_status(
-                        actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id,
-                        "Cannot calculate path from start to goal point"
-                    );
-                    state = SM_INIT;
-
-                    break;
-                }*/
-
-                try
-                {
-                    auto result = result_future.get();
-
-                    if(!result->success)
-                    {
-                        std::cout << "MotionPlanner.-> Temporal obstacles removed. " << std::endl;
-                        state = SM_CALCULATE_PATH;
-                    }
-                    else
-                        rclcpp::sleep_for(std::chrono::seconds(1));
-                    break;
-                }
-                catch (const std::exception &e)
-                {
-                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Cannot call service for checking temporal obstacles. Announcing failure.");
-
-                    current_status = publish_status(
-                        actionlib_msgs::msg::GoalStatus::ABORTED, 
-                        this->goal_id,
-                        "Cannot calculate path from start to goal point"
-                    );
-                    state = SM_INIT;
-
-                    break;
-                }
+                state = SM_WAIT_FOR_NO_OBSTACLES_RESPONSE;
+                break;
             }
- 
+
+
+            case SM_WAIT_FOR_NO_OBSTACLES_RESPONSE:
+            {
+                if (!is_wait_obs_response_) {
+                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for temporal obstacles to clear...");
+                    break;
+                }
+
+                if (wait_obs_failed_) {
+                    RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Cannot call service for checking temporal obstacles. Announcing failure.");
+
+                    current_status = publish_status(
+                        actionlib_msgs::msg::GoalStatus::ABORTED,
+                        this->goal_id,
+                        "Cannot calculate path from start to goal point"
+                    );
+                    state = SM_INIT;
+                }
+                else if (!are_still_obs_) {
+                    std::cout << "MotionPlanner.-> Temporal obstacles removed." << std::endl;
+                    state = SM_CALCULATE_PATH;
+                }
+                else {
+                    rclcpp::sleep_for(std::chrono::seconds(1));
+                    state = SM_WAIT_FOR_NO_OBSTACLES;
+                }
+
+                break;
+            }
+
                 
             case SM_ENABLE_POT_FIELDS:
             {
@@ -778,27 +799,34 @@ private:
                 {
                     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for potential fields message...");
 
-                    // Create a new promise to wait for message
-                    collision_risk_promise_ = std::make_shared<std::promise<std_msgs::msg::Bool::SharedPtr>>();
+                    is_pot_fields_response_ = false;
+                    pot_fields_received_ = false;
                     waiting_for_potential_fields_ = true;
-
-                    // Detach a thread to wait asynchronously
-                    std::thread([this]() {
-                        auto future = collision_risk_promise_->get_future();
-                        if (future.wait_for(std::chrono::seconds(100)) == std::future_status::ready)
-                        {
-                            RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Potential fields is now available.");
-                            this->state = SM_START_MOVE_PATH;
-                        }
-                        else
-                        {
-                            RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Timeout waiting for potential fields message.");
-                            this->state = SM_INIT;  // Fallback
-                        }
-
-                        waiting_for_potential_fields_ = false;
-                    }).detach();
+                    pot_fields_start_time_ = this->now();
                 }
+
+                if (is_pot_fields_response_)
+                {
+                    waiting_for_potential_fields_ = false;
+
+                    if (pot_fields_received_)
+                    {
+                        RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Potential fields is now available.");
+                        state = SM_START_MOVE_PATH;
+                    }
+                    else
+                    {
+                        RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Potential fields received but invalid.");
+                        state = SM_INIT;
+                    }
+                }
+                else if ((this->now() - pot_fields_start_time_).seconds() > 10.0)
+                {
+                    RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Timeout waiting for potential fields message.");
+                    waiting_for_potential_fields_ = false;
+                    state = SM_INIT;
+                }
+
                 break;
             }
 

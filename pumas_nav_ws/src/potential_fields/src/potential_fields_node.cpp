@@ -682,7 +682,7 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            RCLCPP_WARN(this->get_logger(), "PotentialFields.-> TF Exception: %s", ex.what());
+            //RCLCPP_WARN(this->get_logger(), "PotentialFields.-> TF Exception: %s", ex.what());
             robot_x = robot_y = robot_t = 0.0f;
             return;
         }
