@@ -588,7 +588,6 @@ private:
             case SM_CALCULATE_PATH:
             {
                 get_robot_position();
-                update_augmented_maps();
                 //plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
                 get_plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
 

@@ -100,27 +100,15 @@ public:
 
         sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             point_cloud_topic_, rclcpp::SensorDataQoS(),
-            [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(point_cloud_mutex_);
-                latest_point_cloud_ = msg;
-                point_cloud_received_ = true;
-            });
+            std::bind(&MapAugmenterNode::callback_point_cloud, this, std::placeholders::_1));
 
         sub_point_cloud2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             point_cloud_topic2_, rclcpp::SensorDataQoS(),
-            [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(point_cloud2_mutex_);
-                latest_point_cloud2_ = msg;
-                point_cloud2_received_ = true;
-            });
+            std::bind(&MapAugmenterNode::callback_point_cloud2, this, std::placeholders::_1));
 
         sub_laser_scan_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
             laser_scan_topic_, rclcpp::SensorDataQoS(),
-            [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
-                std::lock_guard<std::mutex> lock(laser_scan_mutex_);
-                latest_laser_scan_ = msg;
-                laser_scan_received_ = true;
-            });
+            std::bind(&MapAugmenterNode::callback_laser_scan, this, std::placeholders::_1));
 
         //############
         // Advertise augmenter services
@@ -215,18 +203,15 @@ private:
     // PointCloud
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_point_cloud_;
     sensor_msgs::msg::PointCloud2::SharedPtr latest_point_cloud_;
-    std::mutex point_cloud_mutex_;
     std::atomic<bool> point_cloud_received_{false};
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_point_cloud2_;
     sensor_msgs::msg::PointCloud2::SharedPtr latest_point_cloud2_;
-    std::mutex point_cloud2_mutex_;
     std::atomic<bool> point_cloud2_received_{false};
 
     // LaserScan
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_laser_scan_;
     sensor_msgs::msg::LaserScan::SharedPtr latest_laser_scan_;
-    std::mutex laser_scan_mutex_;
     std::atomic<bool> laser_scan_received_{false};
 
     //############
@@ -427,6 +412,25 @@ private:
         }
     }
 
+    // Sensor callbacks
+    void callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) 
+    {
+        latest_point_cloud_ = msg;
+        point_cloud_received_ = true;
+    }
+
+    void callback_point_cloud2(const sensor_msgs::msg::PointCloud2::SharedPtr msg) 
+    {
+        latest_point_cloud2_ = msg;
+        point_cloud2_received_ = true;
+    }
+
+    void callback_laser_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg) 
+    {
+        latest_laser_scan_ = msg;
+        laser_scan_received_ = true;
+    }
+
     //############
     //Map Augmenter additional functions
     //get_robot_position() = get_relative_position("map", base_link_name_)
@@ -573,28 +577,22 @@ private:
 
     bool obstacles_map_with_cloud()
     {
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud from topic: %s", point_cloud_topic_.c_str());
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud from topic: %s", point_cloud_topic_.c_str());
         
-        sensor_msgs::msg::PointCloud2::SharedPtr msg;
-        {
-            std::lock_guard<std::mutex> lock(point_cloud_mutex_);
-            if (!point_cloud_received_ || !latest_point_cloud_) {
-                RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new point cloud available.");
-                return false;
-            }
-            msg = latest_point_cloud_;
-            point_cloud_received_ = false;
+        if (!point_cloud_received_){
+            RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new point cloud available.");
+            return false;
         }
 
-        const unsigned char* p = msg->data.data();
+        const unsigned char* p = latest_point_cloud_->data.data();
         int cell_x = 0;
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
+        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, latest_point_cloud_->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
-        for (size_t i = 0; i < msg->width * msg->height; i += cloud_downsampling_)
+        for (size_t i = 0; i < latest_point_cloud_->width * latest_point_cloud_->height; i += cloud_downsampling_)
         {
             Eigen::Vector3d v(
                 *reinterpret_cast<const float*>(p),
@@ -619,38 +617,32 @@ private:
                 }
             }
 
-            p += static_cast<std::size_t>(cloud_downsampling_ * msg->point_step);
+            p += static_cast<std::size_t>(cloud_downsampling_ * latest_point_cloud_->point_step);
         }
 
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud() done");
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud() done");
 
         return true;
     }
 
     bool obstacles_map_with_cloud2()
     {
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud2 from topic: %s", point_cloud_topic2_.c_str());
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point cloud2 from topic: %s", point_cloud_topic2_.c_str());
 
-        sensor_msgs::msg::PointCloud2::SharedPtr msg;
-        {
-            std::lock_guard<std::mutex> lock(point_cloud2_mutex_);
-            if (!point_cloud2_received_ || !latest_point_cloud2_) {
-                RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new point cloud2 available.");
-                return false;
-            }
-            msg = latest_point_cloud2_;
-            point_cloud2_received_ = false;
+        if (!point_cloud2_received_){
+            RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new point cloud2 available.");
+            return false;
         }
 
-        const unsigned char* p = msg->data.data();
+        const unsigned char* p = latest_point_cloud2_->data.data();
         int cell_x = 0;
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
+        Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, latest_point_cloud2_->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
-        for (size_t i = 0; i < msg->width * msg->height; i += cloud_downsampling2_)
+        for (size_t i = 0; i < latest_point_cloud2_->width * latest_point_cloud2_->height; i += cloud_downsampling2_)
         {
             Eigen::Vector3d v(
                 *reinterpret_cast<const float*>(p),
@@ -675,39 +667,33 @@ private:
                 }
             }
 
-            p += static_cast<std::size_t>(cloud_downsampling_ * msg->point_step);
+            p += static_cast<std::size_t>(cloud_downsampling_ * latest_point_cloud2_->point_step);
         }
 
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud2() done");
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud2() done");
         return true;
     }
 
     bool obstacles_map_with_lidar()
     {
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get laser scan from topic: %s", laser_scan_topic_.c_str());
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get laser scan from topic: %s", laser_scan_topic_.c_str());
 
-        sensor_msgs::msg::LaserScan::SharedPtr msg;
-        {
-            std::lock_guard<std::mutex> lock(laser_scan_mutex_);
-            if (!laser_scan_received_ || !latest_laser_scan_) {
-                RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new LaserScan available.");
-                return false;
-            }
-            msg = latest_laser_scan_;
-            laser_scan_received_ = false;
+        if (!laser_scan_received_){
+            RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No new LaserScan available.");
+            return false;
         }
 
         int cell_x = 0;
         int cell_y = 0;
         int cell   = 0;
 
-        Eigen::Affine3d lidar_to_robot = get_relative_position(base_link_name_, msg->header.frame_id);
+        Eigen::Affine3d lidar_to_robot = get_relative_position(base_link_name_, latest_laser_scan_->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
-        for (size_t i = 0; i < msg->ranges.size(); i += lidar_downsampling_)
+        for (size_t i = 0; i < latest_laser_scan_->ranges.size(); i += lidar_downsampling_)
         {
-            float range = msg->ranges[i];
-            float angle = msg->angle_min + i * msg->angle_increment;
+            float range = latest_laser_scan_->ranges[i];
+            float angle = latest_laser_scan_->angle_min + i * latest_laser_scan_->angle_increment;
             Eigen::Vector3d v(range * std::cos(angle), range * std::sin(angle), 0.0);
             v = lidar_to_robot * v;
 
@@ -728,7 +714,7 @@ private:
             }
         }
 
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_lidar() done");
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_lidar() done");
         return true;
     }
 
@@ -807,10 +793,10 @@ private:
             return;
         }
 
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.->Augmenting map using: %s%s%s",
-                    use_lidar_ ? "lidar " : "",
-                    use_cloud_ ? "point_cloud " : "",
-                    use_cloud2_ ? "point_cloud2" : "");
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.->Augmenting map using: %s%s%s",
+        //            use_lidar_ ? "lidar " : "",
+        //            use_cloud_ ? "point_cloud " : "",
+        //            use_cloud2_ ? "point_cloud2" : "");
 
         if (use_online_) {
             auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
@@ -819,8 +805,8 @@ private:
                     try {
                         this->static_map_ = future_static.get()->map;
                         is_static_map_ = true;
-                        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
-                                    static_map_.info.width, static_map_.info.height);
+                        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got static map with size %d x %d", 
+                        //            static_map_.info.width, static_map_.info.height);
                         process_maps();
                     } catch (const std::exception &e) {
                         RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get static map: %s", e.what());
@@ -833,8 +819,8 @@ private:
                     try {
                         this->prohibition_map_ = future_ptohibition.get()->map;
                         is_prohibition_map_ = true;
-                        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got prohibition map with size %d x %d", 
-                                    prohibition_map_.info.width, prohibition_map_.info.height);
+                        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Got prohibition map with size %d x %d", 
+                        //            prohibition_map_.info.width, prohibition_map_.info.height);
                         process_maps();
                     } catch (const std::exception &e) {
                         RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Failed to get prohibition map: %s", e.what());
@@ -854,8 +840,8 @@ private:
         augmented_map_ = merge_maps(static_map_, obstacles_inflated_map_);
         response->map = augmented_map_;
 
-        RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Augmented map response has been sent with size %d x %d", 
-                    static_map_.info.width, static_map_.info.height);
+        //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Augmented map response has been sent with size %d x %d", 
+        //            static_map_.info.width, static_map_.info.height);
     }
 
     void callback_augmented_cost_map(const std::shared_ptr<nav_msgs::srv::GetMap::Request> request,
