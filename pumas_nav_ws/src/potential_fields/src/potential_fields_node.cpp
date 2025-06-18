@@ -39,6 +39,7 @@ public:
         //############
         // Declare parameters
         this->declare_parameter<bool>("debug",           false);
+        this->declare_parameter<bool>("show_image",      false);
         this->declare_parameter<bool>("use_pot_fields",  false);
 
         this->declare_parameter<bool>("use_lidar",       true);
@@ -66,6 +67,7 @@ public:
 
         // Load parameter values into variables
         this->get_parameter("debug",           debug_);
+        this->get_parameter("show_image",      show_img_);
         this->get_parameter("use_pot_fields",  use_pot_fields_);
 
         this->get_parameter("use_lidar",       use_lidar_);
@@ -124,7 +126,6 @@ public:
         //############
         // Wait for transforms
         wait_for_transforms("map", base_link_name_);
-        //wait_for_sensor_messages();
 
         // Simple Move main processing
         processing_timer_ = this->create_wall_timer(
@@ -162,7 +163,7 @@ private:
     tf2_ros::TransformListener tf_listener_;
 
     // Internal parameter values
-    bool debug_, use_pot_fields_, use_lidar_, use_cloud_;
+    bool debug_, show_img_, use_pot_fields_, use_lidar_, use_cloud_;
 
     float min_x_, max_x_, min_y_, max_y_, min_z_, max_z_;
     float pot_fields_d0_, pot_fields_k_rej_, no_sensor_data_timeout_;
@@ -172,10 +173,6 @@ private:
     std::string point_cloud_topic_;
     std::string laser_scan_topic_;
     std::string base_link_name_;
-
-    //wait for messages
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_temp_;
-    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_lidar_temp_;
 
     //############
     // Publishers
@@ -215,6 +212,7 @@ private:
             const std::string &name = param.get_name();
 
             if (name == "debug") debug_ = param.as_bool();
+            else if (name == "show_image")      show_img_       = param.as_bool();
             else if (name == "use_pot_fields")  use_pot_fields_ = param.as_bool();
 
             else if (name == "use_lidar")       use_lidar_      = param.as_bool();
@@ -289,103 +287,6 @@ private:
                         "PotentialFields.-> Transform from '%s' to '%s' is now available.",
                         source_frame.c_str(), target_frame.c_str());
         }
-    }
-
-    void wait_for_sensor_messages()
-    {
-        RCLCPP_INFO(this->get_logger(), "PotentialFields.-> Waiting for first messages from active sensors...");
-
-        sensor_msgs::msg::PointCloud2::SharedPtr ptr_cloud_temp  = nullptr;
-        sensor_msgs::msg::LaserScan::SharedPtr ptr_lidar_temp = nullptr;
-
-        if (use_cloud_)
-        {
-            std::promise<sensor_msgs::msg::PointCloud2::SharedPtr> cloud_promise;
-            auto cloud_future = cloud_promise.get_future();
-
-            std::function<void(sensor_msgs::msg::PointCloud2::SharedPtr)> cloud_cb =
-                [&cloud_promise](sensor_msgs::msg::PointCloud2::SharedPtr msg) mutable {
-                    cloud_promise.set_value(msg);
-                };
-
-            rclcpp::QoS qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
-            qos_profile.best_effort();
-            sub_cloud_temp_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                point_cloud_topic_, qos_profile, cloud_cb);
-
-            if (cloud_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready)
-            {
-                ptr_cloud_temp = cloud_future.get();
-                if (!ptr_cloud_temp) {
-                    RCLCPP_ERROR(this->get_logger(), "PotentialFields.-> Point cloud message was null.");
-                    return;
-                }
-                RCLCPP_INFO(this->get_logger(), "PotentialFields.-> First point cloud message received.");
-            }
-            else
-            {
-                RCLCPP_WARN(this->get_logger(), "PotentialFields.-> Timed out waiting for point cloud message.");
-                return;
-            }
-        }
-
-        if (use_lidar_)
-        {
-            std::promise<sensor_msgs::msg::LaserScan::SharedPtr> lidar_promise;
-            auto lidar_future = lidar_promise.get_future();
-
-            std::function<void(sensor_msgs::msg::LaserScan::SharedPtr)> lidar_cb =
-                [&lidar_promise](sensor_msgs::msg::LaserScan::SharedPtr msg) mutable {
-                    lidar_promise.set_value(msg);
-                };
-
-            rclcpp::QoS qos_profile(rclcpp::QoSInitialization::from_rmw(rmw_qos_profile_sensor_data));
-            qos_profile.reliable();
-            sub_lidar_temp_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-                laser_scan_topic_, qos_profile, lidar_cb);
-
-            if (lidar_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready)
-            {
-                ptr_lidar_temp = lidar_future.get();
-                if (!ptr_lidar_temp) {
-                    RCLCPP_ERROR(this->get_logger(), "PotentialFields.-> Laser scan message was null.");
-                    return;
-                }
-                RCLCPP_INFO(this->get_logger(), "PotentialFields.-> First lasser scan message received.");
-            }
-            else
-            {
-                RCLCPP_WARN(this->get_logger(), "PotentialFields.-> Timed out waiting for lidar message.");
-                return;
-            }
-        }
-
-        RCLCPP_INFO(this->get_logger(), "PotentialFields.-> First messages received. Waiting for TF transforms...");
-        try {
-            if (use_cloud_ && ptr_cloud_temp) {
-                tf_buffer_.canTransform(
-                    base_link_name_, ptr_cloud_temp->header.frame_id,
-                    tf2::TimePointZero,
-                    tf2::durationFromSec(10.0));
-
-                RCLCPP_INFO(this->get_logger(), "PotentialFields.-> Transform from %s to %s is now available.",
-                            ptr_cloud_temp->header.frame_id.c_str(), base_link_name_.c_str());
-            }
-            if (use_lidar_ && ptr_lidar_temp) {
-                tf_buffer_.canTransform(
-                    base_link_name_, ptr_lidar_temp->header.frame_id,
-                    tf2::TimePointZero,
-                    tf2::durationFromSec(10.0));
-                
-                RCLCPP_INFO(this->get_logger(), "PotentialFields.-> Transform from %s to %s is now available.",
-                            ptr_lidar_temp->header.frame_id.c_str(), base_link_name_.c_str());
-            }
-        } catch (const tf2::TransformException& ex) {
-            RCLCPP_ERROR(this->get_logger(), "PotentialFields.-> TF transform error: %s", ex.what());
-            return;
-        }
-
-        RCLCPP_INFO(this->get_logger(), "PotentialFields.-> Sensor TFs are now available. Starting processing...");
     }
 
     //############
@@ -568,7 +469,7 @@ private:
         double& rejection_force_x,
         double& rejection_force_y)
     {
-        if (current_speed_linear_ <= 0.0 && !debug_) {
+        if (current_speed_linear_ <= 0.0 && !(debug_||show_img_)) {
             return false;
         }
 
@@ -633,16 +534,19 @@ private:
         rejection_force_x = (force_count > 0) ? rejection_force_x / force_count : 0.0;
         rejection_force_y = (force_count > 0) ? rejection_force_y / force_count : 0.0;
 
+        if(show_img_){
+            cv::imshow("POTENTIAL FIELDS OBSTACLE", mask);
+            cv::waitKey(30);
+        }
+
         if (debug_)
         {
-            cv::imshow("POTENTIAL FIELDS OBSTACLE", mask);
             if (rejection_force_y != 0)
             {
                 std::cout << "PotentialFields.cloud->rejection_force_x: "
                         << rejection_force_x << "  rejection_force_y: "
                         << rejection_force_y << std::endl;
             }
-            cv::waitKey(30);
         }
 
         return obstacle_count > cloud_threshold_;
