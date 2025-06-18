@@ -889,18 +889,6 @@ private:
             return;
         }
 
-        /*RCLCPP_INFO(this->get_logger(), 
-            "MapAugmenter.-> Parameters: min_x=%.2f  max_x=%.2f  min_y=%.2f  max_y=%.2f  min_z=%.2f  max_z=%.2f",
-            min_x_, max_x_, min_y_, max_y_, min_z_, max_z_);*/
-
-        /*RCLCPP_INFO(this->get_logger(),
-            "MapAugmenter.-> Parameters: decay_factor=%.2f  inflation=%.2f  cost_radius=%.2f",
-            decay_factor_, inflation_radius_, cost_radius_);*/
-
-        /*RCLCPP_INFO(this->get_logger(),
-            "MapAugmenter.-> Parameters: cloud_downsampling=%.2f  cloud_downsampling2=%.2f  lidar_downsampling=%.2f  base_link_name=%s",
-            cloud_downsampling_, cloud_downsampling2_, lidar_downsampling_, base_link_name_.c_str());*/
-
         static int counter = 0;
 
         if (++counter > 10)
