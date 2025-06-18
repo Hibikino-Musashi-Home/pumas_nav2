@@ -197,6 +197,7 @@ private:
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr  pub_goal_dist_angle_;
     rclcpp::Publisher<actionlib_msgs::msg::GoalStatus>::SharedPtr   pub_status_;
     rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr              pub_simple_move_stop_;
+    rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr              pub_update_maps_;
 
     //############
     // Subscribers
@@ -587,6 +588,7 @@ private:
             case SM_CALCULATE_PATH:
             {
                 get_robot_position();
+                update_augmented_maps();
                 //plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
                 get_plan_path_from_augmented_map(robot_x_, robot_y_, global_goal_.position.x, global_goal_.position.y);
 
@@ -954,8 +956,11 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<MotionPlannerNode>();
-    rclcpp::spin(node);
-
+    //rclcpp::spin(node);
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
+    
     rclcpp::shutdown();
     
     return 0;

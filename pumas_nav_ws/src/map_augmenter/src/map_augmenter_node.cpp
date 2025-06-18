@@ -477,7 +477,6 @@ private:
         }
         catch (const tf2::TransformException &ex)
         {
-            //RCLCPP_WARN(this->get_logger(), "TF Exception: %s", ex.what());
             robot_x = 0.0f;
             robot_y = 0.0f;
             robot_t = 0.0f;
@@ -936,7 +935,10 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<MapAugmenterNode>();
-    rclcpp::spin(node);
+    //rclcpp::spin(node);
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
 
     rclcpp::shutdown();
     

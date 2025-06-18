@@ -38,6 +38,10 @@ public:
             "/path_planner/plan_path_with_augmented",
             std::bind(&PathPlannerNode::callback_a_star_with_augmented_map, this, std::placeholders::_1, std::placeholders::_2));
 
+        messages_call_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(1000),
+            std::bind(&PathPlannerNode::messages_caller, this));
+
         RCLCPP_INFO(this->get_logger(), "PathPlanner.-> PathPlannerNode is ready.");
     }
 
@@ -65,8 +69,11 @@ private:
     // map services
     nav_msgs::msg::OccupancyGrid map_;
     nav_msgs::msg::OccupancyGrid cost_map_;
+    nav_msgs::msg::OccupancyGrid augmented_map_;
+    nav_msgs::msg::OccupancyGrid augmented_cost_map_;
 
     // Timer and readiness flag
+    rclcpp::TimerBase::SharedPtr messages_call_timer_;
     rclcpp::TimerBase::SharedPtr service_check_timer_;
     bool services_ready_ = false;
 
@@ -127,7 +134,7 @@ private:
     }
 
     //############
-    // Callback functions
+    // Callback to update messages
     void update_static_maps()
     {
         threads_.push_back(std::thread(std::bind(&PathPlannerNode::call_update_static_maps, this)));
@@ -135,60 +142,68 @@ private:
     
     void call_update_static_maps()
     {
-        using GetMapResponse = nav_msgs::srv::GetMap::Response;
-        using SharedResponse = std::shared_ptr<GetMapResponse>;
-
-        // --- get map ---
-        std::promise<SharedResponse> promise_map;
-        auto future_map = promise_map.get_future();
-
         auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_static_map_->async_send_request(req_map,
-            [&promise_map](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture result_future) {
-                promise_map.set_value(result_future.get());
-            });
-
-        if (future_map.wait_for(std::chrono::seconds(100)) != std::future_status::ready) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Timeout waiting for static map");
-            return;
+        auto future_map = clt_get_static_map_->async_send_request(req_map);
+        try
+        {
+            auto result_map = future_map.get();
+            map_ = result_map->map;
         }
-
-        auto result_map = future_map.get();
-        if (!result_map) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static map response");
-            return;
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static map respons");
         }
-        map_ = result_map->map;
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got static map: %d x %d",
-                    map_.info.width, map_.info.height);
-
-        // --- get cost map ---
-        std::promise<SharedResponse> promise_cost;
-        auto future_cost = promise_cost.get_future();
 
         auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_static_cost_map_->async_send_request(req_cost,
-            [&promise_cost](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture result_future) {
-                promise_cost.set_value(result_future.get());
-            });
-
-        if (future_cost.wait_for(std::chrono::seconds(100)) != std::future_status::ready) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Timeout waiting for static cost map");
-            return;
+        auto future_cost = clt_get_static_cost_map_->async_send_request(req_cost);
+        try
+        {
+            auto result_cost = future_cost.get();
+            cost_map_ = result_cost->map;
         }
-
-        auto result_cost = future_cost.get();
-        if (!result_cost) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static cost map response");
-            return;
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static cost map respons");
         }
-        cost_map_ = result_cost->map;
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got static_cost map: %d x %d",
-                    cost_map_.info.width, cost_map_.info.height);
 
         return;
     }
     
+    void update_augmented_maps()
+    {
+        threads_.push_back(std::thread(std::bind(&PathPlannerNode::call_update_augmented_maps, this)));
+    }
+    
+    void call_update_augmented_maps()
+    {
+        auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
+        auto future_map = clt_get_augmented_map_->async_send_request(req_map);
+        try
+        {
+            auto result_map = future_map.get();
+            augmented_map_ = result_map->map;
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented map respons");
+        }
+
+        auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
+        auto future_cost = clt_get_augmented_cost_map_->async_send_request(req_cost);
+        try
+        {
+            auto result_cost = future_cost.get();
+            augmented_cost_map_ = result_cost->map;
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented cost map respons");
+        }
+
+        return;
+    }
+
+    // Callback for services
     void callback_a_star_with_static_map(
         const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
         std::shared_ptr<nav_msgs::srv::GetPlan::Response> response)
@@ -199,7 +214,7 @@ private:
             return;
         }
 
-       update_static_maps();
+       //update_static_maps();
 
         if (map_.data.empty() || cost_map_.data.empty()) {
             response->plan.poses.clear();
@@ -230,66 +245,6 @@ private:
         }
     }
 
-    void update_augmented_maps()
-    {
-        threads_.push_back(std::thread(std::bind(&PathPlannerNode::call_update_augmented_maps, this)));
-    }
-    
-    void call_update_augmented_maps()
-    {
-        using GetMapResponse = nav_msgs::srv::GetMap::Response;
-        using SharedResponse = std::shared_ptr<GetMapResponse>;
-
-        // --- get map ---
-        std::promise<SharedResponse> promise_map;
-        auto future_map = promise_map.get_future();
-
-        auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_augmented_map_->async_send_request(req_map,
-            [&promise_map](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture result_future) {
-                promise_map.set_value(result_future.get());
-            });
-
-        if (future_map.wait_for(std::chrono::seconds(100)) != std::future_status::ready) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Timeout waiting for augmented map");
-            return;
-        }
-
-        auto result_map = future_map.get();
-        if (!result_map) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented map response");
-            return;
-        }
-        map_ = result_map->map;
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got augmented map: %d x %d",
-                    map_.info.width, map_.info.height);
-
-        // --- get cost map ---
-        std::promise<SharedResponse> promise_cost;
-        auto future_cost = promise_cost.get_future();
-
-        auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        clt_get_augmented_cost_map_->async_send_request(req_cost,
-            [&promise_cost](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture result_future) {
-                promise_cost.set_value(result_future.get());
-            });
-
-        if (future_cost.wait_for(std::chrono::seconds(100)) != std::future_status::ready) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Timeout waiting for augmented cost map");
-            return;
-        }
-
-        auto result_cost = future_cost.get();
-        if (!result_cost) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented cost map response");
-            return;
-        }
-        cost_map_ = result_cost->map;
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Got augmented_cost map: %d x %d",
-                    cost_map_.info.width, cost_map_.info.height);
-
-        return;
-    }
 
     void callback_a_star_with_augmented_map(
         const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
@@ -301,15 +256,15 @@ private:
             return;
         }
 
-        update_augmented_maps();
+        //update_augmented_maps();
 
-        if (map_.data.empty() || cost_map_.data.empty()) {
+        if (augmented_map_.data.empty() || augmented_cost_map_.data.empty()) {
             response->plan.poses.clear();
             return;
         }
 
         nav_msgs::msg::Path path;
-        bool success = PathPlanner::AStar(map_, cost_map_,
+        bool success = PathPlanner::AStar(augmented_map_, augmented_cost_map_,
             request->start.pose, request->goal.pose,
             diagonal_paths_, path);
 
@@ -331,13 +286,31 @@ private:
             response->plan.poses.clear();
         }
     }
+
+    void messages_caller() 
+    {
+        try
+        {
+            update_static_maps();
+            update_augmented_maps();
+
+        }
+        catch(const std::exception& e)
+        {
+            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Messages call failed.");
+        }
+    }
+
 };
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<PathPlannerNode>();
-    rclcpp::spin(node);
+    //rclcpp::spin(node);
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
 
     rclcpp::shutdown();
 
