@@ -38,12 +38,18 @@ public:
         this->declare_parameter("use_point_cloud",        false);
         this->declare_parameter("use_point_cloud2",       false);
         this->declare_parameter("use_online",             false);
-        this->declare_parameter("min_x",                  -10.0);
-        this->declare_parameter("max_x",                  10.0);
-        this->declare_parameter("min_y",                  -10.0);
-        this->declare_parameter("max_y",                  10.0);
-        this->declare_parameter("min_z",                  -1.0);
-        this->declare_parameter("max_z",                  2.0);
+        this->declare_parameter("laser_min_x",            -10.0);
+        this->declare_parameter("laser_max_x",            10.0);
+        this->declare_parameter("laser_min_y",            -10.0);
+        this->declare_parameter("laser_max_y",            10.0);
+        this->declare_parameter("laser_min_z",            -1.0);
+        this->declare_parameter("laser_max_z",            2.0);
+        this->declare_parameter("cloud_min_x",            -10.0);
+        this->declare_parameter("cloud_max_x",            10.0);
+        this->declare_parameter("cloud_min_y",            -10.0);
+        this->declare_parameter("cloud_max_y",            10.0);
+        this->declare_parameter("cloud_min_z",            -1.0);
+        this->declare_parameter("cloud_max_z",            2.0);
         this->declare_parameter("decay_factor",           10);
         this->declare_parameter("inflation_radius",       0.25);
         this->declare_parameter("cost_radius",            0.25);
@@ -62,12 +68,21 @@ public:
         this->get_parameter("use_point_cloud",        use_cloud_);
         this->get_parameter("use_point_cloud2",       use_cloud2_);
         this->get_parameter("use_online",             use_online_);
-        this->get_parameter("min_x",                  min_x_);
-        this->get_parameter("max_x",                  max_x_);
-        this->get_parameter("min_y",                  min_y_);
-        this->get_parameter("max_y",                  max_y_);
-        this->get_parameter("min_z",                  min_z_);
-        this->get_parameter("max_z",                  max_z_);
+
+        this->get_parameter("laser_min_x",            laser_min_x_);
+        this->get_parameter("laser_max_x",            laser_max_x_);
+        this->get_parameter("laser_min_y",            laser_min_y_);
+        this->get_parameter("laser_max_y",            laser_max_y_);
+        this->get_parameter("laser_min_z",            laser_min_z_);
+        this->get_parameter("laser_max_z",            laser_max_z_);
+
+        this->get_parameter("cloud_min_x",            cloud_min_x_);
+        this->get_parameter("cloud_max_x",            cloud_max_x_);
+        this->get_parameter("cloud_min_y",            cloud_min_y_);
+        this->get_parameter("cloud_max_y",            cloud_max_y_);
+        this->get_parameter("cloud_min_z",            cloud_min_z_);
+        this->get_parameter("cloud_max_z",            cloud_max_z_);
+
         this->get_parameter("decay_factor",           decay_factor_);
         this->get_parameter("inflation_radius",       inflation_radius_);
         this->get_parameter("cost_radius",            cost_radius_);
@@ -169,12 +184,8 @@ private:
     bool use_cloud2_;
     bool use_online_;
 
-    double min_x_;
-    double max_x_;
-    double min_y_;
-    double max_y_;
-    double min_z_;
-    double max_z_;
+    float laser_min_x_, laser_max_x_, laser_min_y_, laser_max_y_, laser_min_z_, laser_max_z_;
+    float cloud_min_x_, cloud_max_x_, cloud_min_y_, cloud_max_y_, cloud_min_z_, cloud_max_z_;
 
     int decay_factor_;
     int cloud_downsampling_;
@@ -256,12 +267,19 @@ private:
             else if (param.get_name() == "use_point_cloud2")       use_cloud2_             = param.as_bool();
             else if (param.get_name() == "use_online")             use_online_             = param.as_bool();
 
-            else if (param.get_name() == "min_x")                  min_x_                  = param.as_double();
-            else if (param.get_name() == "max_x")                  max_x_                  = param.as_double();
-            else if (param.get_name() == "min_y")                  min_y_                  = param.as_double();
-            else if (param.get_name() == "max_y")                  max_y_                  = param.as_double();
-            else if (param.get_name() == "min_z")                  min_z_                  = param.as_double();
-            else if (param.get_name() == "max_z")                  max_z_                  = param.as_double();
+            else if (param.get_name() == "laser_min_x")            laser_min_x_            = param.as_double();
+            else if (param.get_name() == "laser_max_x")            laser_max_x_            = param.as_double();
+            else if (param.get_name() == "laser_min_y")            laser_min_y_            = param.as_double();
+            else if (param.get_name() == "laser_max_y")            laser_max_y_            = param.as_double();
+            else if (param.get_name() == "laser_min_z")            laser_min_z_            = param.as_double();
+            else if (param.get_name() == "laser_max_z")            laser_max_z_            = param.as_double();
+
+            else if (param.get_name() == "cloud_min_x")            cloud_min_x_            = param.as_double();
+            else if (param.get_name() == "cloud_max_x")            cloud_max_x_            = param.as_double();
+            else if (param.get_name() == "cloud_min_y")            cloud_min_y_            = param.as_double();
+            else if (param.get_name() == "cloud_max_y")            cloud_max_y_            = param.as_double();
+            else if (param.get_name() == "cloud_min_z")            cloud_min_z_            = param.as_double();
+            else if (param.get_name() == "cloud_max_z")            cloud_max_z_            = param.as_double();
 
             else if (param.get_name() == "decay_factor")           decay_factor_           = param.as_int();
             else if (param.get_name() == "cloud_downsampling")     cloud_downsampling_     = param.as_int();
@@ -601,9 +619,9 @@ private:
 
             v = cam_to_robot * v;
 
-            if (v.x() > min_x_ && v.x() < max_x_ &&
-                v.y() > min_y_ && v.y() < max_y_ &&
-                v.z() > min_z_ && v.z() < max_z_)
+            if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
+                v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
+                v.z() > cloud_min_z_ && v.z() < cloud_max_z_)
             {
                 v = robot_to_map * v;
 
@@ -651,9 +669,9 @@ private:
 
             v = cam_to_robot * v;
 
-            if (v.x() > min_x_ && v.x() < max_x_ &&
-                v.y() > min_y_ && v.y() < max_y_ &&
-                v.z() > min_z_ && v.z() < max_z_)
+            if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
+                v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
+                v.z() > cloud_min_z_ && v.z() < cloud_max_z_)
             {
                 v = robot_to_map * v;
 
@@ -697,9 +715,9 @@ private:
             Eigen::Vector3d v(range * std::cos(angle), range * std::sin(angle), 0.0);
             v = lidar_to_robot * v;
 
-            if (v.x() > min_x_ && v.x() < max_x_ &&
-                v.y() > min_y_ && v.y() < max_y_ &&
-                v.z() > min_z_ && v.z() < max_z_)
+            if (v.x() > laser_min_x_ && v.x() < laser_max_x_ &&
+                v.y() > laser_min_y_ && v.y() < laser_max_y_ &&
+                v.z() > laser_min_z_ && v.z() < laser_max_z_)
             {
                 v = robot_to_map * v;
                 cell_x = static_cast<int>((v.x() - obstacles_map_.info.origin.position.x) / obstacles_map_.info.resolution);

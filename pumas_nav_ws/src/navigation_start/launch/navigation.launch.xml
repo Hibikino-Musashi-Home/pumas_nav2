@@ -19,12 +19,18 @@
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
-  <arg name="min_x" default="0.17"/>
-  <arg name="max_x" default="0.50"/>
-  <arg name="min_y" default="-0.25"/>
-  <arg name="max_y" default="0.25"/>
-  <arg name="min_z" default="0.025"/>
-  <arg name="max_z" default="1.00"/>
+  <arg name="laser_min_x" default="0.17"/>
+  <arg name="laser_max_x" default="0.50"/>
+  <arg name="laser_min_y" default="-0.25"/>
+  <arg name="laser_max_y" default="0.25"/>
+  <arg name="laser_min_z" default="0.025"/>
+  <arg name="laser_max_z" default="1.00"/>
+  <arg name="cloud_min_x" default="0.30"/>
+  <arg name="cloud_max_x" default="0.80"/>
+  <arg name="cloud_min_y" default="-0.30"/>
+  <arg name="cloud_max_y" default="0.30"/>
+  <arg name="cloud_min_z" default="0.05"/>
+  <arg name="cloud_max_z" default="1.50"/>
   <arg name="pub_topic_name" default="/navigation/potential_fields/enable"/>
 
   <node name="killer_node"
@@ -99,13 +105,21 @@
     
     <param name="inflation_radius" value="0.22"/>
     <param name="cost_radius" value="0.25"/> 
-    
-    <param name="max_x" value="$(var max_x)"/>
-    <param name="min_x" value="$(var min_x)"/>
-    <param name="max_y" value="$(var max_y)"/>
-    <param name="min_y" value="$(var min_y)"/>
-    <param name="max_z" value="$(var max_z)"/>
-    <param name="min_z" value="$(var min_z)"/>
+
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
+
   </node>
 
   <!-- Path Planner -->
@@ -144,12 +158,19 @@
     <param name="use_lidar" value="$(var use_lidar)"/>
     <param name="use_point_cloud" value="$(var use_point_cloud)"/>
 
-    <param name="max_x" value="$(var max_x)"/>
-    <param name="min_x" value="$(var min_x)"/>
-    <param name="max_y" value="$(var max_y)"/>
-    <param name="min_y" value="$(var min_y)"/>
-    <param name="max_z" value="$(var max_z)"/>
-    <param name="min_z" value="$(var min_z)"/>
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
     <param name="pot_fields_d0" value="0.80"/>
     <param name="pot_fields_k_rej" value="0.40"/>

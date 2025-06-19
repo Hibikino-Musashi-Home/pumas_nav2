@@ -45,12 +45,19 @@ public:
         this->declare_parameter<bool>("use_lidar",       true);
         this->declare_parameter<bool>("use_point_cloud", false);
 
-        this->declare_parameter<float>("min_x", 0.30);
-        this->declare_parameter<float>("max_x", 0.80);
-        this->declare_parameter<float>("min_y", -0.30);
-        this->declare_parameter<float>("max_y", 0.30);
-        this->declare_parameter<float>("min_z", 0.05);
-        this->declare_parameter<float>("max_z", 1.50);
+        this->declare_parameter<float>("laser_min_x", 0.30);
+        this->declare_parameter<float>("laser_max_x", 0.80);
+        this->declare_parameter<float>("laser_min_y", -0.30);
+        this->declare_parameter<float>("laser_max_y", 0.30);
+        this->declare_parameter<float>("laser_min_z", 0.05);
+        this->declare_parameter<float>("laser_max_z", 1.50);
+
+        this->declare_parameter<float>("cloud_min_x", 0.30);
+        this->declare_parameter<float>("cloud_max_x", 0.80);
+        this->declare_parameter<float>("cloud_min_y", -0.30);
+        this->declare_parameter<float>("cloud_max_y", 0.30);
+        this->declare_parameter<float>("cloud_min_z", 0.05);
+        this->declare_parameter<float>("cloud_max_z", 1.50);
 
         this->declare_parameter<float>("pot_fields_d0",          1.0);
         this->declare_parameter<float>("pot_fields_k_rej",       1.0);
@@ -73,12 +80,19 @@ public:
         this->get_parameter("use_lidar",       use_lidar_);
         this->get_parameter("use_point_cloud", use_cloud_);
 
-        this->get_parameter("min_x", min_x_);
-        this->get_parameter("max_x", max_x_);
-        this->get_parameter("min_y", min_y_);
-        this->get_parameter("max_y", max_y_);
-        this->get_parameter("min_z", min_z_);
-        this->get_parameter("max_z", max_z_);
+        this->get_parameter("laser_min_x", laser_min_x_);
+        this->get_parameter("laser_max_x", laser_max_x_);
+        this->get_parameter("laser_min_y", laser_min_y_);
+        this->get_parameter("laser_max_y", laser_max_y_);
+        this->get_parameter("laser_min_z", laser_min_z_);
+        this->get_parameter("laser_max_z", laser_max_z_);
+
+        this->get_parameter("cloud_min_x", cloud_min_x_);
+        this->get_parameter("cloud_max_x", cloud_max_x_);
+        this->get_parameter("cloud_min_y", cloud_min_y_);
+        this->get_parameter("cloud_max_y", cloud_max_y_);
+        this->get_parameter("cloud_min_z", cloud_min_z_);
+        this->get_parameter("cloud_max_z", cloud_max_z_);
 
         this->get_parameter("pot_fields_d0",          pot_fields_d0_);
         this->get_parameter("pot_fields_k_rej",       pot_fields_k_rej_);
@@ -165,7 +179,8 @@ private:
     // Internal parameter values
     bool debug_, show_img_, use_pot_fields_, use_lidar_, use_cloud_;
 
-    float min_x_, max_x_, min_y_, max_y_, min_z_, max_z_;
+    float laser_min_x_, laser_max_x_, laser_min_y_, laser_max_y_, laser_min_z_, laser_max_z_;
+    float cloud_min_x_, cloud_max_x_, cloud_min_y_, cloud_max_y_, cloud_min_z_, cloud_max_z_;
     float pot_fields_d0_, pot_fields_k_rej_, no_sensor_data_timeout_;
     int cloud_threshold_, cloud_downsampling_;
     int lidar_threshold_, lidar_downsampling_;
@@ -218,12 +233,19 @@ private:
             else if (name == "use_lidar")       use_lidar_      = param.as_bool();
             else if (name == "use_point_cloud") use_cloud_      = param.as_bool();
 
-            else if (name == "min_x") min_x_ = param.as_double();
-            else if (name == "max_x") max_x_ = param.as_double();
-            else if (name == "min_y") min_y_ = param.as_double();
-            else if (name == "max_y") max_y_ = param.as_double();
-            else if (name == "min_z") min_z_ = param.as_double();
-            else if (name == "max_z") max_z_ = param.as_double();
+            else if (name == "laser_min_x") laser_min_x_ = param.as_double();
+            else if (name == "laser_max_x") laser_max_x_ = param.as_double();
+            else if (name == "laser_min_y") laser_min_y_ = param.as_double();
+            else if (name == "laser_max_y") laser_max_y_ = param.as_double();
+            else if (name == "laser_min_z") laser_min_z_ = param.as_double();
+            else if (name == "laser_max_z") laser_max_z_ = param.as_double();
+
+            else if (name == "cloud_min_x") cloud_min_x_ = param.as_double();
+            else if (name == "cloud_max_x") cloud_max_x_ = param.as_double();
+            else if (name == "cloud_min_y") cloud_min_y_ = param.as_double();
+            else if (name == "cloud_max_y") cloud_max_y_ = param.as_double();
+            else if (name == "cloud_min_z") cloud_min_z_ = param.as_double();
+            else if (name == "cloud_max_z") cloud_max_z_ = param.as_double();
 
             else if (name == "pot_fields_d0")           pot_fields_d0_          = param.as_double();
             else if (name == "pot_fields_k_rej")        pot_fields_k_rej_       = param.as_double();
@@ -403,7 +425,7 @@ private:
             return false;
         }
 
-        float optimal_x = get_search_distance(); 
+        float optimal_x = get_search_distance(laser_max_x_); 
         int obstacle_count = 0;
         int force_count = 0;
         rejection_force_x = 0.0;
@@ -430,9 +452,9 @@ private:
             Eigen::Vector3d v(range * cos(angle), range * sin(angle), 0);
             v = tf * v;
 
-            if (v.x() > min_x_ && v.x() < optimal_x &&
-                v.y() > min_y_ && v.y() < max_y_ &&
-                v.z() > min_z_ && v.z() < max_z_)
+            if (v.x() > laser_min_x_ && v.x() < optimal_x &&
+                v.y() > laser_min_y_ && v.y() < laser_max_y_ &&
+                v.z() > laser_min_z_ && v.z() < laser_max_z_)
             {
                 obstacle_count++;
             }
@@ -473,7 +495,7 @@ private:
             return false;
         }
 
-        float optimal_x = get_search_distance();
+        float optimal_x = get_search_distance(cloud_max_x_);
         int obstacle_count = 0;
         int force_count = 0;
         rejection_force_x = 0;
@@ -509,19 +531,19 @@ private:
             Eigen::Vector3d v(x, y, z);
             v = tf * v;
 
-            if (v.x() > min_x_ && v.x() < optimal_x &&
-                v.y() > min_y_ && v.y() < max_y_ &&
-                v.z() > min_z_ && v.z() < max_z_)
+            if (v.x() > cloud_min_x_ && v.x() < optimal_x &&
+                v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
+                v.z() > cloud_min_z_ && v.z() < cloud_max_z_)
             {
                 obstacle_count++;
             }
 
-            if (v.z() > min_z_ && v.norm() < max_x_)
+            if (v.z() > cloud_min_z_ && v.norm() < cloud_max_x_)
             {
                 mask.data[i] = 255;
 
-                float s = pot_fields_d0_ / max_x_;
-                float force_mag = s * pot_fields_k_rej_ * std::sqrt(1.0 / v.norm() - 1.0 / max_x_);
+                float s = pot_fields_d0_ / cloud_max_x_;
+                float force_mag = s * pot_fields_k_rej_ * std::sqrt(1.0 / v.norm() - 1.0 / cloud_max_x_);
 
                 if (!std::isnan(force_mag)) {
                     rejection_force_x -= force_mag * v.x() / v.norm();
@@ -552,14 +574,14 @@ private:
         return obstacle_count > cloud_threshold_;
     }
 
-    float get_search_distance()
+    float get_search_distance(float max_x)
     {
         float robot_x, robot_y, robot_a;
         get_robot_position_wrt_map(robot_x, robot_y, robot_a);
         float dist_to_goal = sqrt(pow(global_goal_x_ - robot_x, 2) + pow(global_goal_x_ - robot_x, 2));
-        if(dist_to_goal < max_x_)
+        if(dist_to_goal < max_x)
             return dist_to_goal;
-        return max_x_;
+        return max_x;
     }
 
     void get_robot_position_wrt_map(float &robot_x, float &robot_y, float &robot_t)
