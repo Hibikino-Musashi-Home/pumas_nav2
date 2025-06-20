@@ -172,8 +172,11 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
-    <param name="pot_fields_d0" value="0.80"/>
-    <param name="pot_fields_k_rej" value="0.40"/>
+    <param name="laser_pot_fields_d0" value="0.50"/>
+    <param name="laser_pot_fields_k_rej" value="0.40"/>
+
+    <param name="cloud_pot_fields_d0" value="0.80"/>
+    <param name="cloud_pot_fields_k_rej" value="0.40"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>

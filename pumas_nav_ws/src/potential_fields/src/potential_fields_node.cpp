@@ -59,8 +59,10 @@ public:
         this->declare_parameter<float>("cloud_min_z", 0.05);
         this->declare_parameter<float>("cloud_max_z", 1.50);
 
-        this->declare_parameter<float>("pot_fields_d0",          1.0);
-        this->declare_parameter<float>("pot_fields_k_rej",       1.0);
+        this->declare_parameter<float>("laser_pot_fields_d0",   1.0);
+        this->declare_parameter<float>("cloud_pot_fields_d0",   1.0);
+        this->declare_parameter<float>("laser_pot_fields_k_rej",1.0);
+        this->declare_parameter<float>("cloud_pot_fields_k_rej",1.0);
         this->declare_parameter<float>("no_sensor_data_timeout", 0.5);
 
         this->declare_parameter<int>("cloud_points_threshold", 100);
@@ -94,8 +96,10 @@ public:
         this->get_parameter("cloud_min_z", cloud_min_z_);
         this->get_parameter("cloud_max_z", cloud_max_z_);
 
-        this->get_parameter("pot_fields_d0",          pot_fields_d0_);
-        this->get_parameter("pot_fields_k_rej",       pot_fields_k_rej_);
+        this->get_parameter("laser_pot_fields_d0",    laser_pot_fields_d0_);
+        this->get_parameter("cloud_pot_fields_d0",    cloud_pot_fields_d0_);
+        this->get_parameter("laser_pot_fields_k_rej", laser_pot_fields_k_rej_);
+        this->get_parameter("cloud_pot_fields_k_rej", cloud_pot_fields_k_rej_);
         this->get_parameter("no_sensor_data_timeout", no_sensor_data_timeout_);
 
         this->get_parameter("cloud_points_threshold", cloud_threshold_);
@@ -181,7 +185,9 @@ private:
 
     float laser_min_x_, laser_max_x_, laser_min_y_, laser_max_y_, laser_min_z_, laser_max_z_;
     float cloud_min_x_, cloud_max_x_, cloud_min_y_, cloud_max_y_, cloud_min_z_, cloud_max_z_;
-    float pot_fields_d0_, pot_fields_k_rej_, no_sensor_data_timeout_;
+    float laser_pot_fields_d0_, laser_pot_fields_k_rej_;
+    float cloud_pot_fields_d0_, cloud_pot_fields_k_rej_;
+    float no_sensor_data_timeout_;
     int cloud_threshold_, cloud_downsampling_;
     int lidar_threshold_, lidar_downsampling_;
 
@@ -247,8 +253,10 @@ private:
             else if (name == "cloud_min_z") cloud_min_z_ = param.as_double();
             else if (name == "cloud_max_z") cloud_max_z_ = param.as_double();
 
-            else if (name == "pot_fields_d0")           pot_fields_d0_          = param.as_double();
-            else if (name == "pot_fields_k_rej")        pot_fields_k_rej_       = param.as_double();
+            else if (name == "laser_pot_fields_d0")     laser_pot_fields_d0_    = param.as_double();
+            else if (name == "cloud_pot_fields_d0")     cloud_pot_fields_d0_    = param.as_double();
+            else if (name == "laser_pot_fields_k_rej")  laser_pot_fields_k_rej_ = param.as_double();
+            else if (name == "cloud_pot_fields_k_rej")  cloud_pot_fields_k_rej_ = param.as_double();
             else if (name == "no_sensor_data_timeout")  no_sensor_data_timeout_ = param.as_double();
 
             else if (name == "cloud_points_threshold")  cloud_threshold_    = param.as_int();
@@ -460,8 +468,8 @@ private:
             }
 
             double distance = v.norm();
-            if (distance < pot_fields_d0_) {
-                double force_mag = pot_fields_k_rej_ * std::sqrt(1.0 / distance - 1.0 / pot_fields_d0_);
+            if (distance < laser_pot_fields_d0_) {
+                double force_mag = laser_pot_fields_k_rej_ * std::sqrt(1.0 / distance - 1.0 / laser_pot_fields_d0_);
                 rejection_force_x -= force_mag * v.x() / distance;
                 rejection_force_y -= force_mag * v.y() / distance;
                 force_count++;
@@ -538,12 +546,10 @@ private:
                 obstacle_count++;
             }
 
-            if (v.z() > cloud_min_z_ && v.norm() < cloud_max_x_)
+            if (v.z() > cloud_min_z_ && v.norm() < cloud_pot_fields_d0_)
             {
                 mask.data[i] = 255;
-
-                float s = pot_fields_d0_ / cloud_max_x_;
-                float force_mag = s * pot_fields_k_rej_ * std::sqrt(1.0 / v.norm() - 1.0 / cloud_max_x_);
+                float force_mag = cloud_pot_fields_k_rej_ * std::sqrt(1.0 / v.norm() - 1.0 / cloud_pot_fields_d0_);
 
                 if (!std::isnan(force_mag)) {
                     rejection_force_x -= force_mag * v.x() / v.norm();
@@ -641,8 +647,8 @@ private:
         marker.points.clear();
         marker.points.push_back(origin);
         geometry_msgs::msg::Point p1;
-        p1.x = (10.0 / pot_fields_k_rej_) * f1.x;
-        p1.y = (10.0 / pot_fields_k_rej_) * f1.y;
+        p1.x = (10.0 / laser_pot_fields_k_rej_) * f1.x;
+        p1.y = (10.0 / laser_pot_fields_k_rej_) * f1.y;
         p1.z = 0;
         marker.points.push_back(p1);
         marker.color.a = 1.0;
@@ -656,8 +662,8 @@ private:
         marker.points.clear();
         marker.points.push_back(origin);
         geometry_msgs::msg::Point p2;
-        p2.x = (10.0 / pot_fields_k_rej_) * f2.x;
-        p2.y = (10.0 / pot_fields_k_rej_) * f2.y;
+        p2.x = (10.0 / laser_pot_fields_k_rej_) * f2.x;
+        p2.y = (10.0 / laser_pot_fields_k_rej_) * f2.y;
         p2.z = 0;
         marker.points.push_back(p2);
         marker.color.r = 0.0;
@@ -670,8 +676,8 @@ private:
         marker.points.clear();
         marker.points.push_back(origin);
         geometry_msgs::msg::Point p3;
-        p3.x = (10.0 / pot_fields_k_rej_) * (f1.x + f2.x);
-        p3.y = (10.0 / pot_fields_k_rej_) * (f1.y + f2.y);
+        p3.x = (10.0 / laser_pot_fields_k_rej_) * (f1.x + f2.x);
+        p3.y = (10.0 / laser_pot_fields_k_rej_) * (f1.y + f2.y);
         p3.z = 0;
         marker.points.push_back(p3);
         marker.color.r = 1.0;
