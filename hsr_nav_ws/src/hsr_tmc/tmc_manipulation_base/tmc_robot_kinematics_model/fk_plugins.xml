@@ -1,0 +1,7 @@
+<library path="pinocchio_wrapper">
+  <class name="tmc_robot_kinematics_model/PinocchioWrapper"
+         type="tmc_robot_kinematics_model::PinocchioWrapper"
+         base_class_type="tmc_robot_kinematics_model::IRobotKinematicsModel">
+    <description> Forward kinematics class with Pinocchio </description>
+  </class>
+</library>

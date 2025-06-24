@@ -1,0 +1,18 @@
+<package format="3">
+  <name>exxx_control_table</name>
+  <version>1.0.0</version>
+  <description> Control table for servo</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website">http://ros.org/wiki/exxx_control_table</url>
+
+  <author>Koji Terada</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,14 @@
+<library path="hsrb_analytic_ik">
+  <class name="hsrb_analytic_ik/HsrbIKSolver" type="hsrb_analytic_ik::HsrbIKSolver" base_class_type="tmc_robot_kinematics_model::IKSolver">
+    <description>This is an ik solver for hsr hsrb.</description>
+  </class>
+  <class name="hsrb_analytic_ik/HsrcIKSolver" type="hsrb_analytic_ik::HsrcIKSolver" base_class_type="tmc_robot_kinematics_model::IKSolver">
+    <description>This is an ik solver for hsr hsrc.</description>
+  </class>
+  <class name="hsrb_analytic_ik/HsrbBaseYawIKSolver" type="hsrb_analytic_ik::HsrbBaseYawIKSolver" base_class_type="tmc_robot_kinematics_model::IKSolver">
+    <description>This is an ik solver for hsrb using arm and base_roll_joint.</description>
+  </class>
+  <class name="hsrb_analytic_ik/HsrcBaseYawIKSolver" type="hsrb_analytic_ik::HsrcBaseYawIKSolver" base_class_type="tmc_robot_kinematics_model::IKSolver">
+    <description>This is an ik solver for hsrc using arm and base_roll_joint.</description>
+  </class>
+</library>

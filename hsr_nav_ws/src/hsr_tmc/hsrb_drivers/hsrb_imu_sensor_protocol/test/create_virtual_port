@@ -1,0 +1,8 @@
+#!/bin/bash
+if test $# -ge 2
+then
+  socat -d -d pty,raw,echo=0,link=$1 pty,raw,echo=0,link=$2
+else
+  socat -d -d pty,raw,echo=0,link=/tmp/pc pty,raw,echo=0,link=/tmp/sensor
+fi
+sleep 120

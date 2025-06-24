@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    sensors:
+      type: diagnostic_aggregator/AnalyzerGroup
+      path: Sensors
+      analyzers:
+        bumper:
+          type: diagnostic_aggregator/GenericAnalyzer
+          path: Bumper
+          startswith: ['hsrb_bumper']
+        urg:
+          type: diagnostic_aggregator/GenericAnalyzer
+          path: Hokuyo
+          find_and_remove_prefix: ['urg_node: ']
+    joints:
+      type: diagnostic_aggregator/GenericAnalyzer
+      path: Joints
+      regex: ['.*_joint']
+      num_items: 11

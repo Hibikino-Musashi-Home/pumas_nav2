@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    end_effector_frame: hand_palm_link
+    open_loop_control: true
+    arm_controllers:
+      - arm_trajectory_controller
+    use_joints:
+      - arm_lift_joint
+      - arm_flex_joint
+      - arm_roll_joint
+      - wrist_flex_joint
+      - wrist_roll_joint
+    ik_arm_weights: [200.0, 5.0, 1.0, 1.0, 1.0]
+    ik_base_weights: [200.0, 30.0, 5.0]

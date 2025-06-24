@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    video_device: /dev/hand_camera
+    framerate: 30.0
+    io_method: mmap
+    frame_id: hand_camera_frame
+    pixel_format: yuyv
+    image_width: 640
+    image_height: 480
+    camera_name: hand_camera

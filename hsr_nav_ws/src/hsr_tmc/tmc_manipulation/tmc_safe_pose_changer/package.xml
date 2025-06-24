@@ -1,0 +1,31 @@
+<package format="3">
+  <name>tmc_safe_pose_changer</name>
+  <version>2.0.0</version>
+  <description>Joint state moving function</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <author>Keisuke Takeshita</author>
+  <author>Ryuya Yamada</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>tmc_utils</test_depend>
+
+  <depend>angles</depend>
+  <depend>control_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend> 
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tmc_manipulation_util</depend>
+  <depend>tmc_planning_msgs</depend>
+  <depend>tmc_utils</depend>
+  <depend>trajectory_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

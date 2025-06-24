@@ -1,0 +1,10 @@
+"# ""種別""",型,名前,説明,単位,MKSへの変換,種類,初期値,control,hand,用途,備考
+機能情報,uint8_t,value1,test value1,[-],-,static_param,0,○,○,各軸のID,11:台車モータ（正面から見て右） 12：台車モータ（正面から見て左）13：旋回軸 21：昇降軸 31：首ヨー 32：首ピッチ 22：肩 23：腕1 24：腕2 25：腕3 41：ハンド
+ ,int8_t,value2,test value2,[-],-,static_param,0,○,○,終端抵抗のスイッチ,--
+ ,uint16_t,value3,test value3,[-],-,static_param,0,○,○,0:dc_hand、1:dc、2:dcbl(上位からドライバの種別を知るときに使用),--
+ ,int16_t,value4,test value4,[-],-,static_param,0,○,○,EEPROMに書き込みたいときは、ここを1にする。書き込み失敗時は、alarm statusのbit7が成立する。,誤送信によるEEPROMの書き込みを防ぐため、インストラクションコマンドにしたい。
+ ,uint32_t,value5,test value5,[-],-,order,0,○,○,"0：制御なし 1：電圧 2：電流 3：速度 4：位置 5：速度＋位置(MR) 6：速度（AVAGO）7：速度＋位置(AVAGO) 8:位置(avago), 速度(MR)",--
+,int32_t,value6,test_value6,,,order,0,○,○,,
+ ,uint64_t,value7,test value7,[V],1,present,0,○,○,現在基盤に供給されている電圧,--
+,int64_t,value8,test value8,,1000,present,0,○,○,,
+,float,value9,test value9,,1.00E-06,order,0,○,○,,

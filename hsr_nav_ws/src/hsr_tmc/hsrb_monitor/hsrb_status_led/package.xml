@@ -1,0 +1,26 @@
+<package format="3">
+  <name>hsrb_status_led</name>
+  <version>2.0.0</version>
+  <description>Status LED controller</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website">None</url>
+
+  <author>Yoshimi Iyoda</author>
+  <author>Keisuke Takeshita</author>
+
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <test_depend>launch</test_depend>
+  <test_depend>launch_ros</test_depend>
+  <test_depend>launch_testing</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

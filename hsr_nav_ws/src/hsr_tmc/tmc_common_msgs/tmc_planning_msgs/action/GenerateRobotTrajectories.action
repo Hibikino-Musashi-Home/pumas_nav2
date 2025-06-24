@@ -1,0 +1,8 @@
+tmc_planning_msgs/Constraints constraints
+moveit_msgs/RobotState initial_state
+float64 normalized_velocity
+string[] ignore_joints
+---
+moveit_msgs/RobotTrajectory[] robot_trajectories
+---
+

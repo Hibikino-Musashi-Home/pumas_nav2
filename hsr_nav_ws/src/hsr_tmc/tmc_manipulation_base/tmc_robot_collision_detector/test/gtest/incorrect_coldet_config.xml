@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<CollisionDetectConfig>
+  <group name="BODY"
+    <object name="BASE/SHAPE_BASE_1"/>
+    <object name="BASE/SHAPE_BASE_2"/>
+    <object name="CARM/SHAPE_LINEAR_0"/>
+    <object name="CARM/SHAPE_LINEAR_1"/>
+  </group>
+
+  <group name= "HEAD">
+    <object name="CARM/HEAD/SHAPE_NECK"/>
+    <object name="CARM/HEAD/SHAPE_HEAD"/>
+    <object name="CARM/HEAD/SHAPE_URG"/>
+    <object name="CARM/HEAD/SHAPE_URG_PEDESTAL"/>
+    <object name="CARM/HEAD/SHAPE_KINECT"/>
+  </group>
+
+  <group name= "HAND">
+    <object name="CARM/HAND/SHAPE_11"/>
+    <object name="CARM/HAND/SHAPE_12"/>
+    <object name="CARM/HAND/SHAPE_13"/>
+    <object name="CARM/HAND/SHAPE_21"/>
+    <object name="CARM/HAND/SHAPE_22"/>
+  </group>
+
+  <group name= "ARM1">
+    <object name="CARM/SHAPE_SHOULDER_Y"/>
+  </group>
+
+  <group name= "ARM2">
+    <object name="CARM/SHAPE_SHOULDER_R"/>
+  </group>
+	
+  <group name= "ARM3">
+    <object name="CARM/SHAPE_SHOULDER_P"/>
+  </group>
+	
+  <group name= "ARM4">
+    <object name="CARM/SHAPE_ELBOW_P"/>
+  </group>
+
+  <group name= "ARM5">
+    <object name="CARM/SHAPE_WRIST_Y_1"/>
+    <object name="CARM/SHAPE_WRIST_Y_2"/>
+  </group>
+
+  <group name= "ARM6">
+    <object name="CARM/SHAPE_WRIST_R"/>
+  </group>
+
+  <group name= "ARM7">
+    <object name="CARM/SHAPE_WRIST_P_1"/>
+    <object name="CARM/SHAPE_WRIST_P_2"/>
+    <object name="CARM/SHAPE_WRIST_P_3"/>
+  </group>
+  
+  <group name= "OUTER">
+  </group>
+  
+  <non-contact>
+    <pair group1="BODY" group2="HEAD" />
+    <pair group1="BODY" group2="ARM1" />
+    <pair group1="HEAD" group2="ARM1" />
+    <pair group1="HEAD" group2="ARM2" />
+    <pair group1="BODY" group2="ARM2" />
+    <pair group1="ARM1" group2="ARM2" />
+    <pair group1="ARM2" group2="ARM3" />
+    <pair group1="ARM3" group2="ARM4" />
+    <pair group1="ARM3" group2="ARM5" />
+    <pair group1="ARM3" group2="BODY" />
+    <pair group1="ARM4" group2="ARM5" />
+    <pair group1="ARM5" group2="ARM6" />
+    <pair group1="ARM6" group2="ARM7" />
+    <pair group1="ARM7" group2="HAND" />
+  </non-contact>
+  
+  <non-check-inner-distance>
+  </non-check-inner-distance>
+</CollisionDetectConfig>

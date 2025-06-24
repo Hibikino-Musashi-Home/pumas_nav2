@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<CollisionDetectConfig>
+  <group name= "link1">
+    <object name="link1/collision/0"/>
+    <object name="link1/collision/1"/>
+  </group>
+
+  <group name= "link2">
+    <object name="link2/collision/0"/>
+  </group>
+
+  <group name= "link3">
+    <object name="link3/collision/0"/>
+  </group>
+
+  <group name= "link4">
+    <object name="link4/collision/0"/>
+  </group>
+
+  <group name= "link5">
+    <object name="link5/collision/0"/>
+  </group>
+
+  <group name= "link6">
+    <object name="link6/collision/0"/>
+  </group>
+
+  <group name= "link7">
+    <object name="link7/collision/0"/>
+    <object name="link7/collision/1"/>
+    <object name="link7/collision/2"/>
+    <object name="link7/collision/3"/>
+  </group>
+
+  <group name= "hand_grasped">
+    <object name="link7"/> 
+  </group>
+
+  <group name= "OUTER">
+  </group>
+
+  <group name= "CUBOID">
+  </group>
+
+  <robot-parts-group>
+    <group name="link1"/>
+    <group name="link2"/>
+    <group name="link3"/>
+    <group name="link4"/>
+    <group name="link5"/>
+    <group name="link6"/>
+    <group name="link7"/>
+  </robot-parts-group>
+
+  <non-contact>
+    <pair group1="link1" group2="link2" />
+    <pair group1="link2" group2="link3" />
+    <pair group1="link3" group2="link4" />
+    <pair group1="link4" group2="link5" />
+    <pair group1="link5" group2="link6" />
+    <pair group1="link6" group2="link7" />
+    <pair group1="link7" group2="hand_grasped" />
+  </non-contact>
+
+  <non-check-inner-distance>
+  </non-check-inner-distance>
+
+</CollisionDetectConfig>

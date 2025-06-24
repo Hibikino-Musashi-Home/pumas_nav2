@@ -1,0 +1,24 @@
+# Summary(TODO)
+
+# The trajectory to filter
+trajectory_msgs/JointTrajectory trajectory
+
+# Starting state updates. If certain joints should be considered
+# at positions other than the current ones, these positions should
+# be set here
+moveit_msgs/RobotState start_state
+
+# A vector of JointLimit messages.
+# Each message contains the limits for a specific joint
+moveit_msgs/JointLimits[] limits
+
+# Total allowed time for filtering
+builtin_interfaces/Duration allowed_time
+---
+# comment (TODO)
+trajectory_msgs/JointTrajectory trajectory
+
+bool is_success
+
+# comment (TODO)
+# ArmNavigationErrorCodes error_code

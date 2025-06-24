@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE trml SYSTEM "trml.dtd">
+
+<!-- absolute file path 	Dec. 17, 2010	Toru Miyagawa  -->
+<!-- link in ROBOT_CARM 	Dec. 17, 2010	Toru Miyagawa  -->
+
+<trml>
+  <robot name="BASE" file="base.xml"/>
+  <robot name="CARM" file="carm.xml"  link="BASE/FRAME_BASE" pos=" 0.000  0.000  0.506"/>
+</trml>

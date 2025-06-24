@@ -1,0 +1,19 @@
+<package format="3">
+  <name>tmc_potential_maps</name>
+  <version>2.0.0</version>
+  <description>Potential maps for navigation</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <author>Akiyoshi Ochiai</author>
+  <author>Kazuhito Tanaka</author>
+  <author>Kazuto Murase</author>
+  <author>Yutaka Takaoka</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,6 @@
+<launch>
+    <param name="robot_description"
+           textfile="$(find tmc_manipulation_tests)/urdf/stanford_manipulator/stanford.urdf" />
+    <param name="robot_collision_pair"
+           textfile="$(find tmc_manipulation_tests)/robots/stanford_manipulator/collision_detect_stanford.xml" />
+</launch>

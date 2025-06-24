@@ -1,0 +1,26 @@
+<package format="3">
+  <name>tmc_utils</name>
+  <version>2.0.0</version>
+  <description>Utilites for parameters and pose</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website">None</url>
+
+  <author>Keisuke Takeshita</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+
+  <test_depend>action_tutorials_interfaces</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>boost</test_depend>
+  <test_depend>example_interfaces</test_depend>
+  <test_depend>std_msgs</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

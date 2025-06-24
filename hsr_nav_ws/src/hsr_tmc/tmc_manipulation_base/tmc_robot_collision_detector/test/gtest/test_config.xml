@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<CollisionDetectConfig>
+
+  <group name="GROUP1">
+    <object name="OBJECT1"/>
+    <object name="OBJECT2"/>
+    <object name="OBJECT3"/>
+  </group>
+  
+  <group name="GROUP2">
+    <object name="OBJECT4"/>
+    <object name="OBJECT5"/>
+  </group>
+  
+  <group name="GROUP3">
+    <object name="OBJECT6"/>
+  </group>
+  
+  <group name= "OUTER">
+  </group>
+  
+  <robot-parts-group>
+    <group name="GROUP1"/>
+    <group name="GROUP2"/>
+    <group name="GROUP3"/>
+  </robot-parts-group>
+  
+  <non-contact>
+    <pair name1="GROUP1" name2="GROUP2" />
+    <pair name1="OBJECT1" name2="OBJECT4" />
+    <pair name1="OBJECT1" name2="GROUP2" />
+  </non-contact>
+  
+  <non-check-inner-distance>
+    <pair group1="GROUP1" group2="GROUP3" />
+  </non-check-inner-distance>
+  
+  
+</CollisionDetectConfig>

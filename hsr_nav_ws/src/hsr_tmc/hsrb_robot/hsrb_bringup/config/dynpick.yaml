@@ -1,0 +1,5 @@
+dynpick_driver_node:
+  ros__parameters:
+    rate: 100.0
+    frame_id: wrist_ft_sensor_frame
+    frame_to_sensor: [0.0, 0.0, 0.0025, -0.707106781, 0.707106781, 0.0, 0.0]

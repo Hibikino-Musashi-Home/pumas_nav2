@@ -1,0 +1,15 @@
+# Calculate collision-free IK solutions
+
+# Desired end-effector pose
+geometry_msgs/Pose origin_to_hand_goal
+# Collision environment
+moveit_msgs/PlanningSceneWorld environment
+# 2d obstacle map
+nav_msgs/OccupancyGrid obstacle_map
+# Initial joint state for IK
+sensor_msgs/JointState initial_joint_state
+# Initial robot base pose for IK
+geometry_msgs/Pose initial_origin_to_base
+---
+# Collision-free IK solutions
+tmc_manipulation_msgs/IkResult[] ik_results

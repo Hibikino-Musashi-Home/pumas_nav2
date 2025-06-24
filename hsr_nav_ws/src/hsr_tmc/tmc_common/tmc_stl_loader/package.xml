@@ -1,0 +1,23 @@
+<package format="3">
+  <name>tmc_stl_loader</name>
+  <version>2.0.0</version>
+  <description> Library to load stl file </description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website">None</url>
+
+  <author>Takao Yasuda</author>
+  <author>Keisuke Takeshita</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>eigen</build_depend>
+
+  <depend>ament_index_cpp</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

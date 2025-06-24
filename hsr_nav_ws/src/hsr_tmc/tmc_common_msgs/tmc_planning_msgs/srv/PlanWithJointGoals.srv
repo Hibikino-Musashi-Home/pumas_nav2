@@ -1,0 +1,69 @@
+# Planning service whose goals are poses of joints
+
+# The robot pose
+geometry_msgs/Pose origin_to_basejoint
+
+# Initial joint states which contains all joints
+sensor_msgs/JointState initial_joint_state
+
+# Joint names which are used for planning
+string[] use_joints
+
+# Which type of base movement
+tmc_manipulation_msgs/BaseMovementType base_movement_type
+
+# Weighted joints name to calcurate distance in loop.
+# Joints that are not included in this list, their weight = 1.0.
+string[] weighted_joints
+
+# Weights of weighted joints. Default = 1.0. If weight > 1.0
+# the joint is hard to move. If weight < 1.0 the joint is easy to move.
+float64[] weight
+
+# Goal joint states(at least 1 goal)
+tmc_planning_msgs/JointPosition[] goal_joint_states
+
+# The goal robot pose
+geometry_msgs/Pose[] goal_basejoint_to_bases
+
+# TSRs for constraions (optional)
+tmc_planning_msgs/TaskSpaceRegion[] constraint_tsrs
+
+# Attached Object (optional)
+moveit_msgs/AttachedCollisionObject[] attached_objects
+
+# The hint joint trajectory (optional)
+# trajectory_msgs/JointTrajectory hint_trajectory
+
+# The initial environment
+moveit_msgs/PlanningSceneWorld environment_before_planning
+
+# Maximum allowed time for planning
+builtin_interfaces/Duration timeout
+
+# Maximum allowed iteration for planning
+int32 max_iteration
+
+# Extra constraints.
+# Set name of tmc_robot_planner/IConfigurationConstraint's plugin (optional).
+string[] extra_constraints
+
+# Extra constraints (only goal sampling).
+# Set name of tmc_robot_planner/IConfigurationConstraint's plugin (optional).
+string[] extra_goal_constraints
+
+---
+# The returned joint trajectory
+trajectory_msgs/JointTrajectory solution
+
+# The base trajectory
+trajectory_msgs/MultiDOFJointTrajectory base_solution
+
+# The returned environment
+# tmc_manipulation_msgs/CollisionEnvironment environment_after_planning
+
+# Final joint state
+sensor_msgs/JointState joint_state_after_planning
+
+# Return code
+moveit_msgs/MoveItErrorCodes error_code

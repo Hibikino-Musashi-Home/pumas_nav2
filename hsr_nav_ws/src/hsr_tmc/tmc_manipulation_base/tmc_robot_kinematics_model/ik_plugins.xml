@@ -1,0 +1,7 @@
+<library path="numeric_ik_solver">
+  <class name="tmc_robot_kinematics_model/NumericIKSolver"
+         type="tmc_robot_kinematics_model::NumericIKSolver"
+         base_class_type="tmc_robot_kinematics_model::IKSolver">
+    <description> Numeric IK solver </description>
+  </class>
+</library>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<CollisionDetectConfig>
+
+  <group name="GROUP1">
+    <object name="OBJECT1"/>
+    <object name="OBJECT2"/>
+    <object name="OBJECT3"/>
+  </group>
+  
+  <group name="GROUP2">
+    <object name="OBJECT4"/>
+    <object name="OBJECT5"/>
+  </group>
+  
+  <group name="GROUP3">
+    <object name="OBJECT6"/>
+  </group>
+  
+  <group name= "OUTER">
+  </group>
+  
+  <non-contact>
+    <pair group1="GROUP1" group2="GROUP2" />
+  </non-contact>
+  
+  <non-check-inner-distance>
+    <pair group1="GROUP1" group2="GROUP4" />
+  </non-check-inner-distance>
+  
+  
+</CollisionDetectConfig>

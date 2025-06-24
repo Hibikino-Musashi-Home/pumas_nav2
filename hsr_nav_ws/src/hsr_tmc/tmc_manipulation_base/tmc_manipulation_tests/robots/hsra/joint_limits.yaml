@@ -1,0 +1,121 @@
+joint_limits:
+  CARM/LINEAR:
+    has_position_limits: true
+    min_position: 0.0
+    max_position: 0.49
+    has_velocity_limits: true
+    max_velocity: 0.1
+    has_acceleration_limits: true
+    max_acceleration: 0.3
+  CARM/SHOULDER_Y:
+    has_position_limits: true
+    min_position: -1.640609497
+    max_position: 1.640609497
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/SHOULDER_R:
+    has_position_limits: true
+    min_position: -2.793
+    max_position: 2.793
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/SHOULDER_P:
+    has_position_limits: true
+    min_position: 0.0
+    max_position: 3.141
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/ELBOW_P:
+    has_position_limits: true
+    min_position: -2.793
+    max_position: 3.141
+    has_velocity_limits: true
+    max_velocity: 0.8
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/WRIST_Y:
+    has_position_limits: true
+    min_position: -1.9198
+    max_position: 3.6652
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 3.0
+  CARM/WRIST_R:
+    has_position_limits: true
+    min_position: -1.571
+    max_position: 1.571
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 10.0
+  CARM/WRIST_P:
+    has_position_limits: true
+    min_position: -1.571
+    max_position: 1.571
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 3.0
+  CARM/HEAD/NECK_Y:
+    has_position_limits: true
+    min_position: -3.73500
+    max_position: 2.16421
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 3.0
+  CARM/HEAD/NECK_P:
+    has_position_limits: true
+    min_position: -1.57080
+    max_position: 0.50614
+    has_velocity_limits: true
+    max_velocity: 0.5
+    has_acceleration_limits: true
+    max_acceleration: 5.0
+  CARM/HAND/JOINT_11:
+    has_position_limits: true
+    min_position: -0.2372
+    max_position: 1.221
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/HAND/JOINT_21:
+    has_position_limits: true
+    min_position: -0.2372
+    max_position: 1.221
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/HAND/JOINT_12:
+    has_position_limits: true
+    min_position: -1.221
+    max_position: 0.2372
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  CARM/HAND/JOINT_22:
+    has_position_limits: true
+    min_position: -1.221
+    max_position: 0.2372
+    has_velocity_limits: true
+    max_velocity: 1.0
+    has_acceleration_limits: true
+    max_acceleration: 2.0
+  BASE/_BASE_X:
+    has_position_limits: true
+    min_position: -1.0
+    max_position: 1.0
+    has_velocity_limits: true
+    max_velocity: 0.2
+    has_acceleration_limits: true
+    max_acceleration: 0.3

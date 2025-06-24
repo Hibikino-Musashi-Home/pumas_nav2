@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<collision-detect-config>
+  <group name= "BODY">
+    <object name="BASE/SHAPE_BASE_1/collision/0"/>
+    <object name="BASE/SHAPE_BASE_2/collision/0"/>
+    <object name="BASE/SHAPE_BASE_3/collision/0"/>
+    <object name="BASE/SHAPE_BASE_4/collision/0"/>
+    <object name="BASE/SHAPE_BASE_5/collision/0"/>
+    <object name="BASE/SHAPE_BASE_6/collision/0"/>
+    <object name="CARM/SHAPE_LINEAR_1/collision/0"/>
+    <object name="CARM/SHAPE_LINEAR_2/collision/0"/>
+    <object name="CARM/SHAPE_LINEAR_3/collision/0"/>
+  </group>
+
+  <group name= "HEAD">
+    <object name="CARM/HEAD/SHAPE_NECK/collision/0"/>
+    <object name="CARM/HEAD/SHAPE_HEAD/collision/0"/>
+    <object name="CARM/HEAD/SHAPE_TABLET/collision/0"/>
+  </group>
+
+  <group name= "HAND">
+    <object name="CARM/HAND/SHAPE_11/collision/0"/>
+    <object name="CARM/HAND/SHAPE_12/collision/0"/>
+    <object name="CARM/HAND/SHAPE_21/collision/0"/>
+    <object name="CARM/HAND/SHAPE_22/collision/0"/>
+  </group>
+
+  <group name= "HAND_GRASPED">
+    <object name="CARM/HAND/_root_"/>
+  </group>
+
+  <group name= "ARM1">
+    <object name="CARM/SHAPE_SHOULDER_Y/collision/0"/>
+  </group>
+
+  <group name= "ARM2">
+    <object name="CARM/SHAPE_SHOULDER_R/collision/0"/>
+  </group>
+
+  <group name= "ARM3">
+    <object name="CARM/SHAPE_SHOULDER_P/collision/0"/>
+  </group>
+
+  <group name= "ARM4">
+    <object name="CARM/SHAPE_ELBOW_P/collision/0"/>
+  </group>
+
+  <group name= "ARM5">
+    <object name="CARM/SHAPE_WRIST_Y_1/collision/0"/>
+    <object name="CARM/SHAPE_WRIST_Y_2/collision/0"/>
+    <object name="CARM/SHAPE_WRIST_Y_3/collision/0"/>
+    <object name="CARM/SHAPE_WRIST_Y_4/collision/0"/>
+  </group>
+
+  <group name= "ARM6">
+    <object name="CARM/SHAPE_WRIST_R/collision/0"/>
+  </group>
+
+  <group name= "ARM7">
+    <object name="CARM/SHAPE_WRIST_P_1/collision/0"/>
+    <object name="CARM/SHAPE_WRIST_P_2/collision/0"/>
+  </group>
+
+  <group name= "OUTER">
+  </group>
+
+  <group name= "HANDHELD">
+  </group>
+
+  <group name= "CUBOID">
+  </group>
+
+  <robot-parts-group>
+    <group name="BODY"/>
+    <group name="HEAD"/>
+    <group name="HAND"/>
+    <group name="ARM1"/>
+    <group name="ARM2"/>
+    <group name="ARM3"/>
+    <group name="ARM4"/>
+    <group name="ARM5"/>
+    <group name="ARM6"/>
+    <group name="ARM7"/>
+  </robot-parts-group>
+
+  <non-contact>
+    <pair group1="BODY" group2="HEAD" />
+    <pair group1="BODY" group2="ARM1" />
+    <pair group1="HEAD" group2="ARM1" />
+    <pair group1="HEAD" group2="ARM2" />
+    <pair group1="BODY" group2="ARM2" />
+    <pair group1="ARM1" group2="ARM2" />
+    <pair group1="ARM1" group2="ARM3" />
+    <pair group1="ARM2" group2="ARM3" />
+    <pair group1="ARM3" group2="ARM4" />
+    <pair group1="ARM4" group2="ARM5" />
+    <pair group1="ARM3" group2="ARM5" />
+    <pair group1="ARM5" group2="ARM6" />
+    <pair group1="ARM6" group2="ARM7" />
+    <pair group1="ARM7" group2="HAND" />
+    <pair group1="ARM6" group2="HAND" />
+    <pair group1="HAND" group2="HAND_GRASPED" />
+    <pair name1="CARM/SHAPE_WRIST_Y_4/collision/0" name2="CARM/HAND/SHAPE_21/collision/0" />
+    <pair name1="CARM/SHAPE_WRIST_Y_4/collision/0" name2="CARM/HAND/SHAPE_22/collision/0" />
+  </non-contact>
+
+</collision-detect-config>

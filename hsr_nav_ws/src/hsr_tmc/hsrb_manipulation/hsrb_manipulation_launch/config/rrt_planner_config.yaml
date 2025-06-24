@@ -1,0 +1,9 @@
+/**:
+  ros__parameters:
+    delta: 0.2
+    sub_delta: 0.01
+    weight_linear_base: 3.0
+    weight_linear_base_ik: 3.0
+    weight_rotational_base: 3.0
+    weight_rotational_base_ik: 1.0
+    step_sampling_deviation: 0.2

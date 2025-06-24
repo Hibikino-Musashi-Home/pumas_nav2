@@ -1,0 +1,34 @@
+<package format="3">
+  <name>tmc_robot_collision_detector</name>
+  <version>2.0.0</version>
+  <description>Collision detection library with robot kinematics.</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website"> </url>
+
+  <author>Keisuke Takeshita</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>opende</depend>
+  <depend>pkg-config</depend>
+  <depend>tinyxml</depend>
+  <depend>tmc_collision_detector</depend>
+  <depend>tmc_manipulation_types</depend>
+  <depend>tmc_robot_kinematics_model</depend>
+  <depend>urdf</depend>
+
+  <build_depend>eigen</build_depend>
+
+  <build_depend>tinyxml_vendor</build_depend>
+  <exec_depend>tinyxml_vendor</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>tmc_manipulation_tests</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,5 @@
+moveit_msgs/RobotTrajectory[] robot_trajectories
+tmc_planning_msgs/Constraints constraints
+---
+moveit_msgs/RobotTrajectory[] robot_trajectories
+---

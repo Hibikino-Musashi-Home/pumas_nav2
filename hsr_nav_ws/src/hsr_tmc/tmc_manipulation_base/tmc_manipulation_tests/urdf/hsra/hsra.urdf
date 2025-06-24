@@ -1,0 +1,1216 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="hsra">
+    <link name="robot_base"/>
+    <joint name="robot_base_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="robot_base"/>
+        <child link="_root_"/>
+    </joint>
+    <link name="_root_"/>
+    <joint name="BASE/_root__vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="_root_"/>
+        <child link="BASE/_root_"/>
+    </joint>
+    <link name="BASE/_root_"/>
+    <joint name="BASE/_BASE_X" type="prismatic">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000  0.000"/>
+        <parent link="BASE/_root_"/>
+        <child link="BASE/_BASE_X_link"/>
+        <axis xyz="1 0 0"/>
+        <limit effort="1000.0" lower="-1.000" upper="1.000" velocity="10.0"/>
+    </joint>
+    <link name="BASE/_BASE_X_link"/>
+    <joint name="BASE/SOLID_BASE_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="BASE/_root_"/>
+        <child link="BASE/SOLID_BASE"/>
+    </joint>
+    <link name="BASE/SOLID_BASE">
+        <inertial>
+            <origin xyz="0.000  0.000  0.0625"/>
+            <mass value="4.0"/>
+            <inertia ixx="4.00" ixy="0.000" ixz="0.000" iyy="4.00" iyz="0.000" izz="4.000"/>
+        </inertial>
+    </link>
+    <joint name="BASE/SOLID_WEIGHT_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="BASE/_root_"/>
+        <child link="BASE/SOLID_WEIGHT"/>
+    </joint>
+    <link name="BASE/SOLID_WEIGHT">
+        <inertial>
+            <origin xyz="0.000  0.000  0.05"/>
+            <mass value="5.0"/>
+            <inertia ixx="5.00" ixy="0.000" ixz="0.000" iyy="5.00" iyz="0.000" izz="5.000"/>
+        </inertial>
+    </link>
+    <joint name="BASE/FRAME_BASE_vjoint_" type="fixed">
+        <origin rpy=" 0.000  0.0  0.000" xyz="0.000 0.000 0.000"/>
+        <parent link="BASE/_BASE_X_link"/>
+        <child link="BASE/FRAME_BASE"/>
+    </joint>
+    <link name="BASE/FRAME_BASE"/>
+    <joint name="BASE/SHAPE_BASE_1_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_1"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_1">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_1.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_2_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_2"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_2">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_2.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_3_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_3"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_3">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_3.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_4_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_4"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_4">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_4.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_5_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_5"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_5">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_5.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_6_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="  0.0 0.0 0.0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_6"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_6">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffbbbb">
+                <color rgba="1.0 0.733333333333 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_6.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="BASE/SHAPE_BASE_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="BASE/SHAPE_BASE_VISUAL"/>
+    </joint>
+    <link name="BASE/SHAPE_BASE_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_1.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_2.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_3.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_4.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_5.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/BASE_6.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/_root__vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000  0.506"/>
+        <parent link="BASE/FRAME_BASE"/>
+        <child link="CARM/_root_"/>
+    </joint>
+    <link name="CARM/_root_"/>
+    <joint name="CARM/HAND/_root__vjoint_" type="fixed">
+        <origin rpy="1.57079632679 -0.0 0.0" xyz=" 0.000 -0.040 -0.100"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/HAND/_root_"/>
+    </joint>
+    <link name="CARM/HAND/_root_"/>
+    <joint name="CARM/HAND/JOINT_11" type="revolute">
+        <origin rpy="0 0 0" xyz="0.0185 -0.030 -0.016"/>
+        <parent link="CARM/HAND/_root_"/>
+        <child link="CARM/HAND/JOINT_11_link"/>
+        <axis xyz="1.0 0.0 0.0"/>
+        <limit effort="1000.0" lower="-0.2372" upper="1.221" velocity="628.318530718"/>
+    </joint>
+    <link name="CARM/HAND/JOINT_11_link"/>
+    <joint name="CARM/HAND/JOINT_12" type="revolute">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.07"/>
+        <parent link="CARM/HAND/JOINT_11_link"/>
+        <child link="CARM/HAND/JOINT_12_link"/>
+        <axis xyz="1.0 0.0 0.0"/>
+        <limit effort="1000.0" lower="-1.221" upper="0.2372" velocity="628.318530718"/>
+    </joint>
+    <link name="CARM/HAND/JOINT_12_link"/>
+    <joint name="CARM/HAND/JOINT_21" type="revolute">
+        <origin rpy="0 0 0" xyz="0.0185 0.030 -0.016"/>
+        <parent link="CARM/HAND/_root_"/>
+        <child link="CARM/HAND/JOINT_21_link"/>
+        <axis xyz="-1.0 0.0 0.0"/>
+        <limit effort="1000.0" lower="-0.2372" upper="1.221" velocity="628.318530718"/>
+    </joint>
+    <link name="CARM/HAND/JOINT_21_link"/>
+    <joint name="CARM/HAND/JOINT_22" type="revolute">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.07"/>
+        <parent link="CARM/HAND/JOINT_21_link"/>
+        <child link="CARM/HAND/JOINT_22_link"/>
+        <axis xyz="-1.0 0.0 0.0"/>
+        <limit effort="1000.0" lower="-1.221" upper="0.2372" velocity="628.318530718"/>
+    </joint>
+    <link name="CARM/HAND/JOINT_22_link"/>
+    <joint name="CARM/HAND/FRAME_VACUUM_vjoint_" type="fixed">
+        <origin rpy="0.977384381756 -0.0 0.0" xyz="-0.0326 -0.010095 0.0277"/>
+        <parent link="CARM/HAND/JOINT_12_link"/>
+        <child link="CARM/HAND/FRAME_VACUUM"/>
+    </joint>
+    <link name="CARM/HAND/FRAME_VACUUM"/>
+    <joint name="CARM/HAND/FRAME_FTIP1_vjoint_" type="fixed">
+        <origin rpy="-1.57079632679 -0.0 0.0" xyz="-0.0196 0.019835 0.034085"/>
+        <parent link="CARM/HAND/JOINT_12_link"/>
+        <child link="CARM/HAND/FRAME_FTIP1"/>
+    </joint>
+    <link name="CARM/HAND/FRAME_FTIP1"/>
+    <joint name="CARM/HAND/FRAME_FTIP2_vjoint_" type="fixed">
+        <origin rpy="1.57079632679 -0.0 0.0" xyz="-0.0196 -0.019835 0.034085"/>
+        <parent link="CARM/HAND/JOINT_22_link"/>
+        <child link="CARM/HAND/FRAME_FTIP2"/>
+    </joint>
+    <link name="CARM/HAND/FRAME_FTIP2"/>
+    <joint name="CARM/HAND/SHAPE_11_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.0345 0 0"/>
+        <parent link="CARM/HAND/JOINT_11_link"/>
+        <child link="CARM/HAND/SHAPE_11"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_11">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffffff">
+                <color rgba="1.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_11.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HAND/SHAPE_12_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 1.57079632679" xyz="-0.0375 0.023 0.011"/>
+        <parent link="CARM/HAND/JOINT_12_link"/>
+        <child link="CARM/HAND/SHAPE_12"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_12">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffffff">
+                <color rgba="1.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_12.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HAND/SHAPE_21_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 1.57079632679" xyz="-0.0025 0 0"/>
+        <parent link="CARM/HAND/JOINT_21_link"/>
+        <child link="CARM/HAND/SHAPE_21"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_21">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffffff">
+                <color rgba="1.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_21.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HAND/SHAPE_22_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 -1.57079632679" xyz="-0.018 -0.011 0.011"/>
+        <parent link="CARM/HAND/JOINT_22_link"/>
+        <child link="CARM/HAND/SHAPE_22"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_22">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffffff">
+                <color rgba="1.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_22.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HAND/SHAPE_11_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.0345 0 0"/>
+        <parent link="CARM/HAND/JOINT_11_link"/>
+        <child link="CARM/HAND/SHAPE_11_VISUAL"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_11_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_11.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HAND/SHAPE_12_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 1.57079632679" xyz="-0.0375 0.023 0.011"/>
+        <parent link="CARM/HAND/JOINT_12_link"/>
+        <child link="CARM/HAND/SHAPE_12_VISUAL"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_12_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_12.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HAND/SHAPE_21_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 1.57079632679" xyz="-0.0025 0 0"/>
+        <parent link="CARM/HAND/JOINT_21_link"/>
+        <child link="CARM/HAND/SHAPE_21_VISUAL"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_21_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_21.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HAND/SHAPE_22_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0.0 -0.0 -1.57079632679" xyz="-0.018 -0.011 0.011"/>
+        <parent link="CARM/HAND/JOINT_22_link"/>
+        <child link="CARM/HAND/SHAPE_22_VISUAL"/>
+    </joint>
+    <link name="CARM/HAND/SHAPE_22_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/finger_22.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HEAD/_root__vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000  0.000"/>
+        <parent link="CARM/SHOULDER_Y_link"/>
+        <child link="CARM/HEAD/_root_"/>
+    </joint>
+    <link name="CARM/HEAD/_root_"/>
+    <joint name="CARM/HEAD/NECK_Y" type="revolute">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.1575"/>
+        <parent link="CARM/HEAD/_root_"/>
+        <child link="CARM/HEAD/NECK_Y_link"/>
+        <axis xyz="0 0 1"/>
+        <limit effort="1000.0" lower="-3.73500" upper="2.16421" velocity="10.8"/>
+    </joint>
+    <link name="CARM/HEAD/NECK_Y_link"/>
+    <joint name="CARM/HEAD/NECK_P" type="revolute">
+        <origin rpy="0 0 0" xyz="0.08 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_Y_link"/>
+        <child link="CARM/HEAD/NECK_P_link"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="1000.0" lower="-1.5533" upper="0.50614" velocity="10.0"/>
+    </joint>
+    <link name="CARM/HEAD/NECK_P_link"/>
+    <joint name="CARM/HEAD/FRAME_GAZE_vjoint_" type="fixed">
+        <origin rpy="0.0 -1.57079632679 1.57079632679" xyz="0.000 0.066 0.069"/>
+        <parent link="CARM/HEAD/NECK_P_link"/>
+        <child link="CARM/HEAD/FRAME_GAZE"/>
+    </joint>
+    <link name="CARM/HEAD/FRAME_GAZE"/>
+    <joint name="CARM/HEAD/SHAPE_NECK_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_Y_link"/>
+        <child link="CARM/HEAD/SHAPE_NECK"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_NECK">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="6666ff">
+                <color rgba="0.4 0.4 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/NECK_Y.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HEAD/SHAPE_HEAD_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_P_link"/>
+        <child link="CARM/HEAD/SHAPE_HEAD"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_HEAD">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff66ff">
+                <color rgba="1.0 0.4 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/HEAD_COVER.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HEAD/SHAPE_TABLET_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_P_link"/>
+        <child link="CARM/HEAD/SHAPE_TABLET"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_TABLET">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="999933">
+                <color rgba="0.6 0.6 0.2 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/TABLET.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/HEAD/SHAPE_NECK_Y_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_Y_link"/>
+        <child link="CARM/HEAD/SHAPE_NECK_Y_VISUAL"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_NECK_Y_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/NECK_Y.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HEAD/SHAPE_HEAD_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_P_link"/>
+        <child link="CARM/HEAD/SHAPE_HEAD_VISUAL"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_HEAD_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/HEAD_COVER.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/HEAD/SHAPE_TABLET_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/HEAD/NECK_P_link"/>
+        <child link="CARM/HEAD/SHAPE_TABLET_VISUAL"/>
+    </joint>
+    <link name="CARM/HEAD/SHAPE_TABLET_VISUAL">
+        <visual>
+            <material name="999999">
+                <color rgba="0.6 0.6 0.6 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/TABLET.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/LINEAR" type="prismatic">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000  0.000"/>
+        <parent link="CARM/_root_"/>
+        <child link="CARM/LINEAR_link"/>
+        <axis xyz="0  0  1"/>
+        <limit effort="1000.0" lower="0.000" upper="0.490" velocity="10.0"/>
+    </joint>
+    <link name="CARM/LINEAR_link"/>
+    <joint name="CARM/LINEAR_PASSIVE" type="prismatic">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000  0.000"/>
+        <parent link="CARM/_root_"/>
+        <child link="CARM/LINEAR_PASSIVE_link"/>
+        <axis xyz="0  0  1"/>
+        <limit effort="1000.0" lower="0.000" upper="0.250" velocity="10.0"/>
+    </joint>
+    <link name="CARM/LINEAR_PASSIVE_link"/>
+    <joint name="CARM/SHOULDER_Y" type="revolute">
+        <origin rpy="0 0 0" xyz="0.000  0.000  0.000"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SHOULDER_Y_link"/>
+        <axis xyz="0  0 -1"/>
+        <limit effort="1000.0" lower="-1.640609497" upper="1.640609497" velocity="10.0"/>
+    </joint>
+    <link name="CARM/SHOULDER_Y_link"/>
+    <joint name="CARM/SHOULDER_R" type="revolute">
+        <origin rpy="0 0 0" xyz=" 0.125  0.000 0.00"/>
+        <parent link="CARM/SHOULDER_Y_link"/>
+        <child link="CARM/SHOULDER_R_link"/>
+        <axis xyz="1  0  0"/>
+        <limit effort="1000.0" lower="-2.793" upper="2.793" velocity="10.0"/>
+    </joint>
+    <link name="CARM/SHOULDER_R_link"/>
+    <joint name="CARM/SHOULDER_P" type="revolute">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/SHOULDER_R_link"/>
+        <child link="CARM/SHOULDER_P_link"/>
+        <axis xyz="0 -1  0"/>
+        <limit effort="1000.0" lower="0.000" upper="3.1416" velocity="10.0"/>
+    </joint>
+    <link name="CARM/SHOULDER_P_link"/>
+    <joint name="CARM/ELBOW_P" type="revolute">
+        <origin rpy="0 0 0" xyz=" 0.000  0.000 -0.300"/>
+        <parent link="CARM/SHOULDER_P_link"/>
+        <child link="CARM/ELBOW_P_link"/>
+        <axis xyz="0 -1  0"/>
+        <limit effort="1000.0" lower="-2.793" upper="3.1416" velocity="10.0"/>
+    </joint>
+    <link name="CARM/ELBOW_P_link"/>
+    <joint name="CARM/WRIST_Y" type="revolute">
+        <origin rpy="0 0 0" xyz=" 0.000 0.090 -0.250"/>
+        <parent link="CARM/ELBOW_P_link"/>
+        <child link="CARM/WRIST_Y_link"/>
+        <axis xyz="0  0 -1"/>
+        <limit effort="1000.0" lower="-1.9198" upper="3.6652" velocity="10.0"/>
+    </joint>
+    <link name="CARM/WRIST_Y_link"/>
+    <joint name="CARM/WRIST_R" type="revolute">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/WRIST_R_link"/>
+        <axis xyz="1  0  0"/>
+        <limit effort="1000.0" lower="-1.571" upper="1.571" velocity="10.0"/>
+    </joint>
+    <link name="CARM/WRIST_R_link"/>
+    <joint name="CARM/WRIST_P" type="revolute">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/WRIST_R_link"/>
+        <child link="CARM/WRIST_P_link"/>
+        <axis xyz="0 -1  0"/>
+        <limit effort="1000.0" lower="-1.571" upper="1.571" velocity="10.0"/>
+    </joint>
+    <link name="CARM/WRIST_P_link"/>
+    <joint name="CARM/SOLID_0_0_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" -0.033  0.000 -0.158"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SOLID_0_0"/>
+    </joint>
+    <link name="CARM/SOLID_0_0">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="5.8"/>
+            <inertia ixx="0.0" ixy="0.0" ixz="0.0" iyy="0.0" iyz="0.0" izz="0.0"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_0_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.009  0.000 -0.044184"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SOLID_0"/>
+    </joint>
+    <link name="CARM/SOLID_0">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.315"/>
+            <inertia ixx="1.68E-04" ixy="-4.40E-07" ixz="-1.55E-05" iyy="3.93E-04" iyz="-4.63E-10" izz="5.00E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_1_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.010931 -0.012830  0.016782"/>
+        <parent link="CARM/SHOULDER_Y_link"/>
+        <child link="CARM/SOLID_1"/>
+    </joint>
+    <link name="CARM/SOLID_1">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.860"/>
+            <inertia ixx="1.47E-03" ixy="2.27E-04" ixz="-8.01E-05" iyy="1.96E-03" iyz="1.77E-04" izz="2.18E-03"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_2_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.029286 -0.003561  0.000"/>
+        <parent link="CARM/SHOULDER_R_link"/>
+        <child link="CARM/SOLID_2"/>
+    </joint>
+    <link name="CARM/SOLID_2">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.254"/>
+            <inertia ixx="1.47E-04" ixy="3.65E-05" ixz="7.30E-07" iyy="4.03E-04" iyz="-5.75E-09" izz="4.05E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_3_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.0009 -0.00814 -0.15463"/>
+        <parent link="CARM/SHOULDER_P_link"/>
+        <child link="CARM/SOLID_3"/>
+    </joint>
+    <link name="CARM/SOLID_3">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="1.079"/>
+            <inertia ixx="8.99E-03" ixy="-6.42E-08" ixz="1.25E-05" iyy="8.84E-03" iyz="4.78E-04" izz="9.42E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_4_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.000 -0.00152 -0.01031"/>
+        <parent link="CARM/ELBOW_P_link"/>
+        <child link="CARM/SOLID_4"/>
+    </joint>
+    <link name="CARM/SOLID_4">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.497"/>
+            <inertia ixx="1.13E-03" ixy="9.76E-07" ixz="5.31E-07" iyy="5.09E-04" iyz="5.24E-05" izz="8.25E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_5_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.018  0.000  0.123"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SOLID_5"/>
+    </joint>
+    <link name="CARM/SOLID_5">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.538"/>
+            <inertia ixx="1.86E-03" ixy="2.17E-07" ixz="-2.88E-04" iyy="1.96E-03" iyz="-5.56E-07" izz="3.00E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_6_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="-0.0015 0.00288 0.02767"/>
+        <parent link="CARM/WRIST_R_link"/>
+        <child link="CARM/SOLID_6"/>
+    </joint>
+    <link name="CARM/SOLID_6">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.382"/>
+            <inertia ixx="3.45E-04" ixy="-1.15E-06" ixz="-4.13E-05" iyy="2.81E-04" iyz="3.38E-05" izz="2.70E-04"/>
+        </inertial>
+    </link>
+    <joint name="CARM/SOLID_7_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.003577 -0.0083 -0.08834"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/SOLID_7"/>
+    </joint>
+    <link name="CARM/SOLID_7">
+        <inertial>
+            <origin xyz="0 0 0"/>
+            <mass value="0.643"/>
+            <inertia ixx="2.41E-03" ixy="7.38E-07" ixz="6.14E-07" iyy="1.10E-03" iyz="-3.52E-05" izz="1.69E-03"/>
+        </inertial>
+    </link>
+    <joint name="CARM/FRAME_FORCE_SENSOR_vjoint_" type="fixed">
+        <origin rpy="0.0 -1.57079632679 1.57079632679" xyz="0.000 0.027 -0.100"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/FRAME_FORCE_SENSOR"/>
+    </joint>
+    <link name="CARM/FRAME_FORCE_SENSOR"/>
+    <joint name="CARM/FRAME_1_vjoint_" type="fixed">
+        <origin rpy="1.57079632679 -0.0 0.0" xyz="0.000 -0.040 -0.100"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/FRAME_1"/>
+    </joint>
+    <link name="CARM/FRAME_1"/>
+    <joint name="CARM/BASE_HAND_vjoint_" type="fixed">
+        <origin rpy="1.57079632679 -0.0 0.0" xyz="0.000 -0.040 -0.100"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/BASE_HAND"/>
+    </joint>
+    <link name="CARM/BASE_HAND"/>
+    <joint name="CARM/FRAME_2_vjoint_" type="fixed">
+        <origin rpy=" 0.000  0.000  0.000" xyz="0.000  0.000  0.000"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/FRAME_2"/>
+    </joint>
+    <link name="CARM/FRAME_2"/>
+    <joint name="CARM/SHAPE_LINEAR_1_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.0 0.0 -0.506"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SHAPE_LINEAR_1"/>
+    </joint>
+    <link name="CARM/SHAPE_LINEAR_1">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ff00">
+                <color rgba="0.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_1.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_LINEAR_2_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.0 0.0 -0.506"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SHAPE_LINEAR_2"/>
+    </joint>
+    <link name="CARM/SHAPE_LINEAR_2">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ff00">
+                <color rgba="0.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_2.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_LINEAR_3_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.0 0.0 -0.506"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SHAPE_LINEAR_3"/>
+    </joint>
+    <link name="CARM/SHAPE_LINEAR_3">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ff00">
+                <color rgba="0.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_3.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_LINEAR_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 -0.506"/>
+        <parent link="CARM/LINEAR_link"/>
+        <child link="CARM/SHAPE_LINEAR_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_LINEAR_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_1.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_2.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/LINEAR_3.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_Y_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.0 0.0 0.0"/>
+        <parent link="CARM/SHOULDER_Y_link"/>
+        <child link="CARM/SHAPE_SHOULDER_Y"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_Y">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ffff00">
+                <color rgba="1.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_Y.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_Y_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/SHOULDER_Y_link"/>
+        <child link="CARM/SHAPE_SHOULDER_Y_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_Y_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_Y.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_R_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0  0.0  0.0"/>
+        <parent link="CARM/SHOULDER_R_link"/>
+        <child link="CARM/SHAPE_SHOULDER_R"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_R">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ffff">
+                <color rgba="0.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_R.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_R_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/SHOULDER_R_link"/>
+        <child link="CARM/SHAPE_SHOULDER_R_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_R_VISUAL">
+        <visual>
+            <material name="555555">
+                <color rgba="0.333333333333 0.333333333333 0.333333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_R.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_P_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/SHOULDER_P_link"/>
+        <child link="CARM/SHAPE_SHOULDER_P"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_P">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff4444">
+                <color rgba="1.0 0.266666666667 0.266666666667 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_P.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_SHOULDER_P_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/SHOULDER_P_link"/>
+        <child link="CARM/SHAPE_SHOULDER_P_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_SHOULDER_P_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/SHOULDER_P.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_ELBOW_P_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/ELBOW_P_link"/>
+        <child link="CARM/SHAPE_ELBOW_P"/>
+    </joint>
+    <link name="CARM/SHAPE_ELBOW_P">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/ELBOW_P.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_ELBOW_P_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0.0 0"/>
+        <parent link="CARM/ELBOW_P_link"/>
+        <child link="CARM/SHAPE_ELBOW_P_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_ELBOW_P_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/ELBOW_P.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_Y_1_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0  0.0 0.0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SHAPE_WRIST_Y_1"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_Y_1">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff4444">
+                <color rgba="1.0 0.266666666667 0.266666666667 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_1.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_Y_2_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0  0.0 0.0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SHAPE_WRIST_Y_2"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_Y_2">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff4444">
+                <color rgba="1.0 0.266666666667 0.266666666667 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_2.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_Y_3_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0  0.0 0.0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SHAPE_WRIST_Y_3"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_Y_3">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff4444">
+                <color rgba="1.0 0.266666666667 0.266666666667 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_3.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_Y_4_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0  0.0 0.0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SHAPE_WRIST_Y_4"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_Y_4">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="ff4444">
+                <color rgba="1.0 0.266666666667 0.266666666667 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_4.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_Y_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/WRIST_Y_link"/>
+        <child link="CARM/SHAPE_WRIST_Y_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_Y_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_1.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_2.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_3.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_Y_4.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_R_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+        <parent link="CARM/WRIST_R_link"/>
+        <child link="CARM/SHAPE_WRIST_R"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_R">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ffff">
+                <color rgba="0.0 1.0 1.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_R.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_R_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/WRIST_R_link"/>
+        <child link="CARM/SHAPE_WRIST_R_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_R_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_R.stl"/>
+            </geometry>
+        </visual>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_P_1_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.0  0.0 0.0"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/SHAPE_WRIST_P_1"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_P_1">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ff00">
+                <color rgba="0.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_P_1.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_P_2_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz=" 0.001  0.0 0.0"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/SHAPE_WRIST_P_2"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_P_2">
+        <visual>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+            <material name="00ff00">
+                <color rgba="0.0 1.0 0.0 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_P_2.stl"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="CARM/SHAPE_WRIST_P_VISUAL_vjoint_" type="fixed">
+        <origin rpy="0 0 0" xyz="0 0 0"/>
+        <parent link="CARM/WRIST_P_link"/>
+        <child link="CARM/SHAPE_WRIST_P_VISUAL"/>
+    </joint>
+    <link name="CARM/SHAPE_WRIST_P_VISUAL">
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_P_1.stl"/>
+            </geometry>
+        </visual>
+        <visual>
+            <material name="d5d2bb">
+                <color rgba="0.835294117647 0.823529411765 0.733333333333 1.0"/>
+            </material>
+            <geometry>
+                <mesh filename="package://tmc_manipulation_tests/meshes/hsra/WRIST_P_2.stl"/>
+            </geometry>
+        </visual>
+    </link>
+</robot>

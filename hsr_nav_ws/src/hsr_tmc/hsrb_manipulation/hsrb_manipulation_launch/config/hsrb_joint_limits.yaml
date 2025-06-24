@@ -1,0 +1,38 @@
+/**:
+  ros__parameters:
+    caster_offset: 0.11
+    tread: 0.266
+    wheel_radius: 0.04
+    arm_lift_joint:
+      velocity: 0.15
+      acceleration: 0.15
+    arm_flex_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    arm_roll_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    wrist_flex_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    wrist_roll_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    hand_motor_joint:
+      velocity: 3.0
+      acceleration: 20.0
+    head_pan_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    head_tilt_joint:
+      velocity: 1.0
+      acceleration: 1.0
+    left_wheel:
+      velocity: 8.5
+      acceleration: 5.0
+    right_wheel:
+      velocity: 8.5
+      acceleration: 5.0
+    caster:
+      velocity: 1.8
+      acceleration: 1.8

@@ -1,0 +1,17 @@
+<package format="3">
+  <name>tmc_launch_ros_utils</name>
+  <version>2.0.0</version>
+  <description> Utils for ros2 launch</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+  <license>BSD 3-clause Clear License</license>
+
+  <author>Hiroaki Yaguchi</author>
+  <author>Masayuki Masuda</author>
+
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

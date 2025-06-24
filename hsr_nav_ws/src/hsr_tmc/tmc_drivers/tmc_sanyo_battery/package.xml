@@ -1,0 +1,25 @@
+<package format="3">
+  <name>tmc_sanyo_battery</name>
+  <version>2.0.0</version>
+  <description>Command and node to get status from SANYO battery packs</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <author>Keisuke Takeshita</author>
+  <author>Yoshimi Iyoda</author>
+
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>diagnostic_updater</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <test_depend>python3-nose</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-pytest-mock</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

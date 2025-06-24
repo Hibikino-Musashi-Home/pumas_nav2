@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<CollisionDetectConfig>
+
+  <group name="GROUP1">
+    <object name="OBJECT1"/>
+    <object name="OBJECT2"/>
+    <object name="OBJECT3"/>
+  </group>
+  
+  <group name="GROUP2">
+    <object name="OBJECT4"/>
+    <object name="OBJECT5"/>
+  </group>
+  
+  <group name="GROUP3">
+    <object name="OBJECT6"/>
+  </group>
+    
+  <group name="GROUP3">
+    <object name="OBJECT7"/>
+  </group>  
+  <group name="GROUP4">
+    <object name="OBJECT8"/>
+  </group>  
+  <group name="GROUP5">
+    <object name="OBJECT9"/>
+  </group>  
+  <group name="GROUP6">
+    <object name="OBJECT10"/>
+  </group>  
+  <group name="GROUP7">
+    <object name="OBJECT11"/>
+  </group>  
+  <group name="GROUP8">
+    <object name="OBJECT12"/>
+  </group>  
+  <group name="GROUP9">
+    <object name="OBJECT13"/>
+  </group>  
+  <group name="GROUP10">
+    <object name="OBJECT14"/>
+  </group>  
+  <group name="GROUP11">
+    <object name="OBJECT15"/>
+  </group>  
+  <group name="GROUP12">
+    <object name="OBJECT16"/>
+  </group>  
+  <group name="GROUP13">
+    <object name="OBJECT7"/>
+  </group>  
+  <group name="GROUP14">
+    <object name="OBJECT18"/>
+  </group>  
+  <group name="GROUP15">
+    <object name="OBJECT19"/>
+  </group>
+  <group name="GROUP16">
+    <object name="OBJECT20"/>
+  </group>
+  
+  <group name= "OUTER">
+  </group>
+  
+  <non-contact>
+    <pair group1="GROUP1" group2="GROUP2" />
+  </non-contact>
+  
+  <non-check-inner-distance>
+    <pair group1="GROUP1" group2="GROUP3" />
+  </non-check-inner-distance>
+  
+</CollisionDetectConfig>

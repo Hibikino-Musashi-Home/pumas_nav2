@@ -1,0 +1,20 @@
+<package format="3">
+  <name>hsrb_imu_sensor_protocol</name>
+  <version>2.1.0</version>
+  <description>IMU sensor protocol for HSR-B.</description>
+
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+  <author>Hiroaki Yaguchi</author>
+  <author>Keisuke Takeshita</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>socat</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

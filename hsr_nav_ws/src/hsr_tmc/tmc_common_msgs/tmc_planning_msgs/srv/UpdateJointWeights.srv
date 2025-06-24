@@ -1,0 +1,11 @@
+# New weights for arm
+tmc_planning_msgs/JointWeight[] arm_weights
+
+# New base weights
+float64[] base_weights
+---
+# Updated weights
+tmc_planning_msgs/JointWeight[] arm_weights
+
+# Updated base weights
+float64[] base_weights

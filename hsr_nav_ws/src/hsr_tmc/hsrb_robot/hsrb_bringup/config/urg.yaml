@@ -1,0 +1,7 @@
+urg_node:
+  ros__parameters:
+    ip_address: "10.255.255.2"
+    laser_frame_id: base_range_sensor_link
+    angle_max: 2.1
+    angle_min: -2.1
+    publish_intensity: true

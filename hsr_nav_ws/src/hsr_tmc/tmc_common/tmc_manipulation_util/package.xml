@@ -1,0 +1,27 @@
+<package format="3">
+  <name>tmc_manipulation_util</name>
+  <version>2.0.0</version>
+  <description>Utility functions for manipulation</description>
+  <maintainer email="xr-hsr-support@mail.toyota.co.jp">HSR Support</maintainer>
+
+  <license>BSD 3-clause Clear License</license>
+
+  <url type="website">tmc_manipulation_util</url>
+
+  <author>Atushi TsuTsumi</author>
+  <author>Keisuke Takeshita</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>angles</depend>
+  <depend>sensor_msgs</depend>
+  <depend>rclcpp</depend>
+  <depend>tmc_utils</depend>
+  <depend>trajectory_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
