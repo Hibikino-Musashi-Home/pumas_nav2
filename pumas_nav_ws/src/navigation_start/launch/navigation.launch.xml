@@ -11,7 +11,7 @@
   <arg name="bumper_f_topic" default="/base_f_bumper_sensor"/>
   <arg name="use_lidar" default="True"/>
   <arg name="use_sonars" default="False"/>
-  <arg name="use_point_cloud" default="True"/>
+  <arg name="use_point_cloud" default="False"/>
   <arg name="use_point_cloud2" default="False"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
@@ -29,8 +29,8 @@
   <arg name="cloud_max_x" default="0.80"/>
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
-  <arg name="cloud_min_z" default="0.05"/>
-  <arg name="cloud_max_z" default="1.50"/>
+  <arg name="cloud_min_z" default="0.10"/>
+  <arg name="cloud_max_z" default="1.20"/>
   <arg name="pub_topic_name" default="/navigation/potential_fields/enable"/>
 
   <node name="killer_node"
@@ -176,7 +176,7 @@
     <param name="laser_pot_fields_k_rej" value="0.40"/>
 
     <param name="cloud_pot_fields_d0" value="0.80"/>
-    <param name="cloud_pot_fields_k_rej" value="0.40"/>
+    <param name="cloud_pot_fields_k_rej" value="0.20"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>

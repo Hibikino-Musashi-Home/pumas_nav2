@@ -546,7 +546,10 @@ private:
                 obstacle_count++;
             }
 
-            if (v.z() > cloud_min_z_ && v.norm() < cloud_pot_fields_d0_)
+            if (//v.norm() < cloud_pot_fields_d0_ &&
+                v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
+                v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
+                v.z() > cloud_min_z_ && v.z() < cloud_max_z_)
             {
                 mask.data[i] = 255;
                 float force_mag = cloud_pot_fields_k_rej_ * std::sqrt(1.0 / v.norm() - 1.0 / cloud_pot_fields_d0_);

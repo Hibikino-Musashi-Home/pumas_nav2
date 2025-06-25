@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   hsr-ros2-dev:
-    container_name: hsr-dev
+    container_name: ros2-dev
     image: tidbots/hsr-ros2:humble-nvidia
     build:
       context: .
