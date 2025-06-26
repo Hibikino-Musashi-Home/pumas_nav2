@@ -190,7 +190,7 @@ private:
     bool is_pot_fields_response_ = false;
 
     rclcpp::Time no_pot_fields_start_time_;
-    rclcpp::Duration no_pot_fields_duration_{4, 0}; // 4 seconds
+    rclcpp::Duration no_pot_fields_duration_{2, 0}; // 2 seconds
     bool is_temporary_no_pot_fields_ = false;
     
     rclcpp::Time pot_fields_start_time_;
@@ -904,7 +904,8 @@ private:
 
                     state = SM_CALCULATE_PATH;
                 }
-                else if(simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
+                else if(!is_temporary_no_pot_fields_ && 
+                        simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
                 {
                     simple_move_goal_status_.status = 0;
                     std::cout << "MotionPlanner.-> Simple move reported path aborted. Trying again..." << std::endl;
