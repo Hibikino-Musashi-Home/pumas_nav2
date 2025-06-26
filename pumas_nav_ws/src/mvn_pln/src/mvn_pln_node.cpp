@@ -188,6 +188,11 @@ private:
 
     bool pot_fields_received_ = false;
     bool is_pot_fields_response_ = false;
+
+    rclcpp::Time no_pot_fields_start_time_;
+    rclcpp::Duration no_pot_fields_duration_{4, 0}; // 4 seconds
+    bool is_temporary_no_pot_fields_ = false;
+    
     rclcpp::Time pot_fields_start_time_;
 
     //############
@@ -610,7 +615,11 @@ private:
 
                     state = patience_ ? SM_CHECK_IF_OBSTACLES : SM_CHECK_IF_INSIDE_OBSTACLES;
                 } else {
-                    state = SM_ENABLE_POT_FIELDS;
+                    if (is_temporary_no_pot_fields_){
+                        state = SM_START_MOVE_PATH;
+                    } else {
+                        state = SM_ENABLE_POT_FIELDS;
+                    }
                 }
                 break;
             }
@@ -852,6 +861,16 @@ private:
                 get_robot_position();
                 error = sqrt(pow(global_goal_.position.x - robot_x_, 2) + pow(global_goal_.position.y - robot_y_, 2));
                 
+                if (is_temporary_no_pot_fields_ && 
+                    (this->now() - no_pot_fields_start_time_) > no_pot_fields_duration_) 
+                {
+                    msg_bool.data = true;
+                    pub_pot_fields_enable_->publish(msg_bool);
+                    std::cout << "MotionPlanner.-> Potential fields re-enable flag sent." << std::endl;
+
+                    is_temporary_no_pot_fields_ = false;
+                }
+
                 if(error < proximity_criterion_ && !near_goal_sent)
                 {
                     near_goal_sent = true;
@@ -870,10 +889,19 @@ private:
                     pub_pot_fields_enable_->publish(msg_bool);
                     state = SM_CORRECT_FINAL_ANGLE;
                 }
-                else if(collision_risk_)
+                else if(collision_risk_ &&
+                        simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
                 {
-                    std::cout << "MotionPlanner.-> COLLISION RISK DETECTED before goal is reached." << std::endl;
                     collision_risk_ = false;
+                    std::cout << "MotionPlanner.-> COLLISION RISK DETECTED before goal is reached." << std::endl;
+
+                    msg_bool.data = false;
+                    pub_pot_fields_enable_->publish(msg_bool);
+                    std::cout << "MotionPlanner.-> Temporary Potential fields disable flag sent." << std::endl;
+
+                    no_pot_fields_start_time_ = this->now();
+                    is_temporary_no_pot_fields_ = true;
+
                     state = SM_CALCULATE_PATH;
                 }
                 else if(simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
