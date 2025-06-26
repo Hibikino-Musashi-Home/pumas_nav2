@@ -44,6 +44,7 @@
 #define SM_WAIT_FOR_NO_OBSTACLES 22
 #define SM_ENABLE_POT_FIELDS 23
 #define SM_WAIT_FOR_POT_FIELDS 24
+#define SM_WAIT_FOR_NOT_POT_FIELDS 124
 #define SM_START_MOVE_PATH 3
 #define SM_WAIT_FOR_MOVE_FINISHED 4
 #define SM_COLLISION_DETECTED 5
@@ -427,7 +428,7 @@ private:
         catch (const std::exception &e) 
         {
             pot_fields_received_ = false;
-            is_pot_fields_response_ = false;
+            is_pot_fields_response_ = true;
             RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Error processing callback_collision_risk: %s", e.what());
         }
     }
@@ -899,10 +900,9 @@ private:
                     pub_pot_fields_enable_->publish(msg_bool);
                     std::cout << "MotionPlanner.-> Temporary Potential fields disable flag sent." << std::endl;
 
-                    no_pot_fields_start_time_ = this->now();
                     is_temporary_no_pot_fields_ = true;
 
-                    state = SM_CALCULATE_PATH;
+                    state = SM_WAIT_FOR_NOT_POT_FIELDS;
                 }
                 else if(!is_temporary_no_pot_fields_ && 
                         simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
@@ -914,6 +914,46 @@ private:
                 break;
             }
 
+
+            case SM_WAIT_FOR_NOT_POT_FIELDS:
+            {
+                if (!waiting_for_potential_fields_)
+                {
+                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for potential fields to be disabled...");
+
+                    waiting_for_potential_fields_ = true;
+                    pot_fields_start_time_ = this->now();
+                    no_pot_fields_start_time_ = this->now();
+                }
+
+                if ((this->now() - pot_fields_start_time_).seconds() > 1.0)
+                {
+                    pot_fields_start_time_ = this->now();
+                    if (is_pot_fields_response_){
+                        is_pot_fields_response_ = false;
+                    } else{
+                        RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Potential fields have been disabled.");
+
+                        collision_risk_ = false;
+                        waiting_for_potential_fields_ = false;
+                        
+                        no_pot_fields_start_time_ = this->now(); //reset timer
+
+                        state = SM_CALCULATE_PATH;
+                    }
+                }
+
+                else if ((this->now() - no_pot_fields_start_time_).seconds() > 10.0)
+                {
+                    RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Timeout waiting for potential fields message.");
+                    collision_risk_ = false;
+                    waiting_for_potential_fields_ = false;
+
+                    state = SM_CALCULATE_PATH;
+                }
+
+                break;
+            }
 
             case SM_CORRECT_FINAL_ANGLE:
             {
