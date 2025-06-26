@@ -659,6 +659,7 @@ private:
             {
                 stop_ = false;
                 state = SM_INIT;
+                collision_risk_ = false;
                 msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
                 pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
                 pub_goal_reached_->publish(msg_goal_reached);
@@ -670,6 +671,7 @@ private:
             {
             case SM_INIT:
                 std::cout << "SimpleMove.-> Low level control ready. Waiting for new goal. " << std::endl;
+                collision_risk_ = false;
                 state = SM_WAITING_FOR_TASK;
                 break;
             
@@ -677,6 +679,7 @@ private:
             case SM_WAITING_FOR_TASK:
                 if(new_pose_)
                 {
+                    collision_risk_ = false;
                     get_goal_position_wrt_odom();
                     state = SM_GOAL_POSE_ACCEL;
                     new_pose_ = false;
@@ -685,6 +688,7 @@ private:
                 }
                 if(new_path_)
                 {
+                    collision_risk_ = false;
                     state = SM_GOAL_PATH_ACCEL;
                     new_path_ = false;
                     prev_pose_idx = 0;

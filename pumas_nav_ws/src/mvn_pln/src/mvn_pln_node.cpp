@@ -191,7 +191,7 @@ private:
     bool is_pot_fields_response_ = false;
 
     rclcpp::Time no_pot_fields_start_time_;
-    rclcpp::Duration no_pot_fields_duration_{2, 0}; // 2 seconds
+    rclcpp::Duration no_pot_fields_duration_{1, 0}; // 1 seconds
     bool is_temporary_no_pot_fields_ = false;
     
     rclcpp::Time pot_fields_start_time_;
@@ -617,6 +617,7 @@ private:
                     state = patience_ ? SM_CHECK_IF_OBSTACLES : SM_CHECK_IF_INSIDE_OBSTACLES;
                 } else {
                     if (is_temporary_no_pot_fields_){
+                        no_pot_fields_start_time_ = this->now(); //reset timer
                         state = SM_START_MOVE_PATH;
                     } else {
                         state = SM_ENABLE_POT_FIELDS;
@@ -936,8 +937,6 @@ private:
 
                         collision_risk_ = false;
                         waiting_for_potential_fields_ = false;
-                        
-                        no_pot_fields_start_time_ = this->now(); //reset timer
 
                         state = SM_CALCULATE_PATH;
                     }
