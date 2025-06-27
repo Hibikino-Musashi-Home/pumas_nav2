@@ -103,6 +103,7 @@
     
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
+    <param name="decay_factor" value="20"/>    
     <param name="inflation_radius" value="0.22"/>
     <param name="cost_radius" value="0.25"/> 
 
