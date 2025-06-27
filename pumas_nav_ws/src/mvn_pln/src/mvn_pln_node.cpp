@@ -84,11 +84,18 @@ public:
 
         //############
         // Publishers
-        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable", rclcpp::QoS(10).transient_local());
-        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>("/simple_move/goal_path", rclcpp::QoS(10).transient_local());
-        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/simple_move/goal_dist_angle", rclcpp::QoS(10).transient_local());
-        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/navigation/status", rclcpp::QoS(10).transient_local());
-        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>("/simple_move/stop", rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable", 
+                                                                            rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable_cloud", 
+                                                                                   rclcpp::QoS(10).transient_local());
+        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>("/simple_move/goal_path", 
+                                                                     rclcpp::QoS(10).transient_local());
+        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/simple_move/goal_dist_angle", 
+                                                                                        rclcpp::QoS(10).transient_local());
+        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/navigation/status", 
+                                                                              rclcpp::QoS(10).transient_local());
+        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>("/simple_move/stop", 
+                                                                             rclcpp::QoS(10).transient_local());
 
 
         //############
@@ -190,15 +197,16 @@ private:
     bool pot_fields_received_ = false;
     bool is_pot_fields_response_ = false;
 
-    rclcpp::Time no_pot_fields_start_time_;
-    rclcpp::Duration no_pot_fields_duration_{1, 0}; // 1 seconds
-    bool is_temporary_no_pot_fields_ = false;
+    rclcpp::Time no_cloud_pot_fields_start_time_;
+    rclcpp::Duration no_cloud_pot_fields_duration_{2, 0}; // 1 seconds
+    bool is_temporary_no_cloud_pot_fields_ = false;
     
     rclcpp::Time pot_fields_start_time_;
 
     //############
     // Publishers
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr               pub_pot_fields_enable_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr               pub_pot_fields_enable_cloud_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr               pub_goal_path_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr  pub_goal_dist_angle_;
     rclcpp::Publisher<actionlib_msgs::msg::GoalStatus>::SharedPtr   pub_status_;
@@ -616,8 +624,8 @@ private:
 
                     state = patience_ ? SM_CHECK_IF_OBSTACLES : SM_CHECK_IF_INSIDE_OBSTACLES;
                 } else {
-                    if (is_temporary_no_pot_fields_){
-                        no_pot_fields_start_time_ = this->now(); //reset timer
+                    if (is_temporary_no_cloud_pot_fields_){
+                        no_cloud_pot_fields_start_time_ = this->now(); //reset timer
                         state = SM_START_MOVE_PATH;
                     } else {
                         state = SM_ENABLE_POT_FIELDS;
@@ -863,14 +871,14 @@ private:
                 get_robot_position();
                 error = sqrt(pow(global_goal_.position.x - robot_x_, 2) + pow(global_goal_.position.y - robot_y_, 2));
                 
-                if (is_temporary_no_pot_fields_ && 
-                    (this->now() - no_pot_fields_start_time_) > no_pot_fields_duration_) 
+                if (is_temporary_no_cloud_pot_fields_ && 
+                    (this->now() - no_cloud_pot_fields_start_time_) > no_cloud_pot_fields_duration_) 
                 {
                     msg_bool.data = true;
-                    pub_pot_fields_enable_->publish(msg_bool);
-                    std::cout << "MotionPlanner.-> Potential fields re-enable flag sent." << std::endl;
+                    pub_pot_fields_enable_cloud_->publish(msg_bool);
+                    std::cout << "MotionPlanner.-> Potential fields wit point cloud re-enable flag sent." << std::endl;
 
-                    is_temporary_no_pot_fields_ = false;
+                    is_temporary_no_cloud_pot_fields_ = false;
                 }
 
                 if(error < proximity_criterion_ && !near_goal_sent)
@@ -898,14 +906,14 @@ private:
                     std::cout << "MotionPlanner.-> COLLISION RISK DETECTED before goal is reached." << std::endl;
 
                     msg_bool.data = false;
-                    pub_pot_fields_enable_->publish(msg_bool);
-                    std::cout << "MotionPlanner.-> Temporary Potential fields disable flag sent." << std::endl;
+                    pub_pot_fields_enable_cloud_->publish(msg_bool);
+                    std::cout << "MotionPlanner.-> Temporary Point Cloud Potential fields disable flag sent." << std::endl;
 
-                    is_temporary_no_pot_fields_ = true;
+                    is_temporary_no_cloud_pot_fields_ = true;
 
                     state = SM_WAIT_FOR_NOT_POT_FIELDS;
                 }
-                else if(!is_temporary_no_pot_fields_ && 
+                else if(!is_temporary_no_cloud_pot_fields_ && 
                         simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED)
                 {
                     simple_move_goal_status_.status = 0;
@@ -920,20 +928,18 @@ private:
             {
                 if (!waiting_for_potential_fields_)
                 {
-                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for potential fields to be disabled...");
+                    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Waiting for potential fields with point cloud to be disabled...");
 
                     waiting_for_potential_fields_ = true;
                     pot_fields_start_time_ = this->now();
-                    no_pot_fields_start_time_ = this->now();
+                    no_cloud_pot_fields_start_time_ = this->now();
                 }
 
                 if ((this->now() - pot_fields_start_time_).seconds() > 1.0)
                 {
                     pot_fields_start_time_ = this->now();
                     if (is_pot_fields_response_){
-                        is_pot_fields_response_ = false;
-                    } else{
-                        RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Potential fields have been disabled.");
+                        RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Potential fields with point cloud have been disabled.");
 
                         collision_risk_ = false;
                         waiting_for_potential_fields_ = false;
@@ -942,7 +948,7 @@ private:
                     }
                 }
 
-                else if ((this->now() - no_pot_fields_start_time_).seconds() > 10.0)
+                else if ((this->now() - no_cloud_pot_fields_start_time_).seconds() > 10.0)
                 {
                     RCLCPP_WARN(this->get_logger(), "MotionPlanner.-> Timeout waiting for potential fields message.");
                     collision_risk_ = false;

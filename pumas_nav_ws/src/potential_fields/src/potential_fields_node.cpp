@@ -133,6 +133,10 @@ public:
             "/navigation/potential_fields/enable", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_enable, this, std::placeholders::_1));
 
+        sub_enable_cloud_ = this->create_subscription<std_msgs::msg::Bool>(
+            "/navigation/potential_fields/enable_cloud", rclcpp::SensorDataQoS(),
+            std::bind(&PotentialFieldsNode::callback_enable_cloud, this, std::placeholders::_1));
+
         sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_cmd_vel, this, std::placeholders::_1));
@@ -205,6 +209,7 @@ private:
     //############
     // Subscribers
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr       sub_enable_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr       sub_enable_cloud_;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
     rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr       sub_goal_path_;
     
@@ -384,6 +389,37 @@ private:
                 if (sub_lidar_) {
                     sub_lidar_.reset();
                     collision_risk_lidar_ = false;
+                }
+            }
+        } 
+        catch (const std::exception &e) 
+        {
+            RCLCPP_ERROR(this->get_logger(), "PotentialFields.-> Error processing callback_enable: %s", e.what());
+        }
+    }
+
+    void callback_enable_cloud(const std_msgs::msg::Bool::SharedPtr msg)
+    {
+        try 
+        {
+            bool enable = msg->data;
+            if (enable && use_cloud_) {
+                std::stringstream ss;
+                ss << "PotentialFields.->Starting detection using point_cloud";
+                RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
+
+                if (!sub_cloud_){
+                    sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                        point_cloud_topic_, rclcpp::SensorDataQoS(),
+                        std::bind(&PotentialFieldsNode::callback_point_cloud, this, std::placeholders::_1));
+                    }
+            }
+            else if (use_cloud_) {
+                RCLCPP_INFO(this->get_logger(), "PotentialFields.->Stopping obstacle detection with point cloud...");
+
+                if (sub_cloud_) {
+                    sub_cloud_.reset();
+                    collision_risk_cloud_ = false;
                 }
             }
         } 
@@ -701,11 +737,6 @@ private:
                 return;
             }
 
-            // Publish collision risk status
-            std_msgs::msg::Bool msg_collision_risk;
-            msg_collision_risk.data = collision_risk_lidar_ || collision_risk_cloud_;
-            pub_collision_risk_->publish(msg_collision_risk);
-
             if (use_pot_fields_) {
                 geometry_msgs::msg::Vector3 msg_rejection_force;
                 msg_rejection_force.x = rejection_force_lidar_.x + rejection_force_cloud_.x;
@@ -719,6 +750,14 @@ private:
                 pub_pot_fields_rejection_->publish(msg_rejection_force);
                 pub_pot_fields_markers_->publish(get_force_arrow_markers(rejection_force_lidar_, rejection_force_cloud_));
             }
+
+            // Publish collision risk status
+            std_msgs::msg::Bool msg_collision_risk;
+            msg_collision_risk.data = collision_risk_lidar_ || collision_risk_cloud_;
+            pub_collision_risk_->publish(msg_collision_risk);
+
+            collision_risk_lidar_ = false;
+            collision_risk_cloud_ = false;
         } 
         catch (const std::exception& e) 
         {
