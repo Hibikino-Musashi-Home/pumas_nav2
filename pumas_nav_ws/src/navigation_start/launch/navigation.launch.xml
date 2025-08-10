@@ -2,8 +2,10 @@
 
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
-  <arg name="prohibition_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/prohibition_maps/tidbots/map.yaml"/>
+  <!--arg name="static_map_file" default="/home/roboworks/ros2/carrobo25_ws/src/10_pumas_nav2/navigation_start/maps/maps/wrs2020/map.yaml"/-->
+  <!--arg name="prohibition_map_file" default="/home/roboworks/ros2/carrobo25_ws/src/10_pumas_nav2/navigation_start/maps/prohibition_maps/wrs2020/map.yaml"/-->
   <arg name="static_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/maps/tidbots/map.yaml"/>
+  <arg name="prohibition_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/prohibition_maps/tidbots/map.yaml"/>
   <arg name="cmd_vel_name" default="/omni_base_controller/cmd_vel"/>
   <arg name="laser_scan_topic" default="/scan"/>
   <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
@@ -76,11 +78,11 @@
         pkg="augment_gridmap_online" 
         exec="augment_gridmap_online_node" 
         output="screen">
+
+    <remap from="point_obstacle" to="/clicked_point"/>
     <param name="obstacle_radius" value="0.05"/>
 
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
-
-    <remap from="point_obstacle" to="/clicked_point"/>
     <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
@@ -141,7 +143,7 @@
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
 
-    <param name="move_head" value="False"/>
+    <param name="move_head" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
     <remap from="/cmd_vel" to="$(var cmd_vel_name)"/>
@@ -202,5 +204,25 @@
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="True"/>
   </node>
+
+  <!-- Hardware Controller -->
+  <node name="arm_controller"
+        pkg="hardware_controller"
+        exec="arm_node"
+        output="screen"/>
+
+  <node name="head_controller"
+        pkg="hardware_controller"
+        exec="head_node"
+        output="screen"/>
+
+  <!-- RVIS2 -->
+  <node name="rviz2"
+        pkg="rviz2"
+        exec="rviz2"
+        args="-d /home/roboworks/pumas_nav_ws/src/navigation_start/rviz/config.rviz
+              --ros-args --log-level rviz2:=warn"
+        output="screen"
+        />
 
 </launch>
