@@ -857,7 +857,9 @@ private:
                 collision_risk_ = false;
                 simple_move_sequencer++;
 
-                path_.header.frame_id = std::to_string(simple_move_sequencer);
+                //path_.header.frame_id = std::to_string(simple_move_sequencer);
+                path_.header.frame_id = "map";
+                path_.header.stamp = this->now();
                 pub_goal_path_->publish(path_);
                 simple_move_goal_status_.status = 0;
 
