@@ -110,7 +110,7 @@ public:
         //############
         // Subscribers
         sub_clicked_point_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-            "/clicked_point", rclcpp::SensorDataQoS(), 
+            "/point_obstacle", rclcpp::SensorDataQoS(), 
             std::bind(&MapAugmenterNode::callback_point_obstacle, this, std::placeholders::_1));
 
         sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -750,7 +750,7 @@ private:
     }
 
     //############
-    //Map Augmenter subscribers callbacks
+    //Map Augmenter subscribers callbacks //not working 
     void callback_point_obstacle(const geometry_msgs::msg::PointStamped::SharedPtr msg) 
     {    
         rclcpp::sleep_for(std::chrono::seconds(1));

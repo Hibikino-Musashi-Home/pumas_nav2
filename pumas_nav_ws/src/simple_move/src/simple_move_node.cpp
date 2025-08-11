@@ -8,7 +8,7 @@
 #include "nav_msgs/msg/path.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
-#include "std_msgs/msg/float64_multi_array.hpp"
+//#include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/empty.hpp"
 #include "actionlib_msgs/msg/goal_status.hpp"
@@ -91,7 +91,7 @@ public:
         // Publishers
         pub_goal_reached_   = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/simple_move/goal_reached", rclcpp::QoS(10).transient_local());
         pub_cmd_vel_        = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", rclcpp::QoS(10).transient_local());
-        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float64MultiArray>("/hardware/head/goal_pose", rclcpp::QoS(10).transient_local());
+        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/hardware/head/goal_pose", rclcpp::QoS(10).transient_local());
 
 
         //############
@@ -205,7 +205,7 @@ private:
     // Publishers
     rclcpp::Publisher<actionlib_msgs::msg::GoalStatus>::SharedPtr   pub_goal_reached_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr         pub_cmd_vel_;
-    rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr  pub_head_goal_pose_;
+    rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr  pub_head_goal_pose_;
 
 
     //############
@@ -634,16 +634,16 @@ private:
         }while(error < 0.25 && ++next_pose_idx < goal_path_.poses.size());
     }
 
-    std_msgs::msg::Float64MultiArray get_next_goal_head_angles(int next_pose_idx)
+    std_msgs::msg::Float32MultiArray get_next_goal_head_angles(int next_pose_idx)
     {
-        std_msgs::msg::Float64MultiArray msg;
+        std_msgs::msg::Float32MultiArray msg;
         int idx = next_pose_idx + 5 >=  goal_path_.poses.size() - 1 ? goal_path_.poses.size() - 1 : next_pose_idx + 5;
         float goal_x = goal_path_.poses[idx].pose.position.x;
         float goal_y = goal_path_.poses[idx].pose.position.y;
-        float a = atan2(goal_y - robot_y_, goal_x - robot_x_) - robot_t_;
-        if(a >   M_PI) a -= 2*M_PI;
-        if(a <= -M_PI) a += 2*M_PI;
-        msg.data.push_back(a);
+        float angle = atan2(goal_y - robot_y_, goal_x - robot_x_) - robot_t_;
+        if(angle >   M_PI) angle -= 2*M_PI;
+        if(angle <= -M_PI) angle += 2*M_PI;
+        msg.data.push_back(angle);
         msg.data.push_back(-1.0);
         return msg;
     }
