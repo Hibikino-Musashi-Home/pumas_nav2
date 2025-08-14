@@ -22,14 +22,6 @@ class FakeGlobalPoseNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        #Subscribers
-        self.subscriber_ = self.create_subscription(
-            PoseWithCovarianceStamped, 
-            "/amcl_pose",
-            self.callback_amcl, 
-            10
-        )
-
         # Publisher
         self.pub_global_ = self.create_publisher(PoseStamped, "/global_pose", 10)
 
@@ -38,20 +30,13 @@ class FakeGlobalPoseNode(Node):
 
         self.get_logger().info("Starting fake_global_pose application in python...")
 
-    def callback_amcl(self, msg):
-        try:
-            self.global_pose_.pose = msg.pose.pose
-
-        except:
-            self.get_logger().error(traceback.format_exc())
-
     def fake_global_pose(self):
         try:
             now = self.get_clock().now().to_msg()
             try:
                 transform = self.tf_buffer.lookup_transform(
                     'map', 'base_link',
-                    rclpy.time.Time(),
+                    rclpy.time.Time(seconds=0),
                     timeout=rclpy.duration.Duration(seconds=0.5)
                 )
             except (LookupException, ConnectivityException, ExtrapolationException) as e:
@@ -73,6 +58,8 @@ class FakeGlobalPoseNode(Node):
                 z=transform.transform.rotation.z,
                 w=transform.transform.rotation.w
             )
+
+            self.pub_global_.publish(self.global_pose_)
 
         except Exception as e:
             self.get_logger().error(traceback.format_exc())
