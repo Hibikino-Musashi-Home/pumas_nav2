@@ -23,7 +23,8 @@ class FakeGlobalPoseNode(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Publisher
-        self.pub_global_ = self.create_publisher(PoseStamped, "/global_pose", 10)
+        qos = QoSProfile(depth=10, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_global_ = self.create_publisher(PoseStamped, "/global_pose", qos)
 
         #Processing
         self.processing_timer_ = self.create_timer(0.01, self.fake_global_pose) 
