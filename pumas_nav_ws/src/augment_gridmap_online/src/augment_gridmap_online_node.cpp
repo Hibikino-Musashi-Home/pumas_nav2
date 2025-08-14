@@ -31,7 +31,7 @@ public:
 
         // Subscribers
         sub_map_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
-            input_map_, rclcpp::SensorDataQoS(),
+            input_map_, rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
             std::bind(&AugmentedGridMapNode::callback_save_map, this, std::placeholders::_1));
 
         sub_point_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
