@@ -33,7 +33,6 @@
   <arg name="cloud_max_y" default="0.30"/>
   <arg name="cloud_min_z" default="0.10"/>
   <arg name="cloud_max_z" default="1.20"/>
-  <arg name="pub_topic_name" default="/navigation/potential_fields/enable"/>
 
   <node name="killer_node"
         pkg="node_killer"
@@ -216,7 +215,7 @@
         exec="head_node"
         output="screen"/>
 
-  <!-- RVIS2 -->
+  <!-- RVIZ2 -->
   <node name="rviz2"
         pkg="rviz2"
         exec="rviz2"

@@ -66,6 +66,7 @@ public:
         this->declare_parameter<bool>("use_pot_fields", false);
 
         this->declare_parameter<std::string>("base_link_name", "base_footprint");
+        this->declare_parameter<std::string>("odom_name", "odom");
 
         // Initialize internal variables from declared parameters
         this->get_parameter("max_linear_speed",      max_linear_speed_);
@@ -82,6 +83,7 @@ public:
         this->get_parameter("use_pot_fields",        use_pot_fields_);
 
         this->get_parameter("base_link_name",        base_link_name_);
+        this->get_parameter("odom_name",             odom_name_);
 
         // Setup parameter change callback
         param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -138,7 +140,7 @@ public:
         //############
         // Wait for transforms
         wait_for_transforms("map", base_link_name_);
-        wait_for_transforms("odom", base_link_name_);
+        wait_for_transforms(odom_name_, base_link_name_);
 
         // Simple Move main processing
         processing_timer_ = this->create_wall_timer(
@@ -188,6 +190,7 @@ private:
     bool move_head_;
     bool use_pot_fields_;
     std::string base_link_name_;
+    std::string odom_name_;
 
     // Simple Move processing variables
     actionlib_msgs::msg::GoalStatus msg_goal_reached;
@@ -258,6 +261,7 @@ private:
             else if (param.get_name() == "use_pot_fields")        use_pot_fields_          = param.as_bool();
 
             else if (param.get_name() == "base_link_name")        base_link_name_          = param.as_string();
+            else if (param.get_name() == "odom_name")             odom_name_               = param.as_string();
 
             else {
                 result.successful = false;
@@ -540,7 +544,7 @@ private:
         try
         {
             geometry_msgs::msg::TransformStamped transformStamped =
-                tf_buffer_.lookupTransform("odom", base_link_name_, tf2::TimePointZero);
+                tf_buffer_.lookupTransform(odom_name_, base_link_name_, tf2::TimePointZero);
 
             robot_x_ = transformStamped.transform.translation.x;
             robot_y_ = transformStamped.transform.translation.y;
@@ -569,7 +573,7 @@ private:
         try
         {
             geometry_msgs::msg::TransformStamped transformStamped =
-                tf_buffer_.lookupTransform("odom", base_link_name_, tf2::TimePointZero);
+                tf_buffer_.lookupTransform(odom_name_, base_link_name_, tf2::TimePointZero);
 
             float robot_x = transformStamped.transform.translation.x;
             float robot_y = transformStamped.transform.translation.y;
