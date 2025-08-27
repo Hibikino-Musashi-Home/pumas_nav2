@@ -19,6 +19,8 @@
 #include "tf2_ros/buffer.h"
 #include "tf2/exceptions.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h> // for doTransform
+#include <tf2/utils.h> // for getYaw
 
 // Action messages (used less directly in ROS 2; here for compatibility)
 #include "action_msgs/msg/goal_status.hpp"
@@ -86,25 +88,18 @@ public:
 
         //############
         // Publishers
-        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>(
-            make_name("/navigation/potential_fields/enable"), 
-            rclcpp::QoS(10).transient_local());
-        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>(
-            make_name("/navigation/potential_fields/enable_cloud"), 
-            rclcpp::QoS(10).transient_local());
-        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>(
-            make_name("/simple_move/goal_path"), 
-            rclcpp::QoS(10).transient_local());
-        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
-            make_name("/simple_move/goal_dist_angle"), 
-            rclcpp::QoS(10).transient_local());
-        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>(
-            make_name("/navigation/status"), 
-            rclcpp::QoS(10).transient_local());
-        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>(
-            make_name("/simple_move/stop"), 
-            rclcpp::QoS(10).transient_local());
-
+        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable", 
+                                                                            rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable_cloud", 
+                                                                                   rclcpp::QoS(10).transient_local());
+        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>("/simple_move/goal_path", 
+                                                                     rclcpp::QoS(10).transient_local());
+        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/simple_move/goal_dist_angle", 
+                                                                                        rclcpp::QoS(10).reliable());
+        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/navigation/status", 
+                                                                              rclcpp::QoS(10).transient_local());
+        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>("/simple_move/stop", 
+                                                                             rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers
@@ -903,10 +898,14 @@ private:
                 collision_risk_ = false;
                 simple_move_sequencer++;
 
-                //path_.header.frame_id = std::to_string(simple_move_sequencer);
                 path_.header.frame_id = "map";
                 path_.header.stamp = this->now();
                 pub_goal_path_->publish(path_);
+
+                // modified by ry0hei-kobayashi, 2025/8/23
+                // path_.header.frame_id = std::to_string(simple_move_sequencer);
+                simple_move_sequencer = path_.header.stamp.sec;
+
                 simple_move_goal_status_.status = 0;
 
                 state = SM_WAIT_FOR_MOVE_FINISHED;
@@ -1013,13 +1012,16 @@ private:
             {
                 std::cout << "MotionPlanner.-> Correcting final angle." << std::endl;
                 get_robot_position();
-                error = atan2(global_goal_.orientation.z, global_goal_.orientation.w)*2 - robot_t_;
+
+                double goal_yaw = tf2::getYaw(global_goal_.orientation);
+                double error = goal_yaw - static_cast<double>(robot_t_);
 
                 if(error  >  M_PI) error -= 2*M_PI;
                 if(error <= -M_PI) error += 2*M_PI;
 
-                msg_goal_dist_angle.data[0] = 0;
-                msg_goal_dist_angle.data[1] = error;
+                msg_goal_dist_angle.data.resize(2);
+                msg_goal_dist_angle.data[0] = 0.0f;
+                msg_goal_dist_angle.data[1] = static_cast<float>(error);
                 pub_goal_dist_angle_->publish(msg_goal_dist_angle);
 
                 state = SM_WAIT_FOR_ANGLE_CORRECTED;
