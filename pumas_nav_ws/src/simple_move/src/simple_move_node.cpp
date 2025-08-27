@@ -52,6 +52,7 @@ public:
     {
         //############
         // Declare parameters with default values
+        this->declare_parameter<bool>("use_namespace",          false);
         this->declare_parameter<float>("max_linear_speed",      0.3f);
         this->declare_parameter<float>("min_linear_speed",      0.05f);
         this->declare_parameter<float>("max_angular_speed",     1.0f);
@@ -69,6 +70,7 @@ public:
         this->declare_parameter<std::string>("odom_name", "odom");
 
         // Initialize internal variables from declared parameters
+        this->get_parameter("use_namespace",         use_namespace_);
         this->get_parameter("max_linear_speed",      max_linear_speed_);
         this->get_parameter("min_linear_speed",      min_linear_speed_);
         this->get_parameter("max_angular_speed",     max_angular_speed_);
@@ -91,51 +93,66 @@ public:
 
         //############
         // Publishers
-        pub_goal_reached_   = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/simple_move/goal_reached", rclcpp::QoS(10).transient_local());
-        pub_cmd_vel_        = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", rclcpp::QoS(10).transient_local());
-        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/hardware/head/goal_pose", rclcpp::QoS(10).transient_local());
-
+        pub_cmd_vel_        = this->create_publisher<geometry_msgs::msg::Twist>(
+            "/cmd_vel", 
+            rclcpp::QoS(10).transient_local());
+        pub_goal_reached_   = this->create_publisher<actionlib_msgs::msg::GoalStatus>(
+            make_name("/simple_move/goal_reached"), 
+            rclcpp::QoS(10).transient_local());
+        pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            make_name("/hardware/head/goal_pose"), 
+            rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers
         //// stop
         sub_generalStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/stop", rclcpp::SensorDataQoS(), 
+            make_name("/stop"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_general_stop, this, std::placeholders::_1));
 
         sub_navCtrlStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/navigation/stop", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/stop"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_navigation_stop, this, std::placeholders::_1));
 
         sub_navSimpleMvStop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/simple_move/stop", rclcpp::SensorDataQoS(), 
+            make_name("/simple_move/stop"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_simple_move_stop, this, std::placeholders::_1));
 
         //// goal
         sub_goalDistance_ = this->create_subscription<std_msgs::msg::Float32>(
-            "/simple_move/goal_dist", rclcpp::SensorDataQoS(), 
+            make_name("/simple_move/goal_dist"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_dist, this, std::placeholders::_1));
         
         sub_goalDistAngle_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
             //"/simple_move/goal_dist_angle", rclcpp::SensorDataQoS(), 
             "/simple_move/goal_dist_angle", rclcpp::QoS(10).reliable(), 
+            make_name("/simple_move/goal_dist_angle"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_dist_angle, this, std::placeholders::_1));
 
         sub_goalPath_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/simple_move/goal_path", rclcpp::SensorDataQoS(), 
+            make_name("/simple_move/goal_path"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_path, this, std::placeholders::_1));
 
         //// motion
         sub_moveLateral_ = this->create_subscription<std_msgs::msg::Float32>(
-            "/simple_move/goal_dist_lateral", rclcpp::SensorDataQoS(), 
+            make_name("/simple_move/goal_dist_lateral"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_move_lateral, this, std::placeholders::_1));
 
         sub_collisionRisk_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/collision_risk", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/potential_fields/collision_risk"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_collision_risk, this, std::placeholders::_1));
 
         sub_rejectionForce_ = this->create_subscription<geometry_msgs::msg::Vector3>(
-            "/navigation/potential_fields/pf_rejection_force", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/potential_fields/pf_rejection_force"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_rejection_force, this, std::placeholders::_1));
         
         //############
@@ -154,6 +171,7 @@ public:
 private:
     //############
     // State variables
+    bool use_namespace_   = false;
     float goal_distance_  = 0;
     float goal_angle_     = 0;
     bool  new_pose_       = false;
@@ -248,7 +266,8 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "max_linear_speed")      max_linear_speed_        = param.as_double();
+            if (param.get_name()      == "use_namespace")         use_namespace_           = param.as_bool();
+            else if (param.get_name() == "max_linear_speed")      max_linear_speed_        = param.as_double();
             else if (param.get_name() == "min_linear_speed")      min_linear_speed_        = param.as_double();
             else if (param.get_name() == "max_angular_speed")     max_angular_speed_       = param.as_double();
             else if (param.get_name() == "control_alpha")         alpha_                   = param.as_double();
@@ -273,6 +292,30 @@ private:
         }
 
         return result;
+    }
+
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
     }
 
     // Wait for transforms 

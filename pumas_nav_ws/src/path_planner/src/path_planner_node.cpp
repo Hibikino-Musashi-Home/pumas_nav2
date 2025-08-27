@@ -11,10 +11,13 @@ public:
     PathPlannerNode() : Node("path_planner_node")
     {
         // Declare and get parameters
+        this->declare_parameter("use_namespace",        false);
         this->declare_parameter<float>("smooth_alpha",  0.1f);
         this->declare_parameter<float>("smooth_beta",   0.9f);
         this->declare_parameter<bool>("diagonal_paths", false);
 
+        // Initialize internal variables from declared parameters
+        this->get_parameter("use_namespace",    use_namespace_);
         this->get_parameter("smooth_alpha",     smooth_alpha_);
         this->get_parameter("smooth_beta",      smooth_beta_);
         this->get_parameter("diagonal_paths",   diagonal_paths_);
@@ -31,11 +34,11 @@ public:
 
         // Advertise planning services
         srv_plan_static_ = this->create_service<nav_msgs::srv::GetPlan>(
-            "/path_planner/plan_path_with_static",
+            make_name("/path_planner/plan_path_with_static"),
             std::bind(&PathPlannerNode::callback_a_star_with_static_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_plan_augmented_ = this->create_service<nav_msgs::srv::GetPlan>(
-            "/path_planner/plan_path_with_augmented",
+            make_name("/path_planner/plan_path_with_augmented"),
             std::bind(&PathPlannerNode::callback_a_star_with_augmented_map, this, std::placeholders::_1, std::placeholders::_2));
 
         messages_call_timer_ = this->create_wall_timer(
@@ -47,6 +50,7 @@ public:
 
 private:
     // Parameters
+    bool use_namespace_;
     float smooth_alpha_;
     float smooth_beta_;
     bool diagonal_paths_;
@@ -88,7 +92,8 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "smooth_alpha")    smooth_alpha_   = param.as_double();
+            if (param.get_name()      == "use_namespace")   use_namespace_  = param.as_bool();
+            else if (param.get_name() == "smooth_alpha")    smooth_alpha_   = param.as_double();
             else if (param.get_name() == "smooth_beta")     smooth_beta_    = param.as_double();
             else if (param.get_name() == "diagonal_paths")  diagonal_paths_ = param.as_bool();
 
@@ -104,14 +109,42 @@ private:
         return result;
     }
 
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
+    }
+
     //############
     // Initialize service clients (non-blocking)
     void init_service_clients()
     {
-        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_static_map");
-        clt_get_static_cost_map_ = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_static_cost_map");
-        clt_get_augmented_map_ = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_augmented_map");
-        clt_get_augmented_cost_map_ = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_augmented_cost_map");
+        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_static_map"));
+        clt_get_static_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_static_cost_map"));
+        clt_get_augmented_map_ = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_augmented_map"));
+        clt_get_augmented_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_augmented_cost_map"));
 
         service_check_timer_ = this->create_wall_timer(
             std::chrono::seconds(1),
