@@ -38,6 +38,7 @@ public:
     {
         //############
         // Declare parameters
+        this->declare_parameter<bool>("use_namespace",   false);
         this->declare_parameter<bool>("debug",           false);
         this->declare_parameter<bool>("show_image",      false);
         this->declare_parameter<bool>("use_pot_fields",  false);
@@ -75,6 +76,7 @@ public:
         this->declare_parameter<std::string>("base_link_name",    "base_link");
 
         // Load parameter values into variables
+        this->get_parameter("use_namespace",   use_namespace_);
         this->get_parameter("debug",           debug_);
         this->get_parameter("show_image",      show_img_);
         this->get_parameter("use_pot_fields",  use_pot_fields_);
@@ -118,31 +120,36 @@ public:
         //############
         // Publishers
         pub_collision_risk_ = this->create_publisher<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/collision_risk", rclcpp::QoS(10).transient_local());
+            make_name("/navigation/potential_fields/collision_risk"), 
+            rclcpp::QoS(10).transient_local());
 
         pub_pot_fields_markers_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "/navigation/potential_fields/pot_field_markers", rclcpp::QoS(10).transient_local());
+            make_name("/navigation/potential_fields/pot_field_markers"), 
+            rclcpp::QoS(10).transient_local());
 
         pub_pot_fields_rejection_ = this->create_publisher<geometry_msgs::msg::Vector3>(
-            "/navigation/potential_fields/pf_rejection_force", rclcpp::QoS(10).transient_local());
+            make_name("/navigation/potential_fields/pf_rejection_force"), 
+            rclcpp::QoS(10).transient_local());
 
 
         //############
         // Subscribers
-        sub_enable_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/enable", rclcpp::SensorDataQoS(),
-            std::bind(&PotentialFieldsNode::callback_enable, this, std::placeholders::_1));
-
-        sub_enable_cloud_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/enable_cloud", rclcpp::SensorDataQoS(),
-            std::bind(&PotentialFieldsNode::callback_enable_cloud, this, std::placeholders::_1));
-
         sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
             "/cmd_vel", rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_cmd_vel, this, std::placeholders::_1));
 
+        sub_enable_ = this->create_subscription<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable"), 
+            rclcpp::SensorDataQoS(),
+            std::bind(&PotentialFieldsNode::callback_enable, this, std::placeholders::_1));
+
+        sub_enable_cloud_ = this->create_subscription<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable_cloud"), 
+            rclcpp::SensorDataQoS(),
+            std::bind(&PotentialFieldsNode::callback_enable_cloud, this, std::placeholders::_1));
+
         sub_goal_path_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/simple_move/goal_path", rclcpp::SensorDataQoS(),
+            make_name("/simple_move/goal_path"), rclcpp::SensorDataQoS(),
             std::bind(&PotentialFieldsNode::callback_goal_path, this, std::placeholders::_1));
         
         //############
@@ -161,7 +168,8 @@ private:
     //############
     // State variables
     // Node state flags
-    bool enable_ = false;
+    bool use_namespace_        = false;
+    bool enable_               = false;
     bool collision_risk_lidar_ = false;
     bool collision_risk_cloud_ = false;
 
@@ -237,7 +245,8 @@ private:
         {
             const std::string &name = param.get_name();
 
-            if (name == "debug") debug_ = param.as_bool();
+            if (name == "use_namespace")        use_namespace_  = param.as_bool();
+            else if (name == "debug")           debug_          = param.as_bool();
             else if (name == "show_image")      show_img_       = param.as_bool();
             else if (name == "use_pot_fields")  use_pot_fields_ = param.as_bool();
 
@@ -282,6 +291,30 @@ private:
         }
 
         return result;
+    }
+
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
     }
 
     // Wait for transforms 

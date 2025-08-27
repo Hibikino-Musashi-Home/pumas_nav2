@@ -66,11 +66,13 @@ public:
     {
         //############
         // Declare parameters with default values
+        this->declare_parameter("use_namespace",               false);
         this->declare_parameter<bool>("patience",              true);
         this->declare_parameter<float>("proximity_criterion",  2.0f);
         this->declare_parameter<std::string>("base_link_name", "base_footprint");
 
         // Initialize internal variables from declared parameters
+        this->get_parameter("use_namespace",        use_namespace_);
         this->get_parameter("patience",             patience_);
         this->get_parameter("proximity_criterion",  proximity_criterion_);
         this->get_parameter("base_link_name",       base_link_name_);
@@ -84,47 +86,59 @@ public:
 
         //############
         // Publishers
-        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable", 
-                                                                            rclcpp::QoS(10).transient_local());
-        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable_cloud", 
-                                                                                   rclcpp::QoS(10).transient_local());
-        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>("/simple_move/goal_path", 
-                                                                     rclcpp::QoS(10).transient_local());
-        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/simple_move/goal_dist_angle", 
-                                                                                        rclcpp::QoS(10).transient_local());
-        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/navigation/status", 
-                                                                              rclcpp::QoS(10).transient_local());
-        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>("/simple_move/stop", 
-                                                                             rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable"), 
+            rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable_cloud"), 
+            rclcpp::QoS(10).transient_local());
+        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>(
+            make_name("/simple_move/goal_path"), 
+            rclcpp::QoS(10).transient_local());
+        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            make_name("/simple_move/goal_dist_angle"), 
+            rclcpp::QoS(10).transient_local());
+        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>(
+            make_name("/navigation/status"), 
+            rclcpp::QoS(10).transient_local());
+        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>(
+            make_name("/simple_move/stop"), 
+            rclcpp::QoS(10).transient_local());
 
 
         //############
         // Subscribers
         //// stop
         sub_general_stop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/stop", rclcpp::SensorDataQoS(), 
+            make_name("/stop"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_general_stop, this, std::placeholders::_1));
 
         sub_nav_ctrl_stop_ = this->create_subscription<std_msgs::msg::Empty>(
-            "/navigation/stop", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/stop"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_navigation_stop, this, std::placeholders::_1));
 
         //// goal
         sub_simple_goal_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/nav_control/goal", rclcpp::SensorDataQoS(), 
+            "/nav_control/goal", 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_simple_goal, this, std::placeholders::_1));
         
         sub_move_goal_status_ = this->create_subscription<actionlib_msgs::msg::GoalStatus>(
-            "/simple_move/goal_reached", rclcpp::SensorDataQoS(), 
+            make_name("/simple_move/goal_reached"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_simple_move_goal_status, this, std::placeholders::_1));
 
         //// motion
         sub_set_patience_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/set_patience", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/set_patience"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_set_patience, this, std::placeholders::_1));
 
         sub_collision_risk_ = this->create_subscription<std_msgs::msg::Bool>(
-            "/navigation/potential_fields/collision_risk", rclcpp::SensorDataQoS(), 
+            make_name("/navigation/potential_fields/collision_risk"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_collision_risk, this, std::placeholders::_1));
 
       
@@ -143,6 +157,7 @@ public:
 private:
     //############
     // State variables
+    bool use_namespace_         = false;
     bool stop_                  = false;
     bool collision_risk_        = false;
     bool new_global_goal_       = false;
@@ -264,7 +279,8 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "patience")            patience_               = param.as_bool();
+            if (param.get_name()      == "use_namespace")       use_namespace_          = param.as_bool();
+            else if (param.get_name() == "patience")            patience_               = param.as_bool();
             else if (param.get_name() == "proximity_criterion") proximity_criterion_    = param.as_double();
             else if (param.get_name() == "base_link_name")      base_link_name_         = param.as_string();
 
@@ -277,6 +293,30 @@ private:
         }
 
         return result;
+    }
+
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
     }
 
     // Wait for transforms 
@@ -323,12 +363,18 @@ private:
     // Initialize service clients (non-blocking)
     void init_service_clients()
     {
-        clt_plan_path_static_       = this->create_client<nav_msgs::srv::GetPlan>("/path_planner/plan_path_with_static");
-        clt_plan_path_augmented_    = this->create_client<nav_msgs::srv::GetPlan>("/path_planner/plan_path_with_augmented");
-        clt_get_aug_map_            = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_augmented_map");
-        clt_get_aug_costmap_        = this->create_client<nav_msgs::srv::GetMap>("/map_augmenter/get_augmented_cost_map");
-        clt_are_there_obs_          = this->create_client<std_srvs::srv::Trigger>("/map_augmenter/are_there_obstacles");
-        clt_is_in_obstacles_        = this->create_client<std_srvs::srv::Trigger>("/map_augmenter/is_inside_obstacles");
+        clt_plan_path_static_       = this->create_client<nav_msgs::srv::GetPlan>(
+            make_name("/path_planner/plan_path_with_static"));
+        clt_plan_path_augmented_    = this->create_client<nav_msgs::srv::GetPlan>(
+            make_name("/path_planner/plan_path_with_augmented"));
+        clt_get_aug_map_            = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_augmented_map"));
+        clt_get_aug_costmap_        = this->create_client<nav_msgs::srv::GetMap>(
+            make_name("/map_augmenter/get_augmented_cost_map"));
+        clt_are_there_obs_          = this->create_client<std_srvs::srv::Trigger>(
+            make_name("/map_augmenter/are_there_obstacles"));
+        clt_is_in_obstacles_        = this->create_client<std_srvs::srv::Trigger>(
+            make_name("/map_augmenter/is_inside_obstacles"));
 
         service_check_timer_ = this->create_wall_timer(
             std::chrono::seconds(1),

@@ -20,27 +20,37 @@ public:
   HeadController()
   : Node("head_controller")
   {
-    RCLCPP_INFO(this->get_logger(), "Head Controller Node has been started.");
+    //############
+    // Declare parameters with default values
+    this->declare_parameter<bool>(        "use_namespace",            false);
+    this->declare_parameter<std::string>( "head_cmd_topic_",          "/head_trajectory_controller/joint_trajectory");
+    this->declare_parameter<std::string>( "head_state_topic",         "/head_trajectory_controller/controller_state");
+    this->declare_parameter<std::string>( "head_goal_topic",          "/hardware/head/goal_pose");
+    this->declare_parameter<std::string>( "head_current_topic",       "/hardware/head/current_pose");
+    this->declare_parameter<std::string>( "head_goal_reached_topic",  "/hardware/head/goal_reached");
 
-    // Parameters
-    head_cmd_topic_          = this->declare_parameter<std::string>(
-        "head_cmd_topic",          "/head_trajectory_controller/joint_trajectory");
-    head_state_topic_        = this->declare_parameter<std::string>(
-        "head_state_topic",        "/head_trajectory_controller/controller_state");
-    head_goal_topic_         = this->declare_parameter<std::string>(
-        "head_goal_topic",         "/hardware/head/goal_pose");
-    head_current_topic_      = this->declare_parameter<std::string>(
-        "head_current_topic",      "/hardware/head/current_pose");
-    head_goal_reached_topic_ = this->declare_parameter<std::string>(
-        "head_goal_reached_topic", "/hardware/head/goal_reached");
+    // Initialize internal variables from declared parameters
+    this->get_parameter("use_namespace",            use_namespace_);
+    this->get_parameter("head_cmd_topic_",          head_cmd_topic_);
+    this->get_parameter("head_state_topic",         head_state_topic_);
+    this->get_parameter("head_goal_topic",          head_goal_topic_);
+    this->get_parameter("head_current_topic",       head_current_topic_);
+    this->get_parameter("head_goal_reached_topic",  head_goal_reached_topic_);
+
+    // Setup parameter change callback
+    param_callback_handle_ = this->add_on_set_parameters_callback(
+      std::bind(&HeadController::on_parameter_change, this, std::placeholders::_1));
 
     // Publishers
-    pub_head_goal_traj_ =
-        this->create_publisher<trajectory_msgs::msg::JointTrajectory>(head_cmd_topic_, 10);
-    pub_head_current_pose_ =
-        this->create_publisher<std_msgs::msg::Float32MultiArray>(head_current_topic_, 10);
-    pub_head_goal_reached_ =
-        this->create_publisher<std_msgs::msg::Bool>(head_goal_reached_topic_, 10);
+    pub_head_goal_traj_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
+      head_cmd_topic_, 
+      rclcpp::QoS(10).transient_local());
+    pub_head_current_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+      head_current_topic_, 
+      rclcpp::QoS(10).transient_local());
+    pub_head_goal_reached_ = this->create_publisher<std_msgs::msg::Bool>(
+      head_goal_reached_topic_, 
+      rclcpp::QoS(10).transient_local());
 
     //qos
     auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
@@ -54,7 +64,7 @@ public:
         std::bind(&HeadController::headGoalPoseCallback, this, std::placeholders::_1));
 
     sub_head_state_ = this->create_subscription<control_msgs::msg::JointTrajectoryControllerState>(
-        head_state_topic_, 10,
+        head_state_topic_, qos,
         std::bind(&HeadController::headStateCallback, this, std::placeholders::_1));
 
     // Init
@@ -64,13 +74,93 @@ public:
     timer_ = this->create_wall_timer(
         std::chrono::milliseconds(100),
         std::bind(&HeadController::timerCallback, this));
+
+    RCLCPP_INFO(this->get_logger(), "HeadController Node has been started.");
   }
 
 private:
+
+  bool use_namespace_   = false;
+
   static constexpr float PAN_MIN  = -3.141592f;
   static constexpr float PAN_MAX  =  1.74f;
   static constexpr float TILT_MIN = -0.9f;
   static constexpr float TILT_MAX =  0.47f;
+
+  std::string head_cmd_topic_;
+  std::string head_state_topic_;
+  std::string head_goal_topic_;
+  std::string head_current_topic_;
+  std::string head_goal_reached_topic_;
+
+  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr  pub_head_goal_traj_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr       pub_head_current_pose_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                    pub_head_goal_reached_;
+
+  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr    sub_head_goal_pose_;
+  rclcpp::Subscription<control_msgs::msg::JointTrajectoryControllerState>::SharedPtr sub_head_state_;
+
+  std::vector<float> head_goal_pose_;
+  std::vector<float> head_current_pose_;
+  bool goal_received_{false};
+
+  // Parameter callback handle
+  OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
+  rclcpp::TimerBase::SharedPtr timer_;
+
+  //############
+  // Runtime parameter update callback
+  rcl_interfaces::msg::SetParametersResult on_parameter_change(
+      const std::vector<rclcpp::Parameter> &params)
+  {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+
+    for (const auto &param : params)
+    {
+      if (param.get_name()      == "use_namespace")           use_namespace_            = param.as_bool();
+
+      else if (param.get_name() == "head_cmd_topic_")         head_cmd_topic_           = param.as_string();
+      else if (param.get_name() == "head_state_topic")        head_state_topic_         = param.as_string();
+      else if (param.get_name() == "head_goal_topic")         head_goal_topic_          = param.as_string();
+      else if (param.get_name() == "head_current_topic")      head_current_topic_       = param.as_string();
+      else if (param.get_name() == "head_goal_reached_topic") head_goal_reached_topic_  = param.as_string();
+
+      else {
+        result.successful = false;
+        result.reason = "HeadController.-> Unsupported parameter: " + param.get_name();
+        RCLCPP_WARN(this->get_logger(), "HeadController.-> Attempted to update unsupported parameter: %s", param.get_name().c_str());
+        break;
+      }
+    }
+
+    return result;
+  }
+
+  std::string make_name(const std::string &suffix) const
+  {
+    // Ensure suffix starts with "/"
+    std::string sfx = suffix;
+    if (!sfx.empty() && sfx.front() != '/')
+      sfx = "/" + sfx;
+
+    std::string name;
+
+    if (use_namespace_) {
+      // Use node namespace prefix
+      name = this->get_namespace() + sfx;
+
+      // Avoid accidental double slash (e.g., when namespace is "/")
+      if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+        name.erase(0, 1);
+    } else {
+      // Use global namespace (no node namespace prefix)
+      name = sfx;
+    }
+
+    return name;
+  }
 
   void headStateCallback(
       const control_msgs::msg::JointTrajectoryControllerState::SharedPtr msg)
@@ -135,24 +225,6 @@ private:
     pub_head_goal_traj_->publish(traj);
   }
 
-  std::string head_cmd_topic_;
-  std::string head_state_topic_;
-  std::string head_goal_topic_;
-  std::string head_current_topic_;
-  std::string head_goal_reached_topic_;
-
-  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr pub_head_goal_traj_;
-  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr       pub_head_current_pose_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                    pub_head_goal_reached_;
-
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr sub_head_goal_pose_;
-  rclcpp::Subscription<control_msgs::msg::JointTrajectoryControllerState>::SharedPtr sub_head_state_;
-
-  rclcpp::TimerBase::SharedPtr timer_;
-
-  std::vector<float> head_goal_pose_;
-  std::vector<float> head_current_pose_;
-  bool goal_received_{false};
 };
 
 int main(int argc, char **argv)

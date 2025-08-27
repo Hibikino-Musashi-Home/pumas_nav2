@@ -34,6 +34,7 @@ public:
     {
         //############
         // Declare parameters with default values
+        this->declare_parameter("use_namespace",          false);
         this->declare_parameter("use_lidar",              false);
         this->declare_parameter("use_point_cloud",        false);
         this->declare_parameter("use_point_cloud2",       false);
@@ -64,6 +65,7 @@ public:
         this->declare_parameter("base_link_name",         "base_footprint");
 
         // Initialize internal variables from declared parameters
+        this->get_parameter("use_namespace",          use_namespace_);
         this->get_parameter("use_lidar",              use_lidar_);
         this->get_parameter("use_point_cloud",        use_cloud_);
         this->get_parameter("use_point_cloud2",       use_cloud2_);
@@ -105,12 +107,15 @@ public:
 
         //############
         // Publishers
-        pub_augmented_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/augmented_map", rclcpp::QoS(10).transient_local());
+        pub_augmented_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            make_name("/augmented_map"), 
+            rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers
         sub_clicked_point_ = this->create_subscription<geometry_msgs::msg::PointStamped>(
-            "/point_obstacle", rclcpp::SensorDataQoS(), 
+            make_name("/point_obstacle"), 
+            rclcpp::SensorDataQoS(), 
             std::bind(&MapAugmenterNode::callback_point_obstacle, this, std::placeholders::_1));
 
         sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -128,27 +133,27 @@ public:
         //############
         // Advertise augmenter services
         srv_static_map_ = this->create_service<nav_msgs::srv::GetMap>(
-            "/map_augmenter/get_static_map", 
+            make_name("/map_augmenter/get_static_map"), 
             std::bind(&MapAugmenterNode::callback_static_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_static_cost_map_ = this->create_service<nav_msgs::srv::GetMap>(
-            "/map_augmenter/get_static_cost_map", 
+            make_name("/map_augmenter/get_static_cost_map"), 
             std::bind(&MapAugmenterNode::callback_static_cost_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_augmented_map_ = this->create_service<nav_msgs::srv::GetMap>(
-            "/map_augmenter/get_augmented_map", 
+            make_name("/map_augmenter/get_augmented_map"), 
             std::bind(&MapAugmenterNode::callback_augmented_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_augmented_cost_map_ = this->create_service<nav_msgs::srv::GetMap>(
-            "/map_augmenter/get_augmented_cost_map", 
+            make_name("/map_augmenter/get_augmented_cost_map"), 
             std::bind(&MapAugmenterNode::callback_augmented_cost_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_are_there_obstacles_ = this->create_service<std_srvs::srv::Trigger>(
-            "/map_augmenter/are_there_obstacles", 
+            make_name("/map_augmenter/are_there_obstacles"), 
             std::bind(&MapAugmenterNode::callback_are_there_obstacles, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_is_inside_obstacles_ = this->create_service<std_srvs::srv::Trigger>(
-            "/map_augmenter/is_inside_obstacles", 
+            make_name("/map_augmenter/is_inside_obstacles"), 
             std::bind(&MapAugmenterNode::callback_is_inside_obstacles, this, std::placeholders::_1, std::placeholders::_2));
 
         //############
@@ -179,6 +184,7 @@ private:
     tf2_ros::TransformListener tf_listener_;
 
     // Internal parameter values
+    bool use_namespace_;
     bool use_lidar_;
     bool use_cloud_;
     bool use_cloud2_;
@@ -262,7 +268,8 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "use_lidar")              use_lidar_              = param.as_bool();
+            if (param.get_name()      == "use_namespace")          use_namespace_          = param.as_bool();
+            else if (param.get_name() == "use_lidar")              use_lidar_              = param.as_bool();
             else if (param.get_name() == "use_point_cloud")        use_cloud_              = param.as_bool();
             else if (param.get_name() == "use_point_cloud2")       use_cloud2_             = param.as_bool();
             else if (param.get_name() == "use_online")             use_online_             = param.as_bool();
@@ -305,6 +312,30 @@ private:
         }
 
         return result;
+    }
+
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
     }
 
     //############

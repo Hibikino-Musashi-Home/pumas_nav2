@@ -21,13 +21,15 @@ public:
     AugmentedGridMapNode() : Node("augment_gridmap_online_node")
     {
         // Declare and get parameters
-        this->declare_parameter("obstacle_radius", 0.05);
-        this->declare_parameter("debug", false);
-        this->declare_parameter("input_map", std::string("map"));
+        this->declare_parameter("use_namespace",    false);
+        this->declare_parameter("obstacle_radius",  0.05);
+        this->declare_parameter("debug",            false);
+        this->declare_parameter("input_map",        "map");
 
-        this->get_parameter("obstacle_radius", obstacle_radius_);
-        this->get_parameter("debug", debug_);
-        this->get_parameter("input_map", input_map_);
+        this->get_parameter("use_namespace",        use_namespace_);
+        this->get_parameter("obstacle_radius",      obstacle_radius_);
+        this->get_parameter("debug",                debug_);
+        this->get_parameter("input_map",            input_map_);
 
         // Subscribers
         sub_map_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
@@ -39,17 +41,23 @@ public:
             std::bind(&AugmentedGridMapNode::callback_add_point, this, std::placeholders::_1));
 
         // Publishers
-        pub_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("/grid_map/augmented_map", rclcpp::QoS(10).transient_local());
-        pub_metadata_ = this->create_publisher<nav_msgs::msg::MapMetaData>("/grid_map/augmented_map_metadata", rclcpp::QoS(10).transient_local());
-        pub_marker_ = this->create_publisher<visualization_msgs::msg::Marker>("/grid_map/obstacle_markers", rclcpp::QoS(10).transient_local());
+        pub_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            make_name("/grid_map/augmented_map"), 
+            rclcpp::QoS(10).transient_local());
+        pub_metadata_ = this->create_publisher<nav_msgs::msg::MapMetaData>(
+            make_name("/grid_map/augmented_map_metadata"), 
+            rclcpp::QoS(10).transient_local());
+        pub_marker_ = this->create_publisher<visualization_msgs::msg::Marker>(
+            make_name("/grid_map/obstacle_markers"), 
+            rclcpp::QoS(10).transient_local());
 
         // Services
         srv_clear_map_ = this->create_service<std_srvs::srv::Empty>(
-            "/clear_map",
+            make_name("/clear_map"),
             std::bind(&AugmentedGridMapNode::callback_clear_map, this, std::placeholders::_1, std::placeholders::_2));
 
         srv_get_augmented_map_ = this->create_service<nav_msgs::srv::GetMap>(
-            "/grid_map/get_augmented_map",
+            make_name("/grid_map/get_augmented_map"),
             std::bind(&AugmentedGridMapNode::callback_get_augmented_map, this, std::placeholders::_1, std::placeholders::_2));
 
         RCLCPP_INFO(this->get_logger(), "AugmentedGridMap.-> Map enhancer node Initialization finished");
@@ -57,8 +65,8 @@ public:
 
 private:
     // Parameters
+    bool use_namespace_, debug_;
     float obstacle_radius_;
-    bool debug_;
     std::string input_map_;
 
     // Core map storage
@@ -98,7 +106,8 @@ private:
 
         for (const auto &param : params)
         {
-            if (param.get_name()      == "obstacle_radius")     obstacle_radius_    = param.as_double();
+            if (param.get_name()      == "use_namespace")       use_namespace_      = param.as_bool();
+            else if (param.get_name() == "obstacle_radius")     obstacle_radius_    = param.as_double();
             else if (param.get_name() == "debug")               debug_              = param.as_bool();
             else if (param.get_name() == "input_map")           input_map_          = param.as_string();
 
@@ -112,6 +121,30 @@ private:
         }
 
         return result;
+    }
+
+    std::string make_name(const std::string &suffix) const
+    {
+        // Ensure suffix starts with "/"
+        std::string sfx = suffix;
+        if (!sfx.empty() && sfx.front() != '/')
+            sfx = "/" + sfx;
+
+        std::string name;
+
+        if (use_namespace_) {
+            // Use node namespace prefix
+            name = this->get_namespace() + sfx;
+
+            // Avoid accidental double slash (e.g., when namespace is "/")
+            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+                name.erase(0, 1);
+        } else {
+            // Use global namespace (no node namespace prefix)
+            name = sfx;
+        }
+
+        return name;
     }
 
     // Subscribers callbacks
