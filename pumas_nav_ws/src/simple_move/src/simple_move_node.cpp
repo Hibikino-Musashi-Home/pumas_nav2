@@ -128,8 +128,6 @@ public:
             std::bind(&SimpleMoveNode::callback_goal_dist, this, std::placeholders::_1));
         
         sub_goalDistAngle_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            //"/simple_move/goal_dist_angle", rclcpp::SensorDataQoS(), 
-            "/simple_move/goal_dist_angle", rclcpp::QoS(10).reliable(), 
             make_name("/simple_move/goal_dist_angle"), 
             rclcpp::SensorDataQoS(), 
             std::bind(&SimpleMoveNode::callback_goal_dist_angle, this, std::placeholders::_1));
