@@ -88,18 +88,24 @@ public:
 
         //############
         // Publishers
-        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable", 
-                                                                            rclcpp::QoS(10).transient_local());
-        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>("/navigation/potential_fields/enable_cloud", 
-                                                                                   rclcpp::QoS(10).transient_local());
-        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>("/simple_move/goal_path", 
-                                                                     rclcpp::QoS(10).transient_local());
-        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/simple_move/goal_dist_angle", 
-                                                                                        rclcpp::QoS(10).reliable());
-        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>("/navigation/status", 
-                                                                              rclcpp::QoS(10).transient_local());
-        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>("/simple_move/stop", 
-                                                                             rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable"), 
+            rclcpp::QoS(10).transient_local());
+        pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>(
+            make_name("/navigation/potential_fields/enable_cloud"), 
+            rclcpp::QoS(10).transient_local());
+        pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>(
+            make_name("/simple_move/goal_path"), 
+            rclcpp::QoS(10).transient_local());
+        pub_goal_dist_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            make_name("/simple_move/goal_dist_angle"), 
+            rclcpp::QoS(10).transient_local());
+        pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>(
+            make_name("/navigation/status"), 
+            rclcpp::QoS(10).transient_local());
+        pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>(
+            make_name("/simple_move/stop"), 
+            rclcpp::QoS(10).transient_local());
 
         //############
         // Subscribers
