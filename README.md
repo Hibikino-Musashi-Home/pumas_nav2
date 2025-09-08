@@ -90,13 +90,25 @@ To use SLAM and navigation, you need to start a mapping system.
 e.g.
 [SLAM Toolbox](https://github.com/SteveMacenski/slam_toolbox)
 
-Also, a localization system is required for the correct TF2 frame transformations.
+Also, a localisation system is required for the correct TF2 frame transformations.
 
 e.g.
 [Nav2 AMCL](https://github.com/ros-navigation/navigation2)
 
 or
 [EMCL](https://github.com/CIT-Autonomous-Robot-Lab/emcl2_ros2)
+
+### Launch
+
+```bash
+ros2 launch navigation_start navigation.launch.xml
+```
+
+or
+
+```bash
+ros2 launch navigation_start navigation_namespace.launch.xml namespace:=my_robot_name
+```
 
 ### Notes
 
@@ -140,6 +152,6 @@ these parameters indicate the obstacle's distance and rejective force during nav
 
 # Authors
 
-* **Luis Contreras** - [TID Professional University](https://www.tid.ac.jp/contents/special-interview/2007/)
+* **Luis Contreras** - [QibiTech Inc.](https://qibitech.com) https://qibitech.com / [TID Professional University](https://www.tid.ac.jp/contents/special-interview/2007/)
 * **Marco Negrete** - [BioRobotics UNAM](https://biorobotics.fi-p.unam.mx/)
 * **Ryohei Kobayashi** - [Kyushu Institute of Technology](https://www.brain.kyutech.ac.jp/~tamukoh/en/)
