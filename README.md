@@ -154,6 +154,6 @@ these parameters indicate the obstacle's distance and rejective force during nav
 
 # Authors
 
-* **Luis Contreras** - [QibiTech Inc.](https://qibitech.com) https://qibitech.com / [TID Professional University](https://www.tid.ac.jp/contents/special-interview/2007/)
+* **Luis Contreras** - [QibiTech Inc.](https://qibitech.com) / [TID Professional University](https://www.tid.ac.jp/contents/special-interview/2007/)
 * **Marco Negrete** - [BioRobotics UNAM](https://biorobotics.fi-p.unam.mx/)
 * **Ryohei Kobayashi** - [Kyushu Institute of Technology](https://www.brain.kyutech.ac.jp/~tamukoh/en/)
