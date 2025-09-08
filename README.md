@@ -21,7 +21,7 @@ year		= {2018}
 ```
 
 ```
-@article{negrete:2018,
+@article{contreras:2025,
 author 		= {Luis Contreras and Marco Negrete and Tomoaki Yoshiaki and Yuichiro Hirose and Hiroyuki Okada},
 title 		= {{A Motion Planning Framework for Multi-Robot Navigation in ROS 2}},
 journal		= {{RSJ 2025}},
