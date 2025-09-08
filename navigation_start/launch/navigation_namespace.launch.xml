@@ -9,8 +9,8 @@
   <arg name="ns_prefix" default="/$(var namespace)" if="$(var use_namespace)"/>
   <arg name="ns_prefix" default="" unless="$(var use_namespace)"/>
 
-  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/>
-  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/>
+  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/wrs2020/map.yaml"/>
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/wrs2020/map.yaml"/>
 
   <!-- Topics (conditionally namespaced) -->
   <arg name="pose_topic" default="/$(var namespace)/pose" if="$(var use_namespace)"/>
@@ -102,8 +102,12 @@
 
 
   <!-- in namespace -->
-  
-  <!-- EMCL2 localization -->
+
+  <!-- Localization  -->
+  <!-- KILL AMCL localization if necessary -->
+  <executable cmd="ros2 node kill amcl"/>
+
+  <!-- Start EMCL2 localization or your own navigation -->
   <node name="emcl2"
         pkg="emcl2"
         exec="emcl2_node"

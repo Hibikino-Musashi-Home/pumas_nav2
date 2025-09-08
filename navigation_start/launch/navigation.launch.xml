@@ -3,8 +3,6 @@
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
 
-  <!--arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/-->
-  <!--arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/-->
   <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/wrs2020/map.yaml"/>
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/wrs2020/map.yaml"/>
 
@@ -83,7 +81,11 @@
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
 
-  <!-- EMCL2 localization -->
+  <!-- Localization  -->
+  <!-- KILL AMCL localization if necessary -->
+  <executable cmd="ros2 node kill amcl"/>
+
+  <!-- Start EMCL2 localization or your own navigation -->
   <node name="emcl2"
         pkg="emcl2"
         exec="emcl2_node"
@@ -151,7 +153,7 @@
         pkg="path_planner" 
         exec="path_planner_node" 
         output="screen">
-    <param name="diagonal_paths" value="False"/>
+    <param name="diagonal_paths" value="True"/>
   </node>
 
   <node name="simple_move"  
