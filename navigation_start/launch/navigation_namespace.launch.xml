@@ -2,33 +2,35 @@
 
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
-  <arg name="namespace" default="kachaka"/>
+  <arg name="namespace" default="my_robot"/>
   <arg name="use_namespace" default="false"/>
 
   <!-- Define conditional prefix -->
   <arg name="ns_prefix" default="/$(var namespace)" if="$(var use_namespace)"/>
   <arg name="ns_prefix" default="" unless="$(var use_namespace)"/>
 
-  <arg name="static_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/maps/tidbots/map.yaml"/>
-  <arg name="prohibition_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/prohibition_maps/tidbots/map.yaml"/>
+  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/>
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/>
 
   <!-- Topics (conditionally namespaced) -->
+  <arg name="pose_topic" default="/$(var namespace)/pose" if="$(var use_namespace)"/>
   <arg name="cmd_vel_topic" default="/$(var namespace)/omni_base_controller/cmd_vel" if="$(var use_namespace)"/>
   <arg name="laser_scan_topic" default="/$(var namespace)/scan" if="$(var use_namespace)"/>
   <arg name="point_cloud_topic" default="/$(var namespace)/head_rgbd_sensor/depth_registered/rectified_points" if="$(var use_namespace)"/>
   <arg name="point_cloud_topic2" default="/$(var namespace)/head_rgbd_sensor/depth_registered/rectified_points" if="$(var use_namespace)"/>
   <arg name="bumper_f_topic" default="/$(var namespace)/base_f_bumper_sensor" if="$(var use_namespace)"/>
   <arg name="base_link_name" default="/$(var namespace)/base_link" if="$(var use_namespace)"/>
-  <arg name="odom_name" default="/$(var namespace)/odom" if="$(var use_namespace)"/>
+  <arg name="odom_topic" default="/$(var namespace)/odom" if="$(var use_namespace)"/>
   <arg name="goal_topic" default="/$(var namespace)/move_base_simple/goal" if="$(var use_namespace)"/>
 
+  <arg name="pose_topic" default="/pose" unless="$(var use_namespace)"/>
   <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel" unless="$(var use_namespace)"/>
   <arg name="laser_scan_topic" default="/scan" unless="$(var use_namespace)"/>
   <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points" unless="$(var use_namespace)"/>
   <arg name="point_cloud_topic2" default="/head_rgbd_sensor/depth_registered/rectified_points" unless="$(var use_namespace)"/>
   <arg name="bumper_f_topic" default="/base_f_bumper_sensor" unless="$(var use_namespace)"/>
   <arg name="base_link_name" default="base_link" unless="$(var use_namespace)"/>
-  <arg name="odom_name" default="odom" unless="$(var use_namespace)"/>
+  <arg name="odom_topic" default="odom" unless="$(var use_namespace)"/>
   <arg name="goal_topic" default="/move_base_simple/goal" unless="$(var use_namespace)"/>
 
   <arg name="use_lidar" default="True"/>
@@ -100,6 +102,29 @@
 
 
   <!-- in namespace -->
+  
+  <!-- EMCL2 localization -->
+  <node name="emcl2"
+        pkg="emcl2"
+        exec="emcl2_node"
+        namespace="$(var namespace)"
+        output="log"
+        args="--ros-args --log-level WARN">
+    <param name="num_particles" value="1000"/>
+
+    <param name="odom_frame_id" value="$(var namespace)/odom"/> 
+    <param name="base_frame_id" value="$(var namespace)/base_link"/>
+    <param name="footprint_frame_id" value="$(var namespace)/base_footprint"/>
+    <param name="global_frame_id" value="map"/>
+
+    <remap from="scan" to="$(var laser_scan_topic)"/>
+    <remap from="local_costmap/scan" to="$(var laser_scan_topic)"/>
+    <remap from="odom" to="$(var odom_topic)"/>
+    <remap from="cmd_vel" to="$(var cmd_vel_topic)"/>
+    <remap from="mcl_pose" to="$(var pose_topic)"/>
+    <remap from="map" to="/map"/>
+  </node>
+  
   <!-- Map Augmenters -->
   <node name="map_augmenter" 
         pkg="map_augmenter" 
@@ -167,7 +192,7 @@
 
     <param name="move_head" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
-    <param name="odom_name" value="$(var odom_name)"/> 
+    <param name="odom_topic" value="$(var odom_topic)"/> 
     <param name="base_link_name" value="$(var base_link_name)"/>
 
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
@@ -262,7 +287,7 @@
   <node name="rviz2"
         pkg="rviz2"
         exec="rviz2"
-        args="-d /home/roboworks/pumas_nav_ws/src/navigation_start/rviz/config.rviz
+        args="-d $(find-pkg-share navigation_start)/rviz/config.rviz
               --ros-args --log-level rviz2:=warn"
         output="screen"
         />

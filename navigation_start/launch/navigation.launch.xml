@@ -3,10 +3,12 @@
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
 
-  <arg name="static_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/maps/tidbots/map.yaml"/>
-  <arg name="prohibition_map_file" default="/home/roboworks/pumas_nav_ws/src/navigation_start/maps/prohibition_maps/tidbots/map.yaml"/>
+  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/>
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/>
 
-  <arg name="cmd_vel_name" default="/omni_base_controller/cmd_vel"/>
+  <arg name="odom_topic" default="/odom"/>
+  <arg name="pose_topic" default="/pose"/>
+  <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel"/>
   <arg name="laser_scan_topic" default="/scan"/>
   <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
   <arg name="point_cloud_topic2" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
@@ -78,6 +80,27 @@
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
 
+  <!-- EMCL2 localization -->
+  <node name="emcl2"
+        pkg="emcl2"
+        exec="emcl2_node"
+        output="log"
+        args="--ros-args --log-level WARN">
+    <param name="num_particles" value="1000"/>
+
+    <param name="odom_frame_id" value="odom"/> 
+    <param name="base_frame_id" value="base_link"/>
+    <param name="footprint_frame_id" value="base_footprint"/>
+    <param name="global_frame_id" value="map"/>
+
+    <remap from="scan" to="$(var laser_scan_topic)"/>
+    <remap from="local_costmap/scan" to="$(var laser_scan_topic)"/>
+    <remap from="odom" to="$(var odom_topic)"/>
+    <remap from="cmd_vel" to="$(var cmd_vel_topic)"/>
+    <remap from="mcl_pose" to="$(var pose_topic)"/>
+    <remap from="map" to="/map"/>
+  </node>
+
   <!-- Map Augmenters -->
   <node name="map_augmenter" 
         pkg="map_augmenter" 
@@ -137,7 +160,7 @@
     <param name="move_head" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
-    <remap from="/cmd_vel" to="$(var cmd_vel_name)"/>
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
 
   <!-- Potential Fields -->
@@ -179,7 +202,7 @@
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
 
-    <remap from="/cmd_vel" to="$(var cmd_vel_name)"/>
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
 
   <node name="publish_enable"
@@ -211,7 +234,7 @@
   <node name="rviz2"
         pkg="rviz2"
         exec="rviz2"
-        args="-d /home/roboworks/pumas_nav_ws/src/navigation_start/rviz/config.rviz
+        args="-d $(find-pkg-share navigation_start)/rviz/config.rviz
               --ros-args --log-level rviz2:=warn"
         output="screen"
         />
