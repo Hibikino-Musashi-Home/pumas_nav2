@@ -47,7 +47,7 @@ Then, clone this repository into the src folder:
 
 ```bash
 cd ~/pumas_nav2_ws/src
-git clone https://github.com/ARTenshi/robot_navigation.git
+git clone https://github.com/artenshi/pumas_nav2.git
 ```
 
 
