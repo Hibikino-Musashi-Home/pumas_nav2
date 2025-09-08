@@ -237,8 +237,7 @@ private:
 
         if (debug_)
         {
-            std::cout << "AugmentedGridMap.-> Cell: [" << cx << "," << cy << "]\n"
-                      << "Obstacle bounds: X[" << min_x << "," << max_x << "], Y[" << min_y << "," << max_y << "]\n";
+            RCLCPP_INFO(this->get_logger(), "AugmentedGridMap.-> Cell: [%d, %d,], Obstacle bounds : X [%d, %d], Y [%d, %d] ", cx, cy, min_x, max_x, min_y, max_y);
         }
 
         for (int i = min_x; i < max_x; ++i)
