@@ -3,8 +3,10 @@
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
 
-  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/>
-  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/>
+  <!--arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/tidbots/map.yaml"/-->
+  <!--arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/tidbots/map.yaml"/-->
+  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/wrs2020/map.yaml"/>
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/wrs2020/map.yaml"/>
 
   <arg name="odom_topic" default="/odom"/>
   <arg name="pose_topic" default="/pose"/>
@@ -74,6 +76,7 @@
 
     <remap from="point_obstacle" to="/clicked_point"/>
     <param name="obstacle_radius" value="0.05"/>
+    <param name="debug" value="True"/>
 
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
     <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
@@ -110,8 +113,10 @@
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="point_cloud_topic2" value="$(var point_cloud_topic2)"/>
     <param name="static_map_server" value="/static_map_server/map"/>
-    <param name="prohibition_map_server" value="/prohibition_map_server/map"/>
+    <param name="prohibition_map_server" value="/prohibition_map"/>
     
+    <remap from="point_obstacle" to="/clicked_point"/>
+
     <param name="use_lidar" value="$(var use_lidar)"/>
     <param name="use_sonars" value="$(var use_sonars)"/>
     <param name="use_point_cloud" value="$(var use_point_cloud)"/>
@@ -122,6 +127,8 @@
     <param name="decay_factor" value="20"/>    
     <param name="inflation_radius" value="0.22"/>
     <param name="cost_radius" value="0.25"/> 
+
+    <param name="use_online" value="False"/>
 
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
