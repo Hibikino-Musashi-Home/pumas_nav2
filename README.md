@@ -141,6 +141,8 @@ Additionally, in the package:
   <param name="use_namespace" value="$(var use_namespace)"/>
 ```
 
+modify the following parameters accordingly: 
+
 ```xml
   <param name="laser_pot_fields_d0" value="0.50"/>
   <param name="laser_pot_fields_k_rej" value="0.40"/>
