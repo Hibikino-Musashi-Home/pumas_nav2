@@ -20,6 +20,8 @@ year		= {2018}
 }
 ```
 
+These ROS2 version details are described in:
+
 ```
 @article{contreras:2025,
 author 		= {Luis Contreras and Marco Negrete and Tomoaki Yoshiaki and Yuichiro Hirose and Hiroyuki Okada},
