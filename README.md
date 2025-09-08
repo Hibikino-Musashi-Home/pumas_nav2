@@ -20,7 +20,7 @@ year		= {2018}
 }
 ```
 
-These ROS2 version details are described in:
+The ROS2 version details are described in:
 
 ```
 @article{contreras:2025,
