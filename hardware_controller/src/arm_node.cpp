@@ -1,6 +1,6 @@
 // Copyright (C) 2016 Toyota Motor Corporation
 // maintainer by ry0hei-kobayashi 
-// WIP
+
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/executors/multi_threaded_executor.hpp>
 
@@ -27,11 +27,16 @@ public:
     this->declare_parameter<bool>(        "use_namespace",   false);
     this->declare_parameter<std::string>( "arm_cmd_topic",   "/arm_trajectory_controller/joint_trajectory");
     this->declare_parameter<std::string>( "arm_state_topic", "/arm_trajectory_controller/controller_state");
+    this->declare_parameter("torso_default_pose", 0.0);
+    this->declare_parameter<std::vector<double>>("arm_default_pose", {0.0, -1.57, -1.57, 0.0});
+
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace",    use_namespace_);
     this->get_parameter("arm_cmd_topic",    arm_cmd_topic_);
     this->get_parameter("arm_state_topic",  arm_state_topic_);
+    this->get_parameter("torso_default_pose", torso_default_pose_);
+    this->get_parameter("arm_default_pose", arm_default_pose_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -40,42 +45,34 @@ public:
     // Publishers
     pub_torso_current_pose_ = this->create_publisher<std_msgs::msg::Float32>(
           make_name("/hardware/torso/current_pose"), 
-          rclcpp::QoS(10).transient_local());
+          rclcpp::QoS(10).reliable());
     pub_arm_current_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
           make_name("/hardware/arm/current_pose"), 
-          rclcpp::QoS(10).transient_local());
+          rclcpp::QoS(10).reliable());
     pub_arm_goal_pose_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
       arm_cmd_topic_, 
-      rclcpp::QoS(10).transient_local());
+      rclcpp::QoS(10).reliable());
     pub_arm_goal_reached_ = this->create_publisher<std_msgs::msg::Bool>(
       make_name("/hardware/arm/goal_reached"), 
-      rclcpp::QoS(10).transient_local());
+      rclcpp::QoS(10).reliable());
     pub_torso_goal_reached_ = this->create_publisher<std_msgs::msg::Bool>(
       make_name("/hardware/torso/goal_reached"), 
-      rclcpp::QoS(10).transient_local());
-
-    // qos
-    auto qos_goal = rclcpp::QoS(rclcpp::KeepLast(10))
-                    .reliability(rclcpp::ReliabilityPolicy::Reliable)
-                    .durability(rclcpp::DurabilityPolicy::TransientLocal);
-    auto qos_state = rclcpp::QoS(rclcpp::KeepLast(10))
-                     .reliability(rclcpp::ReliabilityPolicy::BestEffort)
-                     .durability(rclcpp::DurabilityPolicy::Volatile);
+      rclcpp::QoS(10).reliable());
 
     // Subscribers
     sub_arm_goal_pose_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
         make_name("/hardware/arm/goal_pose"), 
-        qos_goal,
+        rclcpp::QoS(10).reliable(),
         std::bind(&ArmController::armGoalPoseCallback, this, std::placeholders::_1));
 
     sub_torso_goal_pose_ = this->create_subscription<std_msgs::msg::Float32>(
         make_name("/hardware/torso/goal_pose"), 
-        qos_goal,
+        rclcpp::QoS(10).reliable(),
         std::bind(&ArmController::torsoGoalPoseCallback, this, std::placeholders::_1));
 
     sub_arm_state_ = this->create_subscription<control_msgs::msg::JointTrajectoryControllerState>(
         arm_state_topic_, 
-        qos_state,
+        rclcpp::QoS(10).best_effort(),
         std::bind(&ArmController::armCurrentPoseCallback, this, std::placeholders::_1));
 
     // Init
@@ -88,7 +85,7 @@ public:
         std::chrono::milliseconds(100),
         std::bind(&ArmController::timerCallback, this));
 
-    RCLCPP_INFO(this->get_logger(), "Arm Controller Node has been started.");
+    RCLCPP_INFO(this->get_logger(), "arm_node.->Arm Controller Node has been started.");
   }
 
 private:
@@ -119,7 +116,7 @@ private:
   double torso_default_pose_{0.0};
   std::vector<double> arm_default_pose_{0.0, -1.57, -1.57, 0.0};
 
-  bool default_send_once_{true};
+  bool init_sent_once_{false};
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -194,11 +191,12 @@ private:
     std_msgs::msg::Float32MultiArray arm_msg; arm_msg.data = arm_current_pose_;
     pub_arm_current_pose_->publish(arm_msg);
 
-    if (default_send_once_) {
+    if (!init_sent_once_) {
       publish_default_pose();
-      default_send_once_ = false;
-    }
+      init_sent_once_ = true;
+      RCLCPP_WARN(this->get_logger(), "arm_node.-> Sent default pose after first controller_state.");
 
+    }
   }
 
   void armGoalPoseCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
@@ -245,11 +243,6 @@ private:
 
     b.data = torso_reached;
     pub_torso_goal_reached_->publish(b);
-
-    //if (nav_trigger_){
-    //    nav_trigger_ = false;
-    //    publish_default_pose();
-    //}
   }
 
   void publish_default_pose()
@@ -285,7 +278,7 @@ private:
     pt.positions[2] = static_cast<double>(arm_goal_pose_[1]); // arm_roll_joint
     pt.positions[3] = static_cast<double>(arm_goal_pose_[2]); // wrist_flex_joint   
     pt.positions[4] = static_cast<double>(arm_goal_pose_[3]); // wrist_roll_joint
-    pt.time_from_start = rclcpp::Duration::from_seconds(2.0); 
+    pt.time_from_start = rclcpp::Duration::from_seconds(0.2); 
   
     pub_arm_goal_pose_->publish(traj);
   

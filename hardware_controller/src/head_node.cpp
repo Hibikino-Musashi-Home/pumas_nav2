@@ -12,7 +12,6 @@
 
 #include <string>
 #include <cmath>
-#include <algorithm>
 
 class HeadController : public rclcpp::Node
 {
@@ -28,6 +27,11 @@ public:
     this->declare_parameter<std::string>( "head_goal_topic",          "/hardware/head/goal_pose");
     this->declare_parameter<std::string>( "head_current_topic",       "/hardware/head/current_pose");
     this->declare_parameter<std::string>( "head_goal_reached_topic",  "/hardware/head/goal_reached");
+    this->declare_parameter<double>("pan_min", -3.14);
+    this->declare_parameter<double>("pan_max", 1.74);
+    this->declare_parameter<double>("tilt_min", -0.9);
+    this->declare_parameter<double>("tilt_max", 0.47);
+
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace",            use_namespace_);
@@ -36,6 +40,10 @@ public:
     this->get_parameter("head_goal_topic",          head_goal_topic_);
     this->get_parameter("head_current_topic",       head_current_topic_);
     this->get_parameter("head_goal_reached_topic",  head_goal_reached_topic_);
+    this->get_parameter("pan_min", pan_min_);
+    this->get_parameter("pan_max", pan_max_);
+    this->get_parameter("tilt_min", tilt_min_);
+    this->get_parameter("tilt_max", tilt_max_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -44,54 +52,47 @@ public:
     // Publishers
     pub_head_goal_traj_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
       head_cmd_topic_, 
-      rclcpp::QoS(10).transient_local());
+      rclcpp::QoS(10).reliable());
     pub_head_current_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       head_current_topic_, 
-      rclcpp::QoS(10).transient_local());
+      rclcpp::QoS(10).reliable());
     pub_head_goal_reached_ = this->create_publisher<std_msgs::msg::Bool>(
       head_goal_reached_topic_, 
-      rclcpp::QoS(10).transient_local());
-
-    //qos
-    auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
-    qos.transient_local();
-    qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
-    qos.durability(rclcpp::DurabilityPolicy::TransientLocal);
+      rclcpp::QoS(10).reliable());
 
     // Subscribers
     sub_head_goal_pose_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-        head_goal_topic_, qos,
-        std::bind(&HeadController::headGoalPoseCallback, this, std::placeholders::_1));
+      head_goal_topic_, rclcpp::QoS(10).reliable(),
+      std::bind(&HeadController::headGoalPoseCallback, this, std::placeholders::_1));
 
     sub_head_state_ = this->create_subscription<control_msgs::msg::JointTrajectoryControllerState>(
-        head_state_topic_, qos,
-        std::bind(&HeadController::headStateCallback, this, std::placeholders::_1));
+      head_state_topic_, rclcpp::QoS(10).reliable(),
+      std::bind(&HeadController::headStateCallback, this, std::placeholders::_1));
 
     // Init
+    timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(100),
+      std::bind(&HeadController::timerCallback, this));
+
+    //initialize head position
     head_goal_pose_.assign(2, 0.0f);
     head_current_pose_.assign(2, 0.0f);
 
-    timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&HeadController::timerCallback, this));
 
-    RCLCPP_INFO(this->get_logger(), "HeadController Node has been started.");
+    RCLCPP_INFO(this->get_logger(), "HeadController.->Node has been started.");
   }
 
 private:
 
   bool use_namespace_   = false;
 
-  static constexpr float PAN_MIN  = -3.141592f;
-  static constexpr float PAN_MAX  =  1.74f;
-  static constexpr float TILT_MIN = -0.9f;
-  static constexpr float TILT_MAX =  0.47f;
-
   std::string head_cmd_topic_;
   std::string head_state_topic_;
   std::string head_goal_topic_;
   std::string head_current_topic_;
   std::string head_goal_reached_topic_;
+
+  double pan_min_, pan_max_, tilt_min_, tilt_max_;
 
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr  pub_head_goal_traj_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr       pub_head_current_pose_;
@@ -103,6 +104,8 @@ private:
   std::vector<float> head_goal_pose_;
   std::vector<float> head_current_pose_;
   bool goal_received_{false};
+
+  bool starup_initialized_ = false;
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -174,6 +177,13 @@ private:
       arr.data = head_current_pose_;
       pub_head_current_pose_->publish(arr);
     }
+
+    if (!starup_initialized_) {
+      sendHeadGoalTrajectory(0.0f, 0.0f);
+      starup_initialized_ = true;
+      RCLCPP_WARN(this->get_logger(), "HeadController.-> Head Pose Initialized.");
+    }
+
   }
 
   void headGoalPoseCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
@@ -189,13 +199,11 @@ private:
     float tilt = static_cast<float>(msg->data[1]);
 
     // clamp to limits
-    pan  = std::clamp(pan,  PAN_MIN,  PAN_MAX);
-    tilt = std::clamp(tilt, TILT_MIN, TILT_MAX);
+    head_goal_pose_[0] = std::clamp(static_cast<float>(pan),  static_cast<float>(pan_min_),  static_cast<float>(pan_max_));
+    head_goal_pose_[1] = std::clamp(static_cast<float>(tilt), static_cast<float>(tilt_min_), static_cast<float>(tilt_max_));
 
-    head_goal_pose_[0] = pan;
-    head_goal_pose_[1] = tilt;
     goal_received_ = true;
-    sendHeadGoalTrajectory();
+    sendHeadGoalTrajectory(head_goal_pose_[0], head_goal_pose_[1]);
   }
 
   void timerCallback()
@@ -212,13 +220,13 @@ private:
     pub_head_goal_reached_->publish(b);
   }
 
-  void sendHeadGoalTrajectory()
+  void sendHeadGoalTrajectory(float pan, float tilt)
   {
     trajectory_msgs::msg::JointTrajectory traj;
     traj.joint_names = {"head_pan_joint", "head_tilt_joint"}; 
 
     trajectory_msgs::msg::JointTrajectoryPoint p;
-    p.positions = { head_goal_pose_[0], head_goal_pose_[1] };
+    p.positions = {pan, tilt};
     p.time_from_start = rclcpp::Duration::from_seconds(0.0);
 
     traj.points.push_back(p);

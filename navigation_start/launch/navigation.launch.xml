@@ -232,12 +232,21 @@
   <node name="arm_controller"
         pkg="hardware_controller"
         exec="arm_node"
-        output="screen"/>
+        output="screen">
+        <param name="torso_default_pose" value="0.15"/>
+        <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
+        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
+  </node>
 
   <node name="head_controller"
         pkg="hardware_controller"
         exec="head_node"
-        output="screen"/>
+        output="screen">
+        <param name="pan_min" value="-3.14" />
+        <param name="pan_max" value="1.74" />
+        <param name="tilt_min" value="-0.9" />
+        <param name="tilt_max" value="0.47" />
+  </node>
 
   <!-- RVIZ2 -->
   <node name="rviz2"
