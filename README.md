@@ -152,6 +152,17 @@ modify the following parameters accordingly:
 ```
 these parameters indicate the obstacle's distance and rejective force during navigation (too low means that the robot won't avoid obstacles, and too high means that the robot will avoid obstacles too far from it -- these two extreme cases might cause undesired behaviours).
 
+## Future Work
+
+Similar to our [ROS1](https://github.com/ARTenshi/robot_navigation) version:
+
+* Person follower
+* Python wrapper
+
+New features:
+
+* MAPF (Multi-agent Pathfinding)
+
 # Authors
 
 * **Luis Contreras** - [QibiTech Inc.](https://qibitech.com) / [TID Professional University](https://www.tid.ac.jp/contents/special-interview/2007/)
