@@ -1,4 +1,4 @@
-# pumas_nav2
+# Pumas Navigation2
 
 Service robots are intended to help humans in non-industrial environments such as houses or offices. To accomplish their goal, service robots must have several skills such as object recognition and manipulation, face detection and recognition, speech recognition and synthesis, task planning and, one of the most important, navigation in dynamic environments. This repository describes a fully implemented motion-planning system that comprehends from motion and path planning algorithms to spatial representation and behavior-based active navigation.
 
