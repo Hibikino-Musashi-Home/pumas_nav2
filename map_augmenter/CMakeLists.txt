@@ -19,6 +19,10 @@ find_package(std_srvs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
 
+find_package(PCL REQUIRED COMPONENTS common io filters segmentation)
+find_package(pcl_conversions REQUIRED)
+find_package(pcl_ros REQUIRED) 
+
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_eigen REQUIRED)
@@ -31,6 +35,16 @@ add_executable(map_augmenter_node
     src/map_augmenter_node.cpp
 )
 
+target_include_directories(map_augmenter_node PUBLIC
+  ${PCL_INCLUDE_DIRS}
+)
+
+target_link_libraries(map_augmenter_node
+  ${PCL_LIBRARIES}
+)
+
+add_definitions(${PCL_DEFINITIONS})
+
 ament_target_dependencies(map_augmenter_node
     rclcpp
 
@@ -41,6 +55,8 @@ ament_target_dependencies(map_augmenter_node
     std_srvs
     action_msgs
     actionlib_msgs
+
+    pcl_conversions
 
     tf2
     tf2_ros

@@ -57,7 +57,7 @@ e.g.
 
 ```bash
 sudo apt update
-sudo apt install ros-humble-control-msgs
+sudo apt install ros-humble-control-msgs libpcl-dev ros-humble-pcl-conversions ros-humble-pcl-ros
 ```
 
 3. Build the project:

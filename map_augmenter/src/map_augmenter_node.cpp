@@ -12,6 +12,13 @@
 #include "nav_msgs/srv/get_map.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
+// PCL
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/filters/extract_indices.h>
+
 // TF2 (Transform listener)
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
@@ -633,7 +640,38 @@ private:
             return false;
         }
 
-        const unsigned char* p = latest_point_cloud_->data.data();
+        // 1. Convert ROS msg to PCL cloud
+        pcl::PointCloud<pcl::PointXYZ>::Ptr pcl_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+        pcl::fromROSMsg(*latest_point_cloud_, *pcl_cloud);
+
+        // 2. Segment the largest planar component (floor)
+        pcl::SACSegmentation<pcl::PointXYZ> seg;
+        pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+        pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+
+        seg.setOptimizeCoefficients(true);
+        seg.setModelType(pcl::SACMODEL_PLANE);
+        seg.setMethodType(pcl::SAC_RANSAC);
+        seg.setDistanceThreshold(0.02);  // adjust (meters): tolerance for points to be considered floor
+        seg.setInputCloud(pcl_cloud);
+        seg.segment(*inliers, *coefficients);
+
+        if (inliers->indices.empty()) {
+            RCLCPP_WARN(this->get_logger(), "MapAugmenter.-> No planar model found.");
+            return false;
+        }
+
+        // 3. Extract non-ground points
+        pcl::ExtractIndices<pcl::PointXYZ> extract;
+        pcl::PointCloud<pcl::PointXYZ>::Ptr obstacles(new pcl::PointCloud<pcl::PointXYZ>);
+        extract.setInputCloud(pcl_cloud);
+        extract.setIndices(inliers);
+        extract.setNegative(true);   // keep outliers (non-plane points)
+        extract.filter(*obstacles);
+
+        // 4. Process obstacle points
+
+        //const unsigned char* p = latest_point_cloud_->data.data();
         int cell_x = 0;
         int cell_y = 0;
         int cell   = 0;
@@ -641,12 +679,14 @@ private:
         Eigen::Affine3d cam_to_robot = get_relative_position(base_link_name_, latest_point_cloud_->header.frame_id);
         Eigen::Affine3d robot_to_map = get_relative_position("map", base_link_name_);
 
-        for (size_t i = 0; i < latest_point_cloud_->width * latest_point_cloud_->height; i += cloud_downsampling_)
+        //for (size_t i = 0; i < latest_point_cloud_->width * latest_point_cloud_->height; i += cloud_downsampling_)
+        for (const auto& pt : obstacles->points)
         {
-            Eigen::Vector3d v(
-                *reinterpret_cast<const float*>(p),
-                *reinterpret_cast<const float*>(p + 4),
-                *reinterpret_cast<const float*>(p + 8));
+            //Eigen::Vector3d v(
+            //    *reinterpret_cast<const float*>(p),
+            //    *reinterpret_cast<const float*>(p + 4),
+            //    *reinterpret_cast<const float*>(p + 8));
+            Eigen::Vector3d v(pt.x, pt.y, pt.z);
 
             v = cam_to_robot * v;
 
@@ -666,7 +706,7 @@ private:
                 }
             }
 
-            p += static_cast<std::size_t>(cloud_downsampling_ * latest_point_cloud_->point_step);
+            //p += static_cast<std::size_t>(cloud_downsampling_ * latest_point_cloud_->point_step);
         }
 
         //RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> obstacles_map_with_cloud() done");

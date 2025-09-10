@@ -55,7 +55,7 @@
   <arg name="cloud_max_x" default="0.80"/>
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
-  <arg name="cloud_min_z" default="0.10"/>
+  <arg name="cloud_min_z" default="0.01"/>
   <arg name="cloud_max_z" default="1.20"/>
 
   <!-- out of namespace -->
@@ -141,7 +141,9 @@
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="point_cloud_topic2" value="$(var point_cloud_topic2)"/>
     <param name="static_map_server" value="/static_map_server/map"/>
-    <param name="prohibition_map_server" value="/prohibition_map_server/map"/>
+    <param name="prohibition_map_server" value="/prohibition_map"/>
+    
+    <remap from="point_obstacle" to="/clicked_point"/>
     
     <param name="use_lidar" value="$(var use_lidar)"/>
     <param name="use_sonars" value="$(var use_sonars)"/>
@@ -274,17 +276,20 @@
   <node name="arm_controller"
         pkg="hardware_controller"
         exec="arm_node"
-        namespace="$(var namespace)"  
         output="screen">
-    <param name="use_namespace" value="$(var use_namespace)"/>
+        <param name="torso_default_pose" value="0.15"/>
+        <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
+        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
   </node>
-  
+
   <node name="head_controller"
         pkg="hardware_controller"
         exec="head_node"
-        namespace="$(var namespace)"  
         output="screen">
-    <param name="use_namespace" value="$(var use_namespace)"/>
+        <param name="pan_min" value="-3.14" />
+        <param name="pan_max" value="1.74" />
+        <param name="tilt_min" value="-0.9" />
+        <param name="tilt_max" value="0.47" />
   </node>
 
   <!-- RVIZ2 -->
