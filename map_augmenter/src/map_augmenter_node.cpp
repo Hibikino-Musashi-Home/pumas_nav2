@@ -652,7 +652,7 @@ private:
         seg.setOptimizeCoefficients(true);
         seg.setModelType(pcl::SACMODEL_PLANE);
         seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setDistanceThreshold(0.01);  // adjust (meters): tolerance for points to be considered floor
+        seg.setDistanceThreshold(0.02);  // adjust (meters): tolerance for points to be considered floor
         seg.setInputCloud(pcl_cloud);
         seg.segment(*inliers, *coefficients);
 
@@ -735,7 +735,7 @@ private:
         seg.setOptimizeCoefficients(true);
         seg.setModelType(pcl::SACMODEL_PLANE);
         seg.setMethodType(pcl::SAC_RANSAC);
-        seg.setDistanceThreshold(0.01);  // adjust (meters): tolerance for points to be considered floor
+        seg.setDistanceThreshold(0.02);  // adjust (meters): tolerance for points to be considered floor
         seg.setInputCloud(pcl_cloud);
         seg.segment(*inliers, *coefficients);
 
