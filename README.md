@@ -4,7 +4,7 @@ Service robots are intended to help humans in non-industrial environments such a
 
 This paper can be consulted online for free at this [link](https://bit.ly/40YEcZR). The following video shows this system working at RoboCup where we have won the **Smoothest, Safest Navigation Award** in 2022, 2023, 2024, and 2025.
 
-[![Watch the video](https://img.youtube.com/vi/s2g95Y9Me3c/hqdefault.jpg)](https://www.youtube.com/embed/s2g95Y9Me3c)
+[![Watch the video](https://img.youtube.com/vi/S4X1E7AvKPA/hqdefault.jpg)](https://youtu.be/S4X1E7AvKPA)
 
 Please, if you use this material, don't forget to add the following reference:
 
