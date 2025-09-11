@@ -3,9 +3,9 @@
 <package format="3">
   <name>map_augmenter</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>map_augmenter package</description>
   <maintainer email="tenshi.unam@gmail.com">roboworks</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache 2.0 License</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
