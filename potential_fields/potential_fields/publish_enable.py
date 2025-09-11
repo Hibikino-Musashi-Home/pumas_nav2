@@ -9,9 +9,25 @@ class EnablePublisher(Node):
     def __init__(self):
         super().__init__("enable_publisher")
 
-        pub = self.create_publisher(Bool, '/navigation/potential_fields/enable', 10)
+        # Declare and read parameter (default = False)
+        self.declare_parameter("use_namespace", False)
+        use_namespace = self.get_parameter("use_namespace").get_parameter_value().bool_value
+
+        suffix = "/navigation/potential_fields/enable"
+
+        if use_namespace:
+            prefix = self.get_namespace()
+            # ensure single slash handling
+            if prefix == "/":
+                topic = suffix
+            else:
+                topic = prefix + suffix
+        else:
+            topic = suffix
+
+        self.pub = self.create_publisher(Bool, topic, 10)
         msg = Bool(data=True)
-        pub.publish(msg)
+        self.pub.publish(msg)
 
         self.get_logger().info('Published enable message')
 
