@@ -714,7 +714,8 @@ private:
 
                 if (is_in_obstacles_) {
                     std::cout << "MotionPlanner.-> Robot is inside an obstacle. Moving backwards..." << std::endl;
-                    msg_goal_dist_angle.data[0] = -0.25;
+                    msg_goal_dist_angle.data.resize(2);
+                    msg_goal_dist_angle.data[0] = -0.15;
                     msg_goal_dist_angle.data[1] = 0;
                     pub_goal_dist_angle_->publish(msg_goal_dist_angle);
                     state = SM_WAITING_FOR_MOVE_BACKWARDS;
