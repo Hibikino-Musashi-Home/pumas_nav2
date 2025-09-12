@@ -45,6 +45,8 @@
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
 
+  <arg name="mvn_pln_patience" default="True"/>
+  
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>
   <arg name="laser_min_y" default="-0.25"/>
@@ -266,7 +268,7 @@
         output="screen">
     <param name="use_namespace" value="$(var use_namespace)"/>
     
-    <param name="patience" value="True"/>
+    <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="base_link_name" value="$(var base_link_name)"/>
     
     <remap from="/nav_control/goal" to="$(var goal_topic)"/>
