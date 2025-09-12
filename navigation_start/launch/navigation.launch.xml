@@ -45,7 +45,8 @@
   <node name="static_map_server" 
         pkg="nav2_map_server" 
         exec="map_server" 
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
     <!-- Comment this remap if you are using not using default localisation -->
     <remap from="/map" to="/nav_map"/>
@@ -54,7 +55,8 @@
   <node name="prohibition_map_server" 
         pkg="nav2_map_server" 
         exec="map_server" 
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="yaml_filename" value="$(var prohibition_map_file)"/>
     <remap from="/map" to="/fixed_prohibition_layer_map"/>
   </node>
@@ -62,7 +64,8 @@
   <node name="lifecycle_manager_map"
         pkg="nav2_lifecycle_manager"
         exec="lifecycle_manager"
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="use_sim_time" value="$(var use_sim_time)"/>
     <param name="autostart" value="true"/>
     <param name="node_names" value="['static_map_server', 'prohibition_map_server']"/>
@@ -72,7 +75,8 @@
   <node name="map_enhancer" 
         pkg="augment_gridmap_online" 
         exec="augment_gridmap_online_node" 
-        output="screen">
+        output="screen"
+        respawn="true">
 
     <remap from="point_obstacle" to="/clicked_point"/>
     <param name="obstacle_radius" value="0.05"/>
@@ -92,7 +96,8 @@
         pkg="emcl2"
         exec="emcl2_node"
         output="log"
-        args="--ros-args --log-level WARN">
+        args="--ros-args --log-level WARN"
+        respawn="true">
     <param name="num_particles" value="1000"/>
 
     <param name="odom_frame_id" value="odom"/> 
@@ -112,7 +117,8 @@
   <node name="map_augmenter" 
         pkg="map_augmenter" 
         exec="map_augmenter_node" 
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <param name="point_cloud_topic2" value="$(var point_cloud_topic2)"/>
@@ -154,14 +160,16 @@
   <node name="path_planner" 
         pkg="path_planner" 
         exec="path_planner_node" 
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="diagonal_paths" value="True"/>
   </node>
 
   <node name="simple_move"  
         pkg="simple_move"  
         exec="simple_move_node"  
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="max_linear_speed" value="0.8"/>
     <param name="max_angular_speed" value="1.25"/>
 
@@ -178,7 +186,8 @@
   <node name="potential_fields"  
         pkg="potential_fields"  
         exec="potential_fields_node"  
-        output="screen">
+        output="screen"
+        respawn="true">
     <param name="debug" value="False"/>
     <param name="show_image" value="True"/> 
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
@@ -219,13 +228,15 @@
   <node name="publish_enable"
         pkg="potential_fields"
         exec="publish_enable.py"
-        output="screen"/>
+        output="screen"
+        respawn="true"/>
 
   <!-- Motion Planner -->
   <node name="mvn_pln"  
         pkg="mvn_pln"  
         exec="mvn_pln_node"  
-        output="screen">
+        output="screen"
+        respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
   </node>
@@ -234,7 +245,8 @@
   <node name="arm_controller"
         pkg="hardware_controller"
         exec="arm_node"
-        output="screen">
+        output="screen"
+        respawn="true">
         <param name="torso_default_pose" value="0.15"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
         <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
@@ -243,7 +255,8 @@
   <node name="head_controller"
         pkg="hardware_controller"
         exec="head_node"
-        output="screen">
+        output="screen"
+        respawn="true">
         <param name="pan_min" value="-3.14" />
         <param name="pan_max" value="1.74" />
         <param name="tilt_min" value="-0.9" />
