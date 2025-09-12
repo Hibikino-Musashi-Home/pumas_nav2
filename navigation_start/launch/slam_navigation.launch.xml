@@ -75,7 +75,7 @@
 
   <!-- Localization  -->
   <!-- KILL AMCL localization if necessary -->
-  <executable cmd="ros2 node kill amcl"/>
+  <!--executable cmd="ros2 node kill amcl"/-->
 
   <!-- Map Augmenters -->
   <node name="map_augmenter" 
