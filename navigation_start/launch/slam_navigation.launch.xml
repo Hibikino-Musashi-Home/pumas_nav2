@@ -73,10 +73,6 @@
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
 
-  <!-- Localization  -->
-  <!-- KILL AMCL localization if necessary -->
-  <!--executable cmd="ros2 node kill amcl"/-->
-
   <!-- Map Augmenters -->
   <node name="map_augmenter" 
         pkg="map_augmenter" 

@@ -88,9 +88,6 @@
   </node>
 
   <!-- Localization  -->
-  <!-- KILL AMCL localization if necessary -->
-  <executable cmd="ros2 node kill amcl"/>
-
   <!-- Start EMCL2 localization or your own navigation -->
   <node name="emcl2"
         pkg="emcl2"
