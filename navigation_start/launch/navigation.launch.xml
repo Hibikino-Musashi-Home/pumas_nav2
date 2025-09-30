@@ -3,10 +3,10 @@
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
 
-  <arg name="static_map_file" default="/home/d2302/sabo_ws/map/rtabmap.yaml"/>
-  <arg name="prohibition_map_file" default="/home/d2302/sabo_ws/map/rtabmap.yaml"/>
+  <arg name="static_map_file" default="/home/d2302/sabo_ws/map/static_map/rtabmap.yaml"/>
+  <arg name="prohibition_map_file" default="/home/d2302/sabo_ws/map/prohibition_map/rtabmap.yaml"/>
 
-  <arg name="odom_topic" default="/wheel_odom"/>
+  <arg name="odom_topic" default="/odom"/>
   <arg name="pose_topic" default="/pose"/>
   <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="laser_scan_topic" default="/scan"/>
@@ -24,13 +24,13 @@
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
 
-  <arg name="mvn_pln_patience" default="True"/>
+  <arg name="mvn_pln_patience" default="False"/>
 
-  <arg name="laser_min_x" default="0.17"/>
-  <arg name="laser_max_x" default="0.50"/>
+  <arg name="laser_min_x" default="0.30"/>
+  <arg name="laser_max_x" default="1.0"/>
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
-  <arg name="laser_min_z" default="0.025"/>
+  <arg name="laser_min_z" default="0.05"/>
   <arg name="laser_max_z" default="1.00"/>
   <arg name="cloud_min_x" default="0.30"/>
   <arg name="cloud_max_x" default="0.80"/>
@@ -39,7 +39,7 @@
   <arg name="cloud_min_z" default="0.01"/>
   <arg name="cloud_max_z" default="1.20"/>
 
-  <!-- Map servers -->
+
   <node name="static_map_server" 
         pkg="nav2_map_server" 
         exec="map_server" 
@@ -47,7 +47,7 @@
         respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
     <!-- Comment this remap if you are using not using default localisation -->
-    <remap from="/map" to="/nav_map"/>
+    <remap from="/map" to="/rtabmap/map"/>
   </node>
 
   <node name="prohibition_map_server" 
@@ -85,29 +85,6 @@
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
 
-  <!-- Localization  -->
-  <!-- Start EMCL2 localization or your own navigation -->
-  <node name="emcl2"
-        pkg="emcl2"
-        exec="emcl2_node"
-        output="log"
-        args="--ros-args --log-level WARN"
-        respawn="true">
-    <param name="num_particles" value="1000"/>
-
-    <param name="odom_frame_id" value="odom"/> 
-    <param name="base_frame_id" value="base_link"/>
-    <param name="footprint_frame_id" value="base_footprint"/>
-    <param name="global_frame_id" value="map"/>
-
-    <remap from="scan" to="$(var laser_scan_topic)"/>
-    <remap from="local_costmap/scan" to="$(var laser_scan_topic)"/>
-    <remap from="odom" to="$(var odom_topic)"/>
-    <remap from="cmd_vel" to="$(var cmd_vel_topic)"/>
-    <remap from="mcl_pose" to="$(var pose_topic)"/>
-    <remap from="map" to="/map"/>
-  </node>
-
   <!-- Map Augmenters -->
   <node name="map_augmenter" 
         pkg="map_augmenter" 
@@ -127,7 +104,7 @@
     
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
-    <param name="decay_factor" value="20"/>    
+    <param name="decay_factor" value="30"/>    
     <param name="inflation_radius" value="0.22"/>
     <param name="cost_radius" value="0.25"/> 
 
@@ -169,7 +146,7 @@
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
 
-    <param name="move_head" value="True"/>
+    <param name="move_head" value="False"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
