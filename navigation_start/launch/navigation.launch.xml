@@ -3,19 +3,19 @@
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
 
-  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/wrs2020/map.yaml"/>
-  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/wrs2020/map.yaml"/>
+  <arg name="static_map_file" default="/home/d2302/sabo_ws/map/rtabmap.yaml"/>
+  <arg name="prohibition_map_file" default="/home/d2302/sabo_ws/map/rtabmap.yaml"/>
 
-  <arg name="odom_topic" default="/odom"/>
+  <arg name="odom_topic" default="/wheel_odom"/>
   <arg name="pose_topic" default="/pose"/>
-  <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel"/>
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
   <arg name="laser_scan_topic" default="/scan"/>
-  <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
+  <arg name="point_cloud_topic" default="/Base_front/D435if/depth/color/points"/>
   <arg name="bumper_f_topic" default="/base_f_bumper_sensor"/>
 
   <arg name="use_lidar" default="True"/>
   <arg name="use_sonars" default="False"/>
-  <arg name="use_point_cloud" default="True"/>
+  <arg name="use_point_cloud" default="False"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
 
@@ -232,28 +232,6 @@
         respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
-  </node>
-
-  <!-- Hardware Controller -->
-  <node name="arm_controller"
-        pkg="hardware_controller"
-        exec="arm_node"
-        output="screen"
-        respawn="true">
-        <param name="torso_default_pose" value="0.15"/>
-        <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
-  </node>
-
-  <node name="head_controller"
-        pkg="hardware_controller"
-        exec="head_node"
-        output="screen"
-        respawn="true">
-        <param name="pan_min" value="-3.14" />
-        <param name="pan_max" value="1.74" />
-        <param name="tilt_min" value="-0.9" />
-        <param name="tilt_max" value="0.47" />
   </node>
 
   <!-- RVIZ2 -->
