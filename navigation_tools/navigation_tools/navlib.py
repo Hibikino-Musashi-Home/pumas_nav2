@@ -4,6 +4,7 @@
 import copy
 import math
 import time
+import numpy as np
 
 import rclpy
 from rclpy.node import Node
@@ -16,6 +17,16 @@ from geometry_msgs.msg import PoseStamped, Pose2D, Pose, PoseWithCovariance, Pos
 
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
+from pumas_interfaces.msg import StartAndEndJoints, Joints
+
+default_arm_pose = {
+               'arm_flex_joint': -0.26, #default is 0.0
+               'arm_lift_joint': 0.0, 
+               'arm_roll_joint': -1.57,
+               'wrist_flex_joint': -1.57,
+               'wrist_roll_joint': 0.0,
+               'head_pan_joint': 0.0,
+               'head_tilt_joint': np.deg2rad(0.0),}
 
 class NavModule(Node):
     """Navigation Module for the robot"""
@@ -43,6 +54,7 @@ class NavModule(Node):
         self.pub_global_goal = self.create_publisher(PoseStamped, "/move_base_simple/goal", 10)
         self.pub_dist_angle = self.create_publisher(Float32MultiArray, "/simple_move/goal_dist_angle", 10)
         self.pub_robot_stop = self.create_publisher(Empty, "/navigation/stop", 10)
+        self.pub_move_joint_pose = self.create_publisher(StartAndEndJoints, "/motion_synth/joint_pose", 10)
 
         # Subscribers
         self.create_subscription(GoalStatus, "/simple_move/goal_reached", self.callback_goal_reached, 10)
@@ -69,7 +81,7 @@ class NavModule(Node):
 
     def global_pose_callback(self, msg):
         self.global_pose = msg
-        self.get_logger.info(f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
+        self.get_logger().info(f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -79,6 +91,17 @@ class NavModule(Node):
         euler = euler_from_quaternion([orientation.x, orientation.y, orientation.z, orientation.w])
         pose2d.theta = euler[2]
         return pose2d
+
+    def create_arm_joint_goal(self, joint_poses):
+        joints = Joints()
+        joints.arm_lift_joint = joint_poses["arm_lift_joint"]
+        joints.arm_flex_joint = joint_poses["arm_flex_joint"]
+        joints.arm_roll_joint = joint_poses["arm_roll_joint"]
+        joints.wrist_flex_joint = joint_poses["wrist_flex_joint"]
+        joints.wrist_roll_joint = joint_poses["wrist_roll_joint"]
+        joints.head_pan_joint = joint_poses["head_pan_joint"]
+        joints.head_tilt_joint = joint_poses["head_tilt_joint"]
+        return joints
 
     def create_goal_pose(self, x, y, yaw, frame_id):
         goal = PoseStamped()
@@ -94,7 +117,35 @@ class NavModule(Node):
         return goal
 
     def send_goal(self, goal):
+
         self.get_logger().info('NavModule.->Sending Nav Goal')
+
+        if self.motion_synth_start_pose is not None or self.motion_synth_end_pose is not None:
+
+            start_and_end_joints = StartAndEndJoints()
+            start_and_end_joints.has_arm_start_pose = False
+            start_and_end_joints.has_arm_end_pose = False
+
+            if self.motion_synth_start_pose is not None:
+                start_and_end_joints.has_arm_start_pose = True
+                start_and_end_joints.start_pose = self.create_arm_joint_goal(joint_poses=self.motion_synth_start_pose)
+            else:
+                start_and_end_joints.has_arm_start_pose = True
+                # startが無いなら自動でgo_pose()代入
+                start_and_end_joints.start_pose = self.create_arm_joint_goal(joint_poses=default_arm_pose)
+
+            if self.motion_synth_end_pose is not None:
+                start_and_end_joints.has_arm_end_pose = True
+                start_and_end_joints.end_pose = self.create_arm_joint_goal(joint_poses=self.motion_synth_end_pose)
+            else:
+                # goalが無い場合
+                start_and_end_joints.has_arm_end_pose = False
+
+            self.pub_move_joint_pose.publish(start_and_end_joints)
+
+            start_and_end_joints.has_arm_start_pose = False
+            start_and_end_joints.has_arm_end_pose = False
+
         self.marker_plot(goal)
         self.pub_global_goal.publish(goal)
 
@@ -160,14 +211,49 @@ class NavModule(Node):
 
         return result
 
+    def nav_goal(self, goal, timeout, motion_synth_pose=None, goal_distance=None):
+        self.motion_synth_start_pose = None
+        self.motion_synth_end_pose = None
+
+        if motion_synth_pose is not None:
+            if "start" in motion_synth_pose:
+                self.motion_synth_start_pose = motion_synth_pose["start"]
+            if "goal" in motion_synth_pose:
+                self.motion_synth_end_pose = motion_synth_pose["goal"]
+
+        return self.go_abs(goal, timeout, goal_distance)
+
 
 if __name__ == "__main__":
     rclpy.init()
     nav = NavModule()
 
     goal = Pose2D(x=1.0, y=3.7, theta=0.0)
-
-    success = nav.go_abs(goal, timeout=0, goal_distance=0)
+    start_pose = {
+        "arm_lift_joint": 0.0,
+        "arm_flex_joint": np.deg2rad(0.0),
+        "arm_roll_joint": np.deg2rad(0.0),
+        "wrist_flex_joint": np.deg2rad(-90.0),
+        "wrist_roll_joint": 0.0,
+        "head_pan_joint": 0.0,
+        "head_tilt_joint": np.deg2rad(0.0),
+    }
+    goal_pose = {
+        "arm_lift_joint": 0.4,
+        "arm_flex_joint": np.deg2rad(-90.0),
+        "arm_roll_joint": np.deg2rad(0.0),
+        "wrist_flex_joint": np.deg2rad(-90.0),
+        "wrist_roll_joint": 0.0,
+        "head_pan_joint": 0.0,
+        "head_tilt_joint": np.deg2rad(0.0),
+    }
+    ms_config = {
+        "start": start_pose,
+        "goal": goal_pose,
+    }
+    
+    #success = nav.go_abs(goal, timeout=0, goal_distance=0)
+    success = nav.nav_goal(goal, motion_synth_pose=ms_config, timeout=0, goal_distance=0)
 
     if success:
         nav.get_logger().info("NavStatus.->Nav Goal Reached")

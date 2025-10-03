@@ -237,6 +237,13 @@
     <param name="patience" value="$(var mvn_pln_patience)"/>
   </node>
 
+  <node
+    pkg="motion_synth"
+    exec="motion_synth_server.py"
+    name="motion_synth_server"
+    output="screen">
+  </node>
+
   <!-- Hardware Controller -->
   <node name="arm_controller"
         pkg="hardware_controller"

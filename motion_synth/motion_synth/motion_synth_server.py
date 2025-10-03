@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import copy
+import asyncio
 import numpy as np
 
 import tf_transformations
@@ -14,7 +15,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import Float32MultiArray, Float32
 
-from motion_synth.action import MotionSynthesis
+from pumas_interfaces.action import MotionSynthesis
 
 
 class MotionSynth(Node):
@@ -24,7 +25,7 @@ class MotionSynth(Node):
         self._action_server = ActionServer(
             self,
             MotionSynthesis,
-            "/motion_synth",
+            "/motion_synth/joint_goal",
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
@@ -118,7 +119,7 @@ class MotionSynth(Node):
         for i in range(50):
             if self.path_received:
                 break
-            await rclpy.sleep(0.1)
+            await asyncio.sleep(0.1)
         if not self.path_received or not self.path_points:
             self.get_logger().warn("No path received, aborting.")
             goal_handle.abort()
@@ -172,7 +173,6 @@ class MotionSynth(Node):
                     return MotionSynthesis.Result(result=True)
 
             goal_handle.publish_feedback(feedback)
-            await rclpy.sleep(0.1)
 
 
 def main(args=None):
