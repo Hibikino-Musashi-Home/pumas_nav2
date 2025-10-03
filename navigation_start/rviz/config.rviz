@@ -34,7 +34,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: LaserScan
+    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
@@ -67,237 +67,20 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /robot_description
-      Enabled: true
+      Enabled: false
       Links:
         All Links Enabled: true
         Expand Joint Details: false
         Expand Link Details: false
         Expand Tree: false
         Link Tree Style: Links in Alphabetic Order
-        arm_flex_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_lift_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        arm_roll_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_b_bumper_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_f_bumper_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_footprint:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_imu_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_l_drive_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_l_passive_wheel_x_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_l_passive_wheel_y_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_l_passive_wheel_z_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_r_drive_wheel_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_r_passive_wheel_x_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_r_passive_wheel_y_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        base_r_passive_wheel_z_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_range_sensor_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        base_roll_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_camera_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_camera_gazebo_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_l_distal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        hand_l_finger_tip_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_l_finger_vacuum_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        hand_l_mimic_distal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_l_proximal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_l_spring_proximal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        hand_motor_dummy_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_palm_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        hand_r_distal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        hand_r_finger_tip_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_r_mimic_distal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_r_proximal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        hand_r_spring_proximal_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        head_center_camera_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        head_center_camera_gazebo_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        head_l_stereo_camera_gazebo_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        head_l_stereo_camera_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        head_pan_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        head_r_stereo_camera_gazebo_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        head_r_stereo_camera_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        head_rgbd_sensor_gazebo_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        head_rgbd_sensor_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        head_tilt_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        torso_lift_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        wrist_flex_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
-        wrist_ft_sensor_frame:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        wrist_ft_sensor_mount_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-        wrist_roll_link:
-          Alpha: 1
-          Show Axes: false
-          Show Trail: false
-          Value: true
       Mass Properties:
         Inertia: false
         Mass: false
       Name: RobotModel
       TF Prefix: ""
       Update Interval: 0
-      Value: true
+      Value: false
       Visual Enabled: true
     - Alpha: 0.699999988079071
       Class: rviz_default_plugins/Map
