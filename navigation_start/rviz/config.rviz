@@ -10,6 +10,8 @@ Panels:
         - /Map1
         - /Map1/Topic1
         - /Path1/Topic1
+        - /Marker1
+        - /Marker1/Status1
       Splitter Ratio: 0.5
     Tree Height: 850
   - Class: rviz_common/Selection
