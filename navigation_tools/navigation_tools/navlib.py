@@ -49,6 +49,9 @@ class NavModule(Node):
         self.goal_reached = False
         self.robot_stop = False
 
+        self.motion_synth_start_pose = None
+        self.motion_synth_end_pose = None
+
         # Publishers
         self.pub_marker = self.create_publisher(Marker, "/nav_goal_marker", 10)
         self.pub_global_goal = self.create_publisher(PoseStamped, "/move_base_simple/goal", 10)

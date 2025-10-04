@@ -25,7 +25,7 @@ class MotionSynth(Node):
         self._action_server = ActionServer(
             self,
             MotionSynthesis,
-            "/motion_synth/joint_goal",
+            "/motion_synth",
             execute_callback=self.execute_callback,
             goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
@@ -135,7 +135,8 @@ class MotionSynth(Node):
             self.get_logger().warn("Detected self-collision risk. Using temporary pose.")
             temporary_pose = self.create_temporary_pose(goal.goal_pose)
 
-        rate = self.create_rate(10)
+        await asyncio.sleep(0.1)
+
         while rclpy.ok():
             if goal_handle.is_cancel_requested:
                 self.get_logger().info("Goal canceled.")
