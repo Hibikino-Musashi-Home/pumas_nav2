@@ -1,6 +1,7 @@
 #!/usr/bin/env python3 
 # -*- coding: utf-8 -*-
 
+from typing import Optional, Union
 import copy
 import math
 import time
@@ -29,19 +30,26 @@ default_arm_pose = {
                'head_pan_joint': 0.0,
                'head_tilt_joint': np.deg2rad(0.0),}
 
-class NavModule(Node):
+class NavModule:
     """Navigation Module for the robot"""
-    __instance = None
 
-    def __new__(cls, *args, **kargs):
-        if cls.__instance is None:
-            cls.__instance = super(NavModule, cls).__new__(cls)
-            cls.__initialized = False
-        return cls.__instance
+    def __init__(self, node: Optional[Union[str, Node]] = None):
 
-    def __init__(self):
+        context = rclpy.get_default_context()
+        if not context.ok():
+            rclpy.init()
 
-        super().__init__("nav_module")
+        if node is None:
+            self._node: Node = rclpy.create_node("nav_module_node")
+            self._external_node = False
+        elif isinstance(node, str):
+            self._node: Node = rclpy.create_node(node)
+            self._external_node = False
+        elif isinstance(node, Node):
+            self._node: Node = node
+            self._external_node = True
+        else:
+            raise TypeError("NavModule.__init__: 'node' must be of type str or rclpy.node.Node")
         
         self.marker = Marker()
         self.marker_num = 0
@@ -72,6 +80,8 @@ class NavModule(Node):
 
         self.get_logger().info("NavModule.->initialized")
 
+    def __getattr__(self, name):
+        return getattr(self._node, name)
 
     def call_param_rw(self, node_name, param_name, param_value: str="", write: bool=False):
         req = ParamReadWrite.Request()
@@ -257,7 +267,6 @@ class NavModule(Node):
             self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="true", write=True)
 
         return self.go_abs(goal, timeout, goal_distance)
-
 
 if __name__ == "__main__":
     rclpy.init()
