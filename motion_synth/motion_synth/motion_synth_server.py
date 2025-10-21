@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import copy
+import asyncio
 import numpy as np
 
 import tf_transformations
@@ -14,7 +15,7 @@ from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Path
 from std_msgs.msg import Float32MultiArray, Float32
 
-from motion_synth.action import MotionSynthesis
+from pumas_interfaces.action import MotionSynthesis
 
 
 class MotionSynth(Node):
@@ -110,15 +111,14 @@ class MotionSynth(Node):
         goal = goal_handle.request
         feedback = MotionSynthesis.Feedback()
 
-        # 初期ポーズ送信（必要に応じて）
         if goal.apply_start_pose:
             self.send_pose(goal.start_pose)
 
-        # 経路取得を待つ（最大5秒）
+        # TODO fix waiting for path
         for i in range(50):
             if self.path_received:
                 break
-            await rclpy.sleep(0.1)
+            await asyncio.sleep(0.1)
         if not self.path_received or not self.path_points:
             self.get_logger().warn("No path received, aborting.")
             goal_handle.abort()
@@ -134,7 +134,8 @@ class MotionSynth(Node):
             self.get_logger().warn("Detected self-collision risk. Using temporary pose.")
             temporary_pose = self.create_temporary_pose(goal.goal_pose)
 
-        rate = self.create_rate(10)
+        await asyncio.sleep(0.1)
+
         while rclpy.ok():
             if goal_handle.is_cancel_requested:
                 self.get_logger().info("Goal canceled.")
@@ -172,7 +173,6 @@ class MotionSynth(Node):
                     return MotionSynthesis.Result(result=True)
 
             goal_handle.publish_feedback(feedback)
-            await rclpy.sleep(0.1)
 
 
 def main(args=None):

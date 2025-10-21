@@ -26,7 +26,7 @@
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
 
-  <depend>motion_synth</depend>
+  <depend>pumas_interfaces</depend>
 
   <depend>rcl_interfaces</depend>
 

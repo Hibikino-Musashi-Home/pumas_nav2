@@ -19,7 +19,7 @@
 #include "tf2_ros/buffer.h"
 #include "tf2/exceptions.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h> // for doTransform
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp> // for doTransform
 #include <tf2/utils.h> // for getYaw
 
 // Action messages (used less directly in ROS 2; here for compatibility)
@@ -67,7 +67,8 @@
 #define SM_WAIT_FOR_IF_OBSTACLES_RESPONSE 121
 #define SM_WAIT_FOR_NO_OBSTACLES_RESPONSE 122
 
-using MotionSynthesis = motion_synth::action::MotionSynthesis;
+// motionsynthesis client by r.kobayashi
+using MotionSynthesis = pumas_interfaces::action::MotionSynthesis;
 using GoalHandleMotionSynthesis = rclcpp_action::ClientGoalHandle<MotionSynthesis>;
 
 class MotionPlannerNode : public rclcpp::Node
@@ -151,11 +152,19 @@ public:
             rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_collision_risk, this, std::placeholders::_1));
 
-        sub_arm_goal_ = this->create_subscription<motion_synth::StartAndEndJoints>(
+        //// motion synth
+        sub_arm_goal_ = this->create_subscription<pumas_interfaces::msg::StartAndEndJoints>(
             make_name("/motion_synth/joint_pose"), 
             rclcpp::SensorDataQoS(), 
             std::bind(&MotionPlannerNode::callback_arm_joints, this, std::placeholders::_1));
       
+        motion_synth_client_ = rclcpp_action::create_client<MotionSynthesis>(this, "/motion_synth");
+        if (!motion_synth_client_->wait_for_action_server(std::chrono::seconds(5))) {
+            RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> MotionSynth action server not available.");
+        } else {
+            RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> MotionSynth action server is ready.");
+        }
+
         //############
         // Wait for transforms
         wait_for_transforms("map", base_link_name_);
@@ -231,7 +240,7 @@ private:
     bool arm_goal_reached = false;
     bool has_arm_start_pose = false;
     bool has_arm_end_pose = false;
-    motion_synth::StartAndEndJoints target_arm_pose;
+    pumas_interfaces::msg::StartAndEndJoints target_arm_pose;
 
     rclcpp::Time no_cloud_pot_fields_start_time_;
     rclcpp::Duration no_cloud_pot_fields_duration_{2, 0}; // 2 seconds
@@ -263,6 +272,11 @@ private:
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_set_patience_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_collision_risk_;
 
+    //// motion synth
+    rclcpp::Subscription<pumas_interfaces::msg::StartAndEndJoints>::SharedPtr sub_arm_goal_;
+    rclcpp_action::Client<MotionSynthesis>::SharedPtr motion_synth_client_;
+
+
     //############
     // Service clients
     rclcpp::Client<nav_msgs::srv::GetPlan>::SharedPtr clt_plan_path_static_;
@@ -271,6 +285,7 @@ private:
     rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_aug_costmap_;
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_are_there_obs_;
     rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_is_in_obstacles_;
+
 
     std::vector<std::thread> threads_;
 
@@ -509,7 +524,7 @@ private:
         }
     }
 
-    void callback_arm_joints(const motion_synth::StartAndEndJoints::ConstPtr& msg)
+    void callback_arm_joints(const pumas_interfaces::msg::StartAndEndJoints::SharedPtr msg)
     {
         target_arm_pose = *msg;
         arm_goal_received = true;
@@ -554,7 +569,7 @@ private:
 
             this->is_path_response_ = true;
 
-            RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Path received successfully with size: %d", path_.poses.size());
+            RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Path received successfully with size: %zu", path_.poses.size());
         }
         catch (const std::exception &e)
         {
@@ -612,7 +627,7 @@ private:
     //############
     //Simple Move main processing
     void send_motion_synth_goal(const geometry_msgs::msg::Pose& nav_goal_pose,
-                            const motion_synth::msg::StartAndEndJoints& arm_joints)
+                            const pumas_interfaces::msg::StartAndEndJoints& arm_joints)
     {
         auto goal_msg = MotionSynthesis::Goal();
         goal_msg.goal_location.x = nav_goal_pose.position.x;
@@ -642,7 +657,8 @@ private:
             }
         };
     
-        motion_synth_client_->async_send_goal(goal_msg, send_goal_options);
+        // TODO
+        motion_synth_client_->async_send_goal(goal_msg, send_goal_options); 
     }
 
 
@@ -672,14 +688,15 @@ private:
                     );
                 }
             }
-            if(new_global_goal_)
+            if(new_global_goal_){
                 state = SM_WAITING_FOR_TASK;
 
                 if(arm_goal_received)
                 {
-                    send_motion_synth_goal(const int &nav_goal_pose, const int &arm_joints)
+                    send_motion_synth_goal(global_goal_, target_arm_pose);
                     arm_goal_received = false;
                 }
+            }
 
             switch(state)
             {

@@ -22,6 +22,7 @@ set(msg_files
 
 set(srv_files
   "srv/GetInflatedMap.srv"
+  "srv/ParamReadWrite.srv"
 )
 
 set(action_files
