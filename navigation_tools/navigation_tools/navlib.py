@@ -29,12 +29,26 @@ default_arm_pose = {
                'head_pan_joint': 0.0,
                'head_tilt_joint': np.deg2rad(0.0),}
 
-class NavModule(Node):
+class NavModule:
     """Navigation Module for the robot"""
 
-    def __init__(self, node: str="nav_module"):
+    def __init__(self, node: str=None):
 
-        super().__init__(node)
+        context = rclpy.get_default_context()
+        if not context.ok():
+            rclpy.init()
+
+        if node is None:
+            self._node: Node = rclpy.create_node("nav_module_node")
+            self._external_node = False
+        elif isinstance(node, str):
+            self._node: Node = node
+            self._external_node = True
+        elif isinstance(node, Node):
+            self._node: Node = node
+            self._external_node = True
+        else:
+            raise TypeError("NavModule.__init__: 'node' must be of type str or rclpy.node.Node")
         
         self.marker = Marker()
         self.marker_num = 0
@@ -65,6 +79,8 @@ class NavModule(Node):
 
         self.get_logger().info("NavModule.->initialized")
 
+    def __getattr__(self, name):
+        return getattr(self._node, name)
 
     def call_param_rw(self, node_name, param_name, param_value: str="", write: bool=False):
         req = ParamReadWrite.Request()
