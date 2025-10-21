@@ -33,7 +33,7 @@ default_arm_pose = {
 class NavModule:
     """Navigation Module for the robot"""
 
-    def __init__(self, Optional[Union[str, Node]] = None):
+    def __init__(self, node: Optional[Union[str, Node]] = None):
 
         context = rclpy.get_default_context()
         if not context.ok():
