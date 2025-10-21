@@ -1,6 +1,7 @@
 #!/usr/bin/env python3 
 # -*- coding: utf-8 -*-
 
+from typing import Optional
 import copy
 import math
 import time
@@ -32,7 +33,7 @@ default_arm_pose = {
 class NavModule:
     """Navigation Module for the robot"""
 
-    def __init__(self, node: str=None):
+    def __init__(self, Optional[Union[str, Node]] = None):
 
         context = rclpy.get_default_context()
         if not context.ok():
@@ -42,8 +43,8 @@ class NavModule:
             self._node: Node = rclpy.create_node("nav_module_node")
             self._external_node = False
         elif isinstance(node, str):
-            self._node: Node = node
-            self._external_node = True
+            self._node: Node = rclpy.create_node(node)
+            self._external_node = False
         elif isinstance(node, Node):
             self._node: Node = node
             self._external_node = True
