@@ -1,7 +1,7 @@
 #!/usr/bin/env python3 
 # -*- coding: utf-8 -*-
 
-from typing import Optional
+from typing import Optional, Union
 import copy
 import math
 import time
