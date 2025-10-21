@@ -31,17 +31,10 @@ default_arm_pose = {
 
 class NavModule(Node):
     """Navigation Module for the robot"""
-    __instance = None
 
-    def __new__(cls, *args, **kargs):
-        if cls.__instance is None:
-            cls.__instance = super(NavModule, cls).__new__(cls)
-            cls.__initialized = False
-        return cls.__instance
+    def __init__(self, node: str="nav_module"):
 
-    def __init__(self):
-
-        super().__init__("nav_module")
+        super().__init__(node)
         
         self.marker = Marker()
         self.marker_num = 0
@@ -257,7 +250,6 @@ class NavModule(Node):
             self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="true", write=True)
 
         return self.go_abs(goal, timeout, goal_distance)
-
 
 if __name__ == "__main__":
     rclpy.init()
