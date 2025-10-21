@@ -244,6 +244,13 @@
     output="screen">
   </node>
 
+  <node
+    pkg="navigation_tools"
+    exec="param_rw.py"
+    name="dynamic_param_rw_server"
+    output="screen">
+  </node>
+
   <!-- Hardware Controller -->
   <node name="arm_controller"
         pkg="hardware_controller"

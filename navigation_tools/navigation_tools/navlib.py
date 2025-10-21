@@ -18,6 +18,7 @@ from geometry_msgs.msg import PoseStamped, Pose2D, Pose, PoseWithCovariance, Pos
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 
 from pumas_interfaces.msg import StartAndEndJoints, Joints
+from pumas_interfaces.srv import ParamReadWrite
 
 default_arm_pose = {
                'arm_flex_joint': -0.26, #default is 0.0
@@ -66,8 +67,26 @@ class NavModule(Node):
         #self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
         self.create_subscription(PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10)
 
-        time.sleep(1.0)
+        # Service Clients
+        self.param_rw_client = self.create_client(ParamReadWrite, '/param_read_write')
+
         self.get_logger().info("NavModule.->initialized")
+
+
+    def call_param_rw(self, node_name, param_name, param_value: str="", write: bool=False):
+        req = ParamReadWrite.Request()
+        req.node_name = node_name
+        req.param_name = param_name
+        req.write = write
+        req.value = param_value
+
+        future = self.param_rw_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+        if future.result() is not None:
+            return future.result().param_value
+        else:
+            self.get_logger().error('NavModule.->param_read_write service call failed')
+            return None
 
     def callback_goal_reached(self, msg):
         self.goal_reached = False
@@ -219,10 +238,23 @@ class NavModule(Node):
         self.motion_synth_end_pose = None
 
         if motion_synth_pose is not None:
+
+            self.get_logger().info("NavModule.->Motion Synth Nav Goal with Pose Config")
+
+            self.call_param_rw(node_name="potential_fields", param_name="use_point_cloud", param_value="false", write=True)
+            self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="false", write=True)
+
             if "start" in motion_synth_pose:
                 self.motion_synth_start_pose = motion_synth_pose["start"]
             if "goal" in motion_synth_pose:
                 self.motion_synth_end_pose = motion_synth_pose["goal"]
+
+        elif motion_synth_pose is None:
+
+            self.get_logger().info("NavModule.->Standard Nav Goal")
+
+            self.call_param_rw(node_name="potential_fields", param_name="use_point_cloud", param_value="true", write=True)
+            self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="true", write=True)
 
         return self.go_abs(goal, timeout, goal_distance)
 
@@ -256,7 +288,8 @@ if __name__ == "__main__":
     }
     
     #success = nav.go_abs(goal, timeout=0, goal_distance=0)
-    success = nav.nav_goal(goal, motion_synth_pose=ms_config, timeout=0, goal_distance=0)
+    #success = nav.nav_goal(goal, motion_synth_pose=ms_config, timeout=0, goal_distance=0)
+    success = nav.nav_goal(goal, motion_synth_pose=None, timeout=0, goal_distance=0)
 
     if success:
         nav.get_logger().info("NavStatus.->Nav Goal Reached")

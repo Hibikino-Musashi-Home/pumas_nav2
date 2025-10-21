@@ -22,6 +22,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 find_package(rcl_interfaces REQUIRED)
+find_package(pumas_interfaces REQUIRED)
 
 # C++ section
 #add_executable(simple_move_node 
@@ -49,6 +50,11 @@ ament_python_install_package(${PROJECT_NAME})
 
 install(PROGRAMS
   ${PROJECT_NAME}/navlib.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  ${PROJECT_NAME}/param_rw.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -111,11 +111,10 @@ class MotionSynth(Node):
         goal = goal_handle.request
         feedback = MotionSynthesis.Feedback()
 
-        # 初期ポーズ送信（必要に応じて）
         if goal.apply_start_pose:
             self.send_pose(goal.start_pose)
 
-        # 経路取得を待つ（最大5秒）
+        # TODO fix waiting for path
         for i in range(50):
             if self.path_received:
                 break
