@@ -11,6 +11,7 @@ import math
 import numpy as np
 
 import rclpy
+import rclpy.duration
 from rclpy.node import Node
 from rclpy.executors import SingleThreadedExecutor
 
@@ -20,8 +21,8 @@ from std_msgs.msg import Empty, Float32MultiArray
 from geometry_msgs.msg import (
     PoseStamped,
     Pose2D,
-    Pose,
-    PoseWithCovariance,
+    # Pose,
+    # PoseWithCovariance,
     PoseWithCovarianceStamped,
 )
 
@@ -162,7 +163,7 @@ class NavModule:
         goal.pose.orientation.w = q[3]
         return goal
 
-    def send_goal(self, goal):
+    def send_goal(self, goal: PoseStamped):
 
         self._node.get_logger().info("NavModule.->Sending Nav Goal")
 
@@ -218,13 +219,16 @@ class NavModule:
         self.marker.color.b = 0.0
         self.pub_marker.publish(self.marker)
 
-    def go_abs(self, goal: Pose2D, timeout: int, goal_distance=None) -> bool:
+    def go_abs(self, goal: Pose2D, timeout: float, goal_distance: Optional[float] = None) -> bool:
 
         goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
 
         self.global_goal_reached = False
         self.robot_stop = False
-        attempts = int(timeout * 10) if timeout != 0 else float("inf")
+
+        # NOTE: replace loop-count timeout with ROS time-based timeout
+        start_time = self._node.get_clock().now()
+        timeout_duration = rclpy.duration.Duration(seconds=timeout) if timeout > 0 else None
 
         self.send_goal(goal_pose)  # send nav goal
 
@@ -233,18 +237,27 @@ class NavModule:
 
         result = False
 
-        while (
-            not self.global_goal_reached and rclpy.ok() and not self.robot_stop and attempts >= 0
-        ):  # check goal reached or stop signal
+        # NOTE: replace loop-count timeout with ROS time-based timeout
+        # check goal reached or stop signal
+        while rclpy.ok() and not self.global_goal_reached and not self.robot_stop:
+
+            if timeout_duration is not None:
+                elapsed = self._node.get_clock().now().nanoseconds - start_time.nanoseconds
+                if elapsed > timeout_duration.nanoseconds:
+                    break
+
             if goal_distance:
-                current_x, current_y = self.global_pose.pose.pose.position.x, self.global_pose.pose.pose.position.y
+                current_x = self.global_pose.pose.pose.position.x
+                current_y = self.global_pose.pose.pose.position.y
                 current_distance = math.sqrt((goal.x - current_x) ** 2 + (goal.y - current_y) ** 2)
                 if current_distance < goal_distance:
                     result = True
                     break
 
-            attempts -= 1
             executor.spin_once(timeout_sec=0.1)
+
+        # NOTE: Stop managing this node callbacks.
+        executor.remove_node(self._node)
 
         if self.global_goal_reached:
             result = True
