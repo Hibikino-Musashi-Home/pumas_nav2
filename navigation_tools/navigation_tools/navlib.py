@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from typing import Optional, Union
@@ -23,7 +23,7 @@ from pumas_interfaces.srv import ParamReadWrite
 
 default_arm_pose = {
                'arm_flex_joint': -0.26, #default is 0.0
-               'arm_lift_joint': 0.0, 
+               'arm_lift_joint': 0.0,
                'arm_roll_joint': -1.57,
                'wrist_flex_joint': -1.57,
                'wrist_roll_joint': 0.0,
@@ -50,7 +50,7 @@ class NavModule:
             self._external_node = True
         else:
             raise TypeError("NavModule.__init__: 'node' must be of type str or rclpy.node.Node")
-        
+
         self.marker = Marker()
         self.marker_num = 0
 
@@ -62,26 +62,23 @@ class NavModule:
         self.motion_synth_end_pose = None
 
         # Publishers
-        self.pub_marker = self.create_publisher(Marker, "/nav_goal_marker", 10)
-        self.pub_global_goal = self.create_publisher(PoseStamped, "/move_base_simple/goal", 10)
-        self.pub_dist_angle = self.create_publisher(Float32MultiArray, "/simple_move/goal_dist_angle", 10)
-        self.pub_robot_stop = self.create_publisher(Empty, "/navigation/stop", 10)
-        self.pub_move_joint_pose = self.create_publisher(StartAndEndJoints, "/motion_synth/joint_pose", 10)
+        self.pub_marker = self._node.create_publisher(Marker, "/nav_goal_marker", 10)
+        self.pub_global_goal = self._node.create_publisher(PoseStamped, "/move_base_simple/goal", 10)
+        self.pub_dist_angle = self._node.create_publisher(Float32MultiArray, "/simple_move/goal_dist_angle", 10)
+        self.pub_robot_stop = self._node.create_publisher(Empty, "/navigation/stop", 10)
+        self.pub_move_joint_pose = self._node.create_publisher(StartAndEndJoints, "/motion_synth/joint_pose", 10)
 
         # Subscribers
-        self.create_subscription(GoalStatus, "/simple_move/goal_reached", self.callback_goal_reached, 10)
-        self.create_subscription(GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10)
-        self.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
+        self._node.create_subscription(GoalStatus, "/simple_move/goal_reached", self.callback_goal_reached, 10)
+        self._node.create_subscription(GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10)
+        self._node.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
         #self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
-        self.create_subscription(PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10)
+        self._node.create_subscription(PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10)
 
         # Service Clients
-        self.param_rw_client = self.create_client(ParamReadWrite, '/param_read_write')
+        self.param_rw_client = self._node.create_client(ParamReadWrite, '/param_read_write')
 
-        self.get_logger().info("NavModule.->initialized")
-
-    def __getattr__(self, name):
-        return getattr(self._node, name)
+        self._node.get_logger().info("NavModule.->initialized")
 
     def call_param_rw(self, node_name, param_name, param_value: str="", write: bool=False):
         req = ParamReadWrite.Request()
@@ -91,11 +88,11 @@ class NavModule:
         req.value = param_value
 
         future = self.param_rw_client.call_async(req)
-        rclpy.spin_until_future_complete(self, future)
+        rclpy.spin_until_future_complete(self._node, future)
         if future.result() is not None:
             return future.result().param_value
         else:
-            self.get_logger().error('NavModule.->param_read_write service call failed')
+            self._node.get_logger().error('NavModule.->param_read_write service call failed')
             return None
 
     def callback_goal_reached(self, msg):
@@ -113,7 +110,7 @@ class NavModule:
 
     def global_pose_callback(self, msg):
         self.global_pose = msg
-        self.get_logger().info(f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
+        self._node.get_logger().info(f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -150,7 +147,7 @@ class NavModule:
 
     def send_goal(self, goal):
 
-        self.get_logger().info('NavModule.->Sending Nav Goal')
+        self._node.get_logger().info('NavModule.->Sending Nav Goal')
 
         if self.motion_synth_start_pose is not None or self.motion_synth_end_pose is not None:
 
@@ -188,7 +185,7 @@ class NavModule:
 
     def marker_plot(self, goal):
         self.marker.header.frame_id = "map"
-        self.marker.header.stamp = self.get_clock().now().to_msg()
+        self.marker.header.stamp = self._node.get_clock().now().to_msg()
         self.marker.ns = "goal_markers"
         self.marker.id = self.marker_num
         self.marker_num += 1
@@ -215,7 +212,7 @@ class NavModule:
         self.send_goal(goal_pose) # send nav goal
 
         executor = SingleThreadedExecutor()
-        executor.add_node(self)
+        executor.add_node(self._node)
 
         result = False
 
@@ -233,10 +230,10 @@ class NavModule:
         if self.global_goal_reached:
             result = True
         elif self.robot_stop:
-            self.get_logger().info('NavModule.->Nav Signal Stop')
+            self._node.get_logger().info('NavModule.->Nav Signal Stop')
             result = False
         else:
-            self.get_logger().warn('NavModule.->Nav Failed')
+            self._node.get_logger().warn('NavModule.->Nav Failed')
             result = False
 
         self.handle_robot_stop()
@@ -249,7 +246,7 @@ class NavModule:
 
         if motion_synth_pose is not None:
 
-            self.get_logger().info("NavModule.->Motion Synth Nav Goal with Pose Config")
+            self._node.get_logger().info("NavModule.->Motion Synth Nav Goal with Pose Config")
 
             self.call_param_rw(node_name="potential_fields", param_name="use_point_cloud", param_value="false", write=True)
             self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="false", write=True)
@@ -261,7 +258,7 @@ class NavModule:
 
         elif motion_synth_pose is None:
 
-            self.get_logger().info("NavModule.->Standard Nav Goal")
+            self._node.get_logger().info("NavModule.->Standard Nav Goal")
 
             self.call_param_rw(node_name="potential_fields", param_name="use_point_cloud", param_value="true", write=True)
             self.call_param_rw(node_name="map_augmenter", param_name="use_point_cloud", param_value="true", write=True)
@@ -295,14 +292,14 @@ if __name__ == "__main__":
         "start": start_pose,
         "goal": goal_pose,
     }
-    
+
     #success = nav.go_abs(goal, timeout=0, goal_distance=0)
     #success = nav.nav_goal(goal, motion_synth_pose=ms_config, timeout=0, goal_distance=0)
     success = nav.nav_goal(goal, motion_synth_pose=None, timeout=0, goal_distance=0)
 
     if success:
-        nav.get_logger().info("NavStatus.->Nav Goal Reached")
+        nav._node.get_logger().info("NavStatus.->Nav Goal Reached")
     else:
-        nav.get_logger().warn("NavStatus.->Failed to Reach Goal")
-    
+        nav._node.get_logger().warn("NavStatus.->Failed to Reach Goal")
+
 
