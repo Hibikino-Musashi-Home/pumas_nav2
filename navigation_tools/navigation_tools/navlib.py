@@ -126,7 +126,7 @@ class NavModule:
     def global_pose_callback(self, msg: PoseWithCovarianceStamped):
         self.global_pose = msg
         self._node.get_logger().info(
-            f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}"
+            f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
         )
 
     def pose_stamped2pose_2d(self, pose_stamped: PoseStamped):
@@ -237,7 +237,7 @@ class NavModule:
             not self.global_goal_reached and rclpy.ok() and not self.robot_stop and attempts >= 0
         ):  # check goal reached or stop signal
             if goal_distance:
-                current_x, current_y = self.global_pose.pose.position.x, self.global_pose.pose.position.y
+                current_x, current_y = self.global_pose.pose.pose.position.x, self.global_pose.pose.pose.position.y
                 current_distance = math.sqrt((goal.x - current_x) ** 2 + (goal.y - current_y) ** 2)
                 if current_distance < goal_distance:
                     result = True
