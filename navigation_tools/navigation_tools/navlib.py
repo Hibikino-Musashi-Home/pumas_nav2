@@ -96,7 +96,13 @@ class NavModule:
 
         self._node.get_logger().info("NavModule.->initialized")
 
-    def call_param_rw(self, node_name: str, param_name: str, param_value: str = "", write: bool = False):
+    def call_param_rw(
+        self,
+        node_name: str,
+        param_name: str,
+        param_value: str = "",
+        write: bool = False,
+    ) -> Optional[str]:
         req = ParamReadWrite.Request()
         req.node_name = node_name
         req.param_name = param_name
@@ -130,7 +136,7 @@ class NavModule:
             f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
         )
 
-    def pose_stamped2pose_2d(self, pose_stamped: PoseStamped):
+    def pose_stamped2pose_2d(self, pose_stamped: PoseStamped) -> Pose2D:
         pose2d = Pose2D()
         pose2d.x = pose_stamped.pose.position.x
         pose2d.y = pose_stamped.pose.position.y
@@ -139,7 +145,7 @@ class NavModule:
         pose2d.theta = euler[2]
         return pose2d
 
-    def create_arm_joint_goal(self, joint_poses: Dict[str, float]):
+    def create_arm_joint_goal(self, joint_poses: Dict[str, float]) -> Joints:
         joints = Joints()
         joints.arm_lift_joint = joint_poses["arm_lift_joint"]
         joints.arm_flex_joint = joint_poses["arm_flex_joint"]
@@ -150,7 +156,7 @@ class NavModule:
         joints.head_tilt_joint = joint_poses["head_tilt_joint"]
         return joints
 
-    def create_goal_pose(self, x: float, y: float, yaw: float, frame_id: float):
+    def create_goal_pose(self, x: float, y: float, yaw: float, frame_id: float) -> PoseStamped:
         goal = PoseStamped()
         goal.header.frame_id = frame_id
         goal.pose.position.x = x
@@ -272,7 +278,13 @@ class NavModule:
 
         return result
 
-    def nav_goal(self, goal: Pose2D, timeout, motion_synth_pose=None, goal_distance=None):
+    def nav_goal(
+        self,
+        goal: Pose2D,
+        timeout,
+        motion_synth_pose=None,
+        goal_distance: Optional[float] = None,
+    ) -> bool:
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
 
