@@ -317,6 +317,13 @@ class NavModule:
 
         return self.go_abs(goal, timeout, goal_distance)
 
+    def destory(self):
+        try:
+            if not self._external_node:
+                self._node.destroy_node()
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     rclpy.init()
@@ -354,3 +361,7 @@ if __name__ == "__main__":
         nav._node.get_logger().info("NavStatus.->Nav Goal Reached")
     else:
         nav._node.get_logger().warn("NavStatus.->Failed to Reach Goal")
+
+    nav.destory()
+    if rclpy.ok():
+        rclpy.shutdown()
