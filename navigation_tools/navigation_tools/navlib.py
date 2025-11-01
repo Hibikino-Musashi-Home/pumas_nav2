@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, Any
 
 # import copy
 import math
@@ -46,6 +46,14 @@ class NavModule:
     """Navigation Module for the robot"""
 
     def __init__(self, node: Optional[Union[str, Node]] = None):
+        """_summary_
+
+        Args:
+            node (Optional[Union[str, Node]], optional): _description_. Defaults to None.
+
+        Raises:
+            TypeError: _description_
+        """
 
         context = rclpy.get_default_context()
         if not context.ok():
@@ -103,6 +111,17 @@ class NavModule:
         param_value: str = "",
         write: bool = False,
     ) -> Optional[str]:
+        """_summary_
+
+        Args:
+            node_name (str): _description_
+            param_name (str): _description_
+            param_value (str, optional): _description_. Defaults to "".
+            write (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            Optional[str]: _description_
+        """
         req = ParamReadWrite.Request()
         req.node_name = node_name
         req.param_name = param_name
@@ -137,6 +156,14 @@ class NavModule:
         )
 
     def pose_stamped2pose_2d(self, pose_stamped: PoseStamped) -> Pose2D:
+        """_summary_
+
+        Args:
+            pose_stamped (geometry_msgs.msg.PoseStamped): _description_
+
+        Returns:
+            geometry_msgs.msg.Pose2D: _description_
+        """
         pose2d = Pose2D()
         pose2d.x = pose_stamped.pose.position.x
         pose2d.y = pose_stamped.pose.position.y
@@ -146,6 +173,14 @@ class NavModule:
         return pose2d
 
     def create_arm_joint_goal(self, joint_poses: Dict[str, float]) -> Joints:
+        """_summary_
+
+        Args:
+            joint_poses (Dict[str, float]): _description_
+
+        Returns:
+            pumas_interfaces.msg.Joints: _description_
+        """
         joints = Joints()
         joints.arm_lift_joint = joint_poses["arm_lift_joint"]
         joints.arm_flex_joint = joint_poses["arm_flex_joint"]
@@ -157,6 +192,17 @@ class NavModule:
         return joints
 
     def create_goal_pose(self, x: float, y: float, yaw: float, frame_id: float) -> PoseStamped:
+        """_summary_
+
+        Args:
+            x (float): _description_
+            y (float): _description_
+            yaw (float): _description_
+            frame_id (float): _description_
+
+        Returns:
+            geometry_msgs.msg.PoseStamped: _description_
+        """
         goal = PoseStamped()
         goal.header.frame_id = frame_id
         goal.pose.position.x = x
@@ -203,11 +249,18 @@ class NavModule:
         self.pub_global_goal.publish(goal)
 
     def handle_robot_stop(self):
+        """_summary_
+        """
         if not self.global_goal_reached:
             msg_stop = Empty()
             self.pub_robot_stop.publish(msg_stop)
 
     def marker_plot(self, goal: PoseStamped):
+        """_summary_
+
+        Args:
+            goal (geometry_msgs.msg.PoseStamped): _description_
+        """
         self.marker.header.frame_id = "map"
         self.marker.header.stamp = self._node.get_clock().now().to_msg()
         self.marker.ns = "goal_markers"
@@ -226,6 +279,16 @@ class NavModule:
         self.pub_marker.publish(self.marker)
 
     def go_abs(self, goal: Pose2D, timeout: float, goal_distance: Optional[float] = None) -> bool:
+        """_summary_
+
+        Args:
+            goal (geometry_msgs.msg.Pose2D): _description_
+            timeout (float): _description_
+            goal_distance (Optional[float], optional): _description_. Defaults to None.
+
+        Returns:
+            bool: _description_
+        """
 
         goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
 
@@ -281,10 +344,21 @@ class NavModule:
     def nav_goal(
         self,
         goal: Pose2D,
-        timeout,
-        motion_synth_pose=None,
+        timeout: float,
+        motion_synth_pose: Optional[Dict[str, Any]] = None,
         goal_distance: Optional[float] = None,
     ) -> bool:
+        """_summary_
+
+        Args:
+            goal (geometry_msgs.msg.Pose2D): _description_
+            timeout (float): _description_
+            motion_synth_pose (Optional[Dict[str, Any]], optional): _description_. Defaults to None.
+            goal_distance (Optional[float], optional): _description_. Defaults to None.
+
+        Returns:
+            bool: _description_
+        """
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
 
@@ -330,6 +404,8 @@ class NavModule:
         return self.go_abs(goal, timeout, goal_distance)
 
     def destory(self):
+        """_summary_
+        """
         try:
             if not self._external_node:
                 self._node.destroy_node()
