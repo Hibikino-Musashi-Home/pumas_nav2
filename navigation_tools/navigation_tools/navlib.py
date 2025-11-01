@@ -85,11 +85,11 @@ class NavModule:
         self.pub_move_joint_pose = self._node.create_publisher(StartAndEndJoints, "/motion_synth/joint_pose", 10)
 
         # Subscribers
-        self._node.create_subscription(GoalStatus, "/simple_move/goal_reached", self.callback_goal_reached, 10)
-        self._node.create_subscription(GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10)
-        self._node.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
+        self._node.create_subscription(GoalStatus, "/simple_move/goal_reached", self._callback_goal_reached, 10)
+        self._node.create_subscription(GoalStatus, "/navigation/status", self._callback_global_goal_reached, 10)
+        self._node.create_subscription(Empty, "/navigation/stop", self._callback_stop, 10)
         # self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
-        self._node.create_subscription(PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10)
+        self._node.create_subscription(PoseWithCovarianceStamped, "/pose", self._global_pose_callback, 10)
 
         # Service Clients
         self.param_rw_client = self._node.create_client(ParamReadWrite, "/param_read_write")
@@ -111,20 +111,20 @@ class NavModule:
             self._node.get_logger().error("NavModule.->param_read_write service call failed")
             return None
 
-    def callback_goal_reached(self, msg: GoalStatus):
+    def _callback_goal_reached(self, msg: GoalStatus):
         self.goal_reached = False
         if msg.status == GoalStatus.SUCCEEDED:
             self.goal_reached = True
 
-    def callback_global_goal_reached(self, msg: GoalStatus):
+    def _callback_global_goal_reached(self, msg: GoalStatus):
         self.goal_reached = False
         if msg.status == GoalStatus.SUCCEEDED:
             self.global_goal_reached = True
 
-    def callback_stop(self, msg: Empty):
+    def _callback_stop(self, msg: Empty):
         self.robot_stop = True
 
-    def global_pose_callback(self, msg: PoseWithCovarianceStamped):
+    def _global_pose_callback(self, msg: PoseWithCovarianceStamped):
         self.global_pose = msg
         self._node.get_logger().info(
             f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
@@ -163,7 +163,7 @@ class NavModule:
         goal.pose.orientation.w = q[3]
         return goal
 
-    def send_goal(self, goal: PoseStamped):
+    def _send_goal(self, goal: PoseStamped):
 
         self._node.get_logger().info("NavModule.->Sending Nav Goal")
 
@@ -230,7 +230,7 @@ class NavModule:
         start_time = self._node.get_clock().now()
         timeout_duration = rclpy.duration.Duration(seconds=timeout) if timeout > 0 else None
 
-        self.send_goal(goal_pose)  # send nav goal
+        self._send_goal(goal_pose)  # send nav goal
 
         executor = SingleThreadedExecutor()
         executor.add_node(self._node)
