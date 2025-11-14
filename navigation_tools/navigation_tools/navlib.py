@@ -173,7 +173,6 @@ class NavModule:
                 # goalが無い場合
                 start_and_end_joints.has_arm_end_pose = False
 
-            self.get_logger().info(f"[DEBUG] NavModule.->Publishing Motion Synth Start and End Joints: {start_and_end_joints}")
             self.pub_move_joint_pose.publish(start_and_end_joints)
 
             start_and_end_joints.has_arm_start_pose = False
