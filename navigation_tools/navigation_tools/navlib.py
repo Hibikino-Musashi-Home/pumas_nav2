@@ -113,7 +113,7 @@ class NavModule:
 
     def global_pose_callback(self, msg):
         self.global_pose = msg
-        self.get_logger().info(f"NavModule.->Global Pose: x={msg.pose.position.x:.2f}, y={msg.pose.position.y:.2f}")
+        self.get_logger().info(f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}")
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -173,11 +173,13 @@ class NavModule:
                 # goalが無い場合
                 start_and_end_joints.has_arm_end_pose = False
 
+            self.get_logger().info(f"[DEBUG] NavModule.->Publishing Motion Synth Start and End Joints: {start_and_end_joints}")
             self.pub_move_joint_pose.publish(start_and_end_joints)
 
             start_and_end_joints.has_arm_start_pose = False
             start_and_end_joints.has_arm_end_pose = False
 
+        self.get_logger().info(f'NavModule.->Publishing Global Goal: x={goal.pose.position.x}, y={goal.pose.position.y}')
         self.marker_plot(goal)
         self.pub_global_goal.publish(goal)
 
@@ -205,8 +207,11 @@ class NavModule:
         self.pub_marker.publish(self.marker)
 
     def go_abs(self, goal: Pose2D, timeout, goal_distance=None) -> bool:
+        self.get_logger().info(f"NavModule.->Go Absolute Goal: x={goal.x}, y={goal.y}, theta={goal.theta}")
 
         goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
+
+        self.get_logger().info(f"NavModule.->Goal Pose Created: {goal_pose}")
 
         self.global_goal_reached = False
         self.robot_stop = False
@@ -221,7 +226,7 @@ class NavModule:
 
         while not self.global_goal_reached and rclpy.ok() and not self.robot_stop and attempts >= 0: # check goal reached or stop signal
             if goal_distance:
-                current_x, current_y = self.global_pose.pose.position.x, self.global_pose.pose.position.y
+                current_x, current_y = self.global_pose.pose.pose.position.x, self.global_pose.pose.pose.position.y
                 current_distance = math.sqrt((goal.x - current_x) ** 2 + (goal.y - current_y) ** 2)
                 if current_distance < goal_distance:
                     result = True
