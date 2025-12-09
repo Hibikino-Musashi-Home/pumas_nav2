@@ -21,21 +21,29 @@
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
   <arg name="mvn_pln_patience" default="False"/>
+
+  <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.5"/>
+  <!--right/left side-->
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
+  <!--height-->
   <arg name="laser_min_z" default="0.022"/>
   <arg name="laser_max_z" default="1.00"/>
+  <!--depth-->
   <arg name="cloud_min_x" default="0.30"/>
   <arg name="cloud_max_x" default="0.80"/>
+  <!--right/left side-->
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
+  <!--height-->
   <arg name="cloud_min_z" default="0.10"/>
   <arg name="cloud_max_z" default="1.20"/>
-  <!--arg name="proximity_criterion", default="2.0"/-->
+
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
+
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
