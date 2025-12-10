@@ -30,16 +30,16 @@
   <arg name="laser_max_y" default="0.25"/>
   <!--height-->
   <arg name="laser_min_z" default="0.022"/>
-  <arg name="laser_max_z" default="1.00"/>
+  <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.30"/>
-  <arg name="cloud_max_x" default="0.80"/>
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.65"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
   <!--height-->
-  <arg name="cloud_min_z" default="0.10"/>
-  <arg name="cloud_max_z" default="1.20"/>
+  <arg name="cloud_min_z" default="0.1"/>
+  <arg name="cloud_max_z" default="1.0"/>
 
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
