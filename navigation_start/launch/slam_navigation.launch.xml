@@ -25,7 +25,7 @@
 
   <arg name="mvn_pln_patience" default="False"/>
 
-  <arg name="laser_min_x" default="0.17"/>
+  <!-- <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
@@ -36,7 +36,27 @@
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
   <arg name="cloud_min_z" default="0.01"/>
-  <arg name="cloud_max_z" default="1.20"/>
+  <arg name="cloud_max_z" default="1.20"/> -->
+
+    <!--depth-->
+  <arg name="laser_min_x" default="0.17"/>
+  <arg name="laser_max_x" default="0.5"/>
+  <!--right/left side-->
+  <arg name="laser_min_y" default="-0.25"/>
+  <arg name="laser_max_y" default="0.25"/>
+  <!--height-->
+  <arg name="laser_min_z" default="0.022"/>
+  <arg name="laser_max_z" default="1.0"/>
+  <!--depth-->
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.65"/>
+  <!--right/left side-->
+  <arg name="cloud_min_y" default="-0.30"/>
+  <arg name="cloud_max_y" default="0.30"/>
+  <!--height-->
+  <arg name="cloud_min_z" default="0.1"/>
+  <arg name="cloud_max_z" default="1.0"/>
+
 
   <!-- Map servers -->
   <node name="prohibition_map_server" 
@@ -90,8 +110,8 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
     <param name="decay_factor" value="20"/>    
-    <param name="inflation_radius" value="0.22"/>
-    <param name="cost_radius" value="0.25"/> 
+    <param name="inflation_radius" value="0.18"/>
+    <param name="cost_radius" value="0.20"/> 
 
     <param name="use_online" value="True"/>
 
@@ -205,9 +225,9 @@
         pkg="hardware_controller"
         exec="arm_node"
         output="screen">
-        <param name="torso_default_pose" value="0.15"/>
+        <param name="torso_default_pose" value="0.0"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
+        <param name="arm_default_pose" value="[-0.1, -1.57, -1.57, 0.0]"/>
   </node>
 
   <node name="head_controller"
