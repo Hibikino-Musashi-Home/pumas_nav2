@@ -67,6 +67,8 @@ class NavModule:
         self.global_goal_reached = False
         self.goal_reached = False
         self.robot_stop = False
+        self.global_pose = None
+        self.sent_new_goal = False
 
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
@@ -79,7 +81,6 @@ class NavModule:
         self.pub_dist_angle = self.create_publisher(
             Float32MultiArray, "/simple_move/goal_dist_angle", 10
         )
-        self.pub_robot_stop = self.create_publisher(Empty, "/navigation/stop", 10)
         self.pub_move_joint_pose = self.create_publisher(
             StartAndEndJoints, "/motion_synth/joint_pose", 10
         )
@@ -91,7 +92,6 @@ class NavModule:
         self.create_subscription(
             GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10
         )
-        self.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
         # self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
         self.create_subscription(
             PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
@@ -128,14 +128,16 @@ class NavModule:
             self.goal_reached = True
 
     def callback_global_goal_reached(self, msg):
-        self.goal_reached = False
+        self.global_goal_reached = False
         if msg.status == GoalStatus.SUCCEEDED:
-            self.global_goal_reached = True
-
-    def callback_stop(self, msg):
-        self.robot_stop = True
+            if self.sent_new_goal: # 新しいゴールが送信されたときに初期化
+                self.global_goal_reached = False
+                self.sent_new_goal = False
+            else:
+                self.global_goal_reached = True
 
     def global_pose_callback(self, msg):
+        #TODO: /pose トピックが不安定なため，現在の位置が正確に取得できない場合がある
         self.global_pose = msg
         self.get_logger().info(
             f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
@@ -177,9 +179,8 @@ class NavModule:
         return goal
 
     def send_goal(self, goal):
-
+        self.sent_new_goal = True # 新しいゴールが送信されたときのフラグ
         self.get_logger().info("NavModule.->Sending Nav Goal")
-
         if (
             self.motion_synth_start_pose is not None
             or self.motion_synth_end_pose is not None
@@ -221,11 +222,6 @@ class NavModule:
         self.marker_plot(goal)
         self.pub_global_goal.publish(goal)
 
-    def handle_robot_stop(self):
-        if not self.global_goal_reached:
-            msg_stop = Empty()
-            self.pub_robot_stop.publish(msg_stop)
-
     def marker_plot(self, goal):
         self.marker.header.frame_id = "map"
         self.marker.header.stamp = self.get_clock().now().to_msg()
@@ -254,6 +250,7 @@ class NavModule:
         self.get_logger().info(f"NavModule.->Goal Pose Created: {goal_pose}")
 
         self.global_goal_reached = False
+        self.goal_reached = False
         self.robot_stop = False
         attempts = int(timeout * 10) if timeout != 0 else float("inf")
 
@@ -263,38 +260,51 @@ class NavModule:
         executor.add_node(self)
 
         result = False
-
-        while (
-            not self.global_goal_reached
-            and rclpy.ok()
-            and not self.robot_stop
-            and attempts >= 0
-        ):  # check goal reached or stop signal
-            if goal_distance:
-                current_x, current_y = (
-                    self.global_pose.pose.pose.position.x,
-                    self.global_pose.pose.pose.position.y,
-                )
-                current_distance = math.sqrt(
-                    (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
-                )
-                if current_distance < goal_distance:
-                    result = True
+        goal_reached = False
+        try:
+            while rclpy.ok():
+                if self.global_goal_reached:
+                    self.get_logger().warn("NavModule.->global goal reached flag")
+                    break
+                elif self.robot_stop:
+                    self.get_logger().warn("NavModule.->robot stop flag")
+                    break
+                elif attempts < 0:
+                    self.get_logger().warn("NavModule.->max attempts reached")
                     break
 
-            attempts -= 1
-            executor.spin_once(timeout_sec=0.1)
+                attempts -= 1
+                executor.spin_once(timeout_sec=0.1)
+                if goal_distance is not None and self.global_pose is not None:
+                    current_x, current_y = (
+                        self.global_pose.pose.pose.position.x,
+                        self.global_pose.pose.pose.position.y,
+                    )
+                    current_distance = math.sqrt(
+                        (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
+                    )
+                    #TODO: debugとして距離をログに出す
+                    self.get_logger().info(f"=====================================================")
+                    self.get_logger().info(f"NavModule.->Current Distance to Goal: {current_distance:.2f}")
+                    self.get_logger().info(f"NavModule.->Goal Distance: {goal_distance}")
+                    self.get_logger().info(f"=====================================================")
+                    if current_distance < goal_distance:
+                        goal_reached = True
+                        break
 
-        if self.global_goal_reached:
-            result = True
-        elif self.robot_stop:
-            self.get_logger().info("NavModule.->Nav Signal Stop")
-            result = False
-        else:
-            self.get_logger().warn("NavModule.->Nav Failed")
-            result = False
-
-        self.handle_robot_stop()
+            if self.global_goal_reached or goal_reached:
+                result = True
+                self.get_logger().info("NavModule.->Nav Goal Reached")
+            elif self.robot_stop:
+                self.get_logger().info("NavModule.->Nav Signal Stop")
+                result = False
+            else:
+                self.get_logger().warn("NavModule.->Nav Failed")
+                result = False
+        
+        finally:
+            executor.remove_node(self)
+            executor.shutdown()
 
         return result
 
