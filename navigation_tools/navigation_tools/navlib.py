@@ -23,6 +23,7 @@ from geometry_msgs.msg import (
 )
 
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
+from tf2_ros import Buffer, TransformListener
 
 from pumas_interfaces.msg import StartAndEndJoints, Joints
 from pumas_interfaces.srv import ParamReadWrite
@@ -93,17 +94,40 @@ class NavModule:
             GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10
         )
         # self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
-        self.create_subscription(
-            PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
-        )
+        # self.create_subscription(
+        #     PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
+        # :)
 
         # Service Clients
         self.param_rw_client = self.create_client(ParamReadWrite, "/param_read_write")
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self._node)
 
         self.get_logger().info("NavModule.->initialized")
 
     def __getattr__(self, name):
         return getattr(self._node, name)
+
+    def get_current_pose(self) -> Optional[Pose2D]:
+        try:
+            tf_msg = self.tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time()
+            )
+
+            pose = Pose2D()
+            pose.x = tf_msg.transform.translation.x
+            pose.y = tf_msg.transform.translation.y
+
+            q = tf_msg.transform.rotation
+            euler = euler_from_quaternion([q.x, q.y, q.z, q.w])
+            pose.theta = euler[2]
+
+            return pose
+
+        except Exception as e:
+            self.get_logger().warn(f"NavModule.->TF lookup failed: {e}")
+            return None
 
     def call_param_rw(
         self, node_name, param_name, param_value: str = "", write: bool = False
@@ -136,12 +160,11 @@ class NavModule:
             else:
                 self.global_goal_reached = True
 
-    def global_pose_callback(self, msg):
-        #TODO: /pose トピックが不安定なため，現在の位置が正確に取得できない場合がある
-        self.global_pose = msg
-        self.get_logger().info(
-            f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
-        )
+    # def global_pose_callback(self, msg):
+    #    self.global_pose = msg
+    #    self.get_logger().info(
+    #        f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
+    #    )
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -359,7 +382,7 @@ if __name__ == "__main__":
     nav = NavModule()
 
     # goal = Pose2D(x=1.0, y=3.7, theta=0.0)
-    goal = Pose2D(x=0.8, y=3.44, theta=0.0)
+    goal = Pose2D(x=2.78, y=0.0, theta=0.0)
     start_pose = {
         "arm_lift_joint": 0.0,
         "arm_flex_joint": np.deg2rad(0.0),
