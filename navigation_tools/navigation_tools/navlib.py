@@ -23,6 +23,7 @@ from geometry_msgs.msg import (
 )
 
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
+from tf2_ros import Buffer, TransformListener
 
 from pumas_interfaces.msg import StartAndEndJoints, Joints
 from pumas_interfaces.srv import ParamReadWrite
@@ -93,17 +94,40 @@ class NavModule:
         )
         self.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
         # self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
-        self.create_subscription(
-            PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
-        )
+        # self.create_subscription(
+        #     PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
+        # :)
 
         # Service Clients
         self.param_rw_client = self.create_client(ParamReadWrite, "/param_read_write")
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self._node)
 
         self.get_logger().info("NavModule.->initialized")
 
     def __getattr__(self, name):
         return getattr(self._node, name)
+
+    def get_current_pose(self) -> Optional[Pose2D]:
+        try:
+            tf_msg = self.tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time()
+            )
+
+            pose = Pose2D()
+            pose.x = tf_msg.transform.translation.x
+            pose.y = tf_msg.transform.translation.y
+
+            q = tf_msg.transform.rotation
+            euler = euler_from_quaternion([q.x, q.y, q.z, q.w])
+            pose.theta = euler[2]
+
+            return pose
+
+        except Exception as e:
+            self.get_logger().warn(f"NavModule.->TF lookup failed: {e}")
+            return None
 
     def call_param_rw(
         self, node_name, param_name, param_value: str = "", write: bool = False
@@ -135,11 +159,11 @@ class NavModule:
     def callback_stop(self, msg):
         self.robot_stop = True
 
-    def global_pose_callback(self, msg):
-        self.global_pose = msg
-        self.get_logger().info(
-            f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
-        )
+    # def global_pose_callback(self, msg):
+    #    self.global_pose = msg
+    #    self.get_logger().info(
+    #        f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
+    #    )
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -271,16 +295,14 @@ class NavModule:
             and attempts >= 0
         ):  # check goal reached or stop signal
             if goal_distance:
-                current_x, current_y = (
-                    self.global_pose.pose.pose.position.x,
-                    self.global_pose.pose.pose.position.y,
-                )
-                current_distance = math.sqrt(
-                    (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
-                )
-                if current_distance < goal_distance:
-                    result = True
-                    break
+                current_pose = self.get_current_pose()
+                if current_pose is not None:
+                    current_distance = math.sqrt(
+                        (goal.x - current_pose.x) ** 2 + (goal.y - current_pose.y) ** 2
+                    )
+                    if current_distance < goal_distance:
+                        result = True
+                        break
 
             attempts -= 1
             executor.spin_once(timeout_sec=0.1)
@@ -349,7 +371,7 @@ if __name__ == "__main__":
     nav = NavModule()
 
     # goal = Pose2D(x=1.0, y=3.7, theta=0.0)
-    goal = Pose2D(x=0.8, y=3.44, theta=0.0)
+    goal = Pose2D(x=2.78, y=0.0, theta=0.0)
     start_pose = {
         "arm_lift_joint": 0.0,
         "arm_flex_joint": np.deg2rad(0.0),
