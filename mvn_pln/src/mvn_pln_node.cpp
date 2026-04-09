@@ -802,6 +802,9 @@ private:
           std::cout << "MotionPlanner.-> Robot is inside an obstacle. Moving "
                        "backwards..."
                     << std::endl;
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+
           msg_goal_dist_angle.data.resize(2);
           msg_goal_dist_angle.data[0] = -0.15;
           msg_goal_dist_angle.data[1] = 0;
@@ -817,23 +820,44 @@ private:
         break;
       }
 
-      case SM_WAITING_FOR_MOVE_BACKWARDS: {
+      // case SM_WAITING_FOR_MOVE_BACKWARDS: {
+      //   if (simple_move_goal_status_.status ==
+      //           actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
+      //       simple_move_status_id_ == -1) {
+      //     simple_move_goal_status_.status = 0;
+      //     std::cout << "MotionPlanner.-> Moved backwards succesfully."
+      //               << std::endl;
+      //   } else if (simple_move_goal_status_.status ==
+      //              actionlib_msgs::msg::GoalStatus::ABORTED) {
+      //     simple_move_goal_status_.status = 0;
+      //     std::cout << "MotionPlanner.-> Simple move reported move aborted. "
+      //               << std::endl;
+      //   }
+      //   state = SM_CALCULATE_PATH;
+      //   break;
+      // }
+      case SM_WAITING_FOR_MOVE_BACKWARDS: { // TODO id -1 -> id 0?
         if (simple_move_goal_status_.status ==
                 actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
             simple_move_status_id_ == -1) {
           simple_move_goal_status_.status = 0;
-          std::cout << "MotionPlanner.-> Moved backwards succesfully."
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Moved backwards successfully."
                     << std::endl;
+          state = SM_CALCULATE_PATH;
         } else if (simple_move_goal_status_.status ==
                    actionlib_msgs::msg::GoalStatus::ABORTED) {
           simple_move_goal_status_.status = 0;
-          std::cout << "MotionPlanner.-> Simple move reported move aborted. "
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Simple move reported move aborted."
                     << std::endl;
+          state = SM_CALCULATE_PATH;
+        } else {
+          // while backwards
+          break;
         }
-        state = SM_CALCULATE_PATH;
         break;
       }
-
       case SM_CHECK_IF_OBSTACLES: {
         are_there_obs_ = false;
         is_check_obs_response_ = false;

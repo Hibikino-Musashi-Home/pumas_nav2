@@ -1,31 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from typing import Optional, Union
-import copy
 import math
-import time
+from typing import Optional, Union
+
 import numpy as np
-
 import rclpy
-from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
-
+import tf2_ros
 from actionlib_msgs.msg import GoalStatus
-from visualization_msgs.msg import Marker
-from std_msgs.msg import Empty, Float32MultiArray
-from geometry_msgs.msg import (
-    PoseStamped,
-    Pose2D,
-    Pose,
-    PoseWithCovariance,
-    PoseWithCovarianceStamped,
-)
-
-from tf_transformations import euler_from_quaternion, quaternion_from_euler
-
-from pumas_interfaces.msg import StartAndEndJoints, Joints
+from geometry_msgs.msg import Pose2D, PoseStamped
+from pumas_interfaces.msg import Joints, StartAndEndJoints
 from pumas_interfaces.srv import ParamReadWrite
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from std_msgs.msg import Empty, Float32MultiArray
+from tf2_ros import TransformException
+from tf_transformations import euler_from_quaternion, quaternion_from_euler
+from visualization_msgs.msg import Marker
 
 default_arm_pose = {
     "arm_flex_joint": -0.26,  # default is 0.0
@@ -79,7 +70,8 @@ class NavModule:
         self.pub_dist_angle = self.create_publisher(
             Float32MultiArray, "/simple_move/goal_dist_angle", 10
         )
-        self.pub_robot_stop = self.create_publisher(Empty, "/navigation/stop", 10)
+        self.pub_robot_stop = self.create_publisher(
+            Empty, "/navigation/stop", 10)
         self.pub_move_joint_pose = self.create_publisher(
             StartAndEndJoints, "/motion_synth/joint_pose", 10
         )
@@ -91,14 +83,16 @@ class NavModule:
         self.create_subscription(
             GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10
         )
-        self.create_subscription(Empty, "/navigation/stop", self.callback_stop, 10)
-        # self.create_subscription(PoseStamped, "/global_pose", self.global_pose_callback, 10)
         self.create_subscription(
-            PoseWithCovarianceStamped, "/pose", self.global_pose_callback, 10
-        )
+            Empty, "/stop", self.callback_stop, 10)
 
         # Service Clients
-        self.param_rw_client = self.create_client(ParamReadWrite, "/param_read_write")
+        self.param_rw_client = self.create_client(
+            ParamReadWrite, "/param_read_write")
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(
+            self.tf_buffer, self._node)
 
         self.get_logger().info("NavModule.->initialized")
 
@@ -128,18 +122,36 @@ class NavModule:
             self.goal_reached = True
 
     def callback_global_goal_reached(self, msg):
-        self.goal_reached = False
         if msg.status == GoalStatus.SUCCEEDED:
             self.global_goal_reached = True
 
     def callback_stop(self, msg):
         self.robot_stop = True
 
-    def global_pose_callback(self, msg):
-        self.global_pose = msg
-        self.get_logger().info(
-            f"NavModule.->Global Pose: x={msg.pose.pose.position.x:.2f}, y={msg.pose.pose.position.y:.2f}"
-        )
+    def get_global_pose_from_tf(self, target_frame="map", source_frame="base_footprint"):
+        try:
+            trans = self.tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                rclpy.time.Time()
+            )
+
+            x = trans.transform.translation.x
+            y = trans.transform.translation.y
+            q = trans.transform.rotation
+            euler = euler_from_quaternion([q.x, q.y, q.z, q.w])
+            yaw = euler[2]
+
+            # self.get_logger().info(
+            #    f"NavModule.->TF Pose: x={x:.2f}, y={y:.2f}, yaw={yaw:.2f}"
+            # )
+            return x, y, yaw
+
+        except TransformException as ex:
+            self.get_logger().warn(
+                f"NavModule.->TF lookup failed: {target_frame} -> {source_frame}: {ex}"
+            )
+            return None
 
     def pose_stamped2pose_2d(self, pose_stamped):
         pose2d = Pose2D()
@@ -212,9 +224,6 @@ class NavModule:
 
             self.pub_move_joint_pose.publish(start_and_end_joints)
 
-            start_and_end_joints.has_arm_start_pose = False
-            start_and_end_joints.has_arm_end_pose = False
-
         self.get_logger().info(
             f"NavModule.->Publishing Global Goal: x={goal.pose.position.x}, y={goal.pose.position.y}"
         )
@@ -244,23 +253,45 @@ class NavModule:
         self.marker.color.b = 0.0
         self.pub_marker.publish(self.marker)
 
-    def go_abs(self, goal: Pose2D, timeout, goal_distance=None) -> bool:
+    def initialize_before_new_goal(self, send_stop=True):
+        self.global_goal_reached = False
+        self.goal_reached = False
+        self.robot_stop = False
+
+        if send_stop:
+            self.pub_robot_stop.publish(Empty())
+        self.motion_synth_start_pose = None
+        self.motion_synth_end_pose = None
+
+    def go_abs(self, goal: Pose2D, timeout, goal_distance=None, keep_motion_synth=False) -> bool:
         self.get_logger().info(
             f"NavModule.->Go Absolute Goal: x={goal.x}, y={goal.y}, theta={goal.theta}"
         )
 
-        goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
-
-        self.get_logger().info(f"NavModule.->Goal Pose Created: {goal_pose}")
-
         self.global_goal_reached = False
+        self.goal_reached = False
         self.robot_stop = False
-        attempts = int(timeout * 10) if timeout != 0 else float("inf")
 
-        self.send_goal(goal_pose)  # send nav goal
+        if not keep_motion_synth:
+            self.motion_synth_start_pose = None
+            self.motion_synth_end_pose = None
+
+        current_pose = self.get_global_pose_from_tf("map", "base_footprint")
+        if current_pose is not None:
+            current_x, current_y, _ = current_pose
+            current_distance = math.sqrt(
+                (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
+            )
+            if current_distance <= 0.05:
+                self.get_logger().info("NavModule.->Already at goal")
+                return True
+
+        attempts = int(timeout * 10) if timeout != 0 else float("inf")
+        goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
+        self.send_goal(goal_pose)
 
         executor = SingleThreadedExecutor()
-        executor.add_node(self)
+        executor.add_node(self._node)
 
         result = False
 
@@ -269,18 +300,18 @@ class NavModule:
             and rclpy.ok()
             and not self.robot_stop
             and attempts >= 0
-        ):  # check goal reached or stop signal
-            if goal_distance:
-                current_x, current_y = (
-                    self.global_pose.pose.pose.position.x,
-                    self.global_pose.pose.pose.position.y,
-                )
-                current_distance = math.sqrt(
-                    (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
-                )
-                if current_distance < goal_distance:
-                    result = True
-                    break
+        ):
+            if goal_distance is not None:
+                current_pose = self.get_global_pose_from_tf(
+                    "map", "base_footprint")
+                if current_pose is not None:
+                    current_x, current_y, _ = current_pose
+                    current_distance = math.sqrt(
+                        (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
+                    )
+                    if current_distance <= goal_distance:
+                        result = True
+                        break
 
             attempts -= 1
             executor.spin_once(timeout_sec=0.1)
@@ -288,60 +319,54 @@ class NavModule:
         if self.global_goal_reached:
             result = True
         elif self.robot_stop:
-            self.get_logger().info("NavModule.->Nav Signal Stop")
             result = False
         else:
-            self.get_logger().warn("NavModule.->Nav Failed")
             result = False
 
-        self.handle_robot_stop()
+        if not result:
+            self.handle_robot_stop()
 
         return result
 
-    def nav_goal(self, goal, timeout, motion_synth_pose=None, goal_distance=None):
-        self.motion_synth_start_pose = None
-        self.motion_synth_end_pose = None
+    def set_use_point_cloud(self, enabled: bool):
+        value = "true" if enabled else "false"
+
+        self.call_param_rw(
+            node_name="potential_fields",
+            param_name="use_point_cloud",
+            param_value=value,
+            write=True,
+        )
+        self.call_param_rw(
+            node_name="map_augmenter",
+            param_name="use_point_cloud",
+            param_value=value,
+            write=True,
+        )
+
+        self.get_logger().info(
+            f"NavModule.->use_point_cloud set to {value}"
+        )
+
+    def nav_goal(self, goal, timeout, motion_synth_pose=None, goal_distance=None, use_point_cloud=True):
+
+        self.initialize_before_new_goal(send_stop=True)
 
         if motion_synth_pose is not None:
 
             self.get_logger().info("NavModule.->Motion Synth Nav Goal with Pose Config")
-
-            self.call_param_rw(
-                node_name="potential_fields",
-                param_name="use_point_cloud",
-                param_value="false",
-                write=True,
-            )
-            self.call_param_rw(
-                node_name="map_augmenter",
-                param_name="use_point_cloud",
-                param_value="false",
-                write=True,
-            )
+            self.set_use_point_cloud(False)
 
             if "start" in motion_synth_pose:
                 self.motion_synth_start_pose = motion_synth_pose["start"]
             if "goal" in motion_synth_pose:
                 self.motion_synth_end_pose = motion_synth_pose["goal"]
 
-        elif motion_synth_pose is None:
-
+        else:
             self.get_logger().info("NavModule.->Standard Nav Goal")
+            self.set_use_point_cloud(use_point_cloud)
 
-            self.call_param_rw(
-                node_name="potential_fields",
-                param_name="use_point_cloud",
-                param_value="true",
-                write=True,
-            )
-            self.call_param_rw(
-                node_name="map_augmenter",
-                param_name="use_point_cloud",
-                param_value="true",
-                write=True,
-            )
-
-        return self.go_abs(goal, timeout, goal_distance)
+        return self.go_abs(goal, timeout, goal_distance, keep_motion_synth=True)
 
 
 if __name__ == "__main__":
@@ -349,7 +374,7 @@ if __name__ == "__main__":
     nav = NavModule()
 
     # goal = Pose2D(x=1.0, y=3.7, theta=0.0)
-    goal = Pose2D(x=0.8, y=3.44, theta=0.0)
+    # goal = Pose2D(x=0.8, y=3.44, theta=0.0)
     start_pose = {
         "arm_lift_joint": 0.0,
         "arm_flex_joint": np.deg2rad(0.0),
@@ -373,13 +398,23 @@ if __name__ == "__main__":
         "goal": goal_pose,
     }
 
-    success = nav.go_abs(goal, timeout=0, goal_distance=0)
-    # success = nav.nav_goal(goal, motion_synth_pose=ms_config, timeout=0, goal_distance=0)
+    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
+    success = nav.nav_goal(goal, motion_synth_pose=None,
+                           timeout=0, goal_distance=None, use_point_cloud=True)
+
+    success = nav.nav_goal(goal, motion_synth_pose=None,
+                           timeout=0, goal_distance=None, use_point_cloud=True)
+
+    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
+    success = nav.nav_goal(goal, motion_synth_pose=None,
+                           timeout=0, goal_distance=None, use_point_cloud=True)
 
     if success:
         nav.get_logger().info("NavStatus.->Nav Goal Reached")
     else:
         nav.get_logger().warn("NavStatus.->Failed to Reach Goal")
+
+    nav.get_logger().warn("all complete")
 
     # for _ in range(10):
     #    success = nav.nav_goal(goal, motion_synth_pose=None, timeout=0, goal_distance=0)

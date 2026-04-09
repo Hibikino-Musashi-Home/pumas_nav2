@@ -8,6 +8,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
                         const geometry_msgs::msg::Pose &start_pose,
                         const geometry_msgs::msg::Pose &goal_pose,
                         bool diagonal_paths, nav_msgs::msg::Path &result_path) {
+
   std::cout << "PathCalculator.-> Calculating by A* from "
             << start_pose.position.x << "  ";
   std::cout << start_pose.position.y << "  to " << goal_pose.position.x << "  "
@@ -44,14 +45,28 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   double radius = 1.0;
 
   int MAX_GOAL_UPDATE = 16; // points on circle
-  double angle_increment = 2 * M_PI / (MAX_GOAL_UPDATE - 1);
+  double angle_increment = 2 * M_PI / (MAX_GOAL_UPDATE);
 
   if (map.data[idx_goal] != 0) {
-    while (loop_count < 4) {
+    while (loop_count < 40) {
 
       double angle = count * angle_increment;
-      idx_goal_y = _idx_goal_y + radius * cos(angle);
-      idx_goal_x = _idx_goal_x + radius * sin(angle);
+      idx_goal_y =
+          static_cast<int>(std::round(_idx_goal_y + radius * cos(angle)));
+      idx_goal_x =
+          static_cast<int>(std::round(_idx_goal_x + radius * sin(angle)));
+      // idx_goal_y = _idx_goal_y + radius * cos(angle);
+      // idx_goal_x = _idx_goal_x + radius * sin(angle);
+
+      // double world_x =
+      //     idx_goal_x * map.info.resolution + map.info.origin.position.x;
+      // double world_y =
+      //     idx_goal_y * map.info.resolution + map.info.origin.position.y;
+
+      // std::cout << "[relocate] ring=" << loop_count << " count=" << count
+      //           << " radius(cell)=" << radius << " angle(rad)=" << angle
+      //           << " idx=(" << idx_goal_x << ", " << idx_goal_y << ")"
+      //           << " world=(" << world_x << ", " << world_y << ")";
 
       // check if not inside of map
       if (idx_goal_x >= 0 && idx_goal_x < map.info.width && idx_goal_y >= 0 &&
@@ -80,7 +95,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     if (best_idx != -1) {
       idx_goal = best_idx;
       idx_goal_y = idx_goal / map.info.width;
-      idx_goal_x = idx_goal % map.info.height;
+      idx_goal_x = idx_goal % map.info.width;
       std::cout << "PathPlanner.-> Goal updated to nearest free cell: "
                 << idx_goal_x << ", " << idx_goal_y << std::endl;
     }
@@ -100,6 +115,20 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   //    loop_count++;
   //  }
   //}
+
+  if (idx_start == idx_goal) {
+    result_path.header.frame_id = "map";
+    result_path.poses.clear();
+
+    geometry_msgs::msg::PoseStamped p;
+    p.header.frame_id = "map";
+    p.pose = start_pose;
+    result_path.poses.push_back(p);
+
+    std::cout << "PathPlanner.-> Start and goal are the same cell."
+              << std::endl;
+    return true;
+  }
 
   if (map.data[idx_goal] != 0) {
     std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
