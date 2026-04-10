@@ -18,6 +18,9 @@ from tf2_ros import TransformException
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 from visualization_msgs.msg import Marker
 
+from rclpy.duration import Duration
+
+
 default_arm_pose = {
     "arm_flex_joint": -0.26,  # default is 0.0
     "arm_lift_joint": 0.0,
@@ -58,6 +61,7 @@ class NavModule:
         self.global_goal_reached = False
         self.goal_reached = False
         self.robot_stop = False
+        self.sent_new_goal = False
 
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
@@ -124,6 +128,11 @@ class NavModule:
     def callback_global_goal_reached(self, msg):
         if msg.status == GoalStatus.SUCCEEDED:
             self.global_goal_reached = True
+            #if self.sent_new_goal:
+            #    self.global_goal_reached = False
+            #    self.sent_new_goal = False
+            #else:
+            #    self.global_goal_reached = True
 
     def callback_stop(self, msg):
         self.robot_stop = True
@@ -133,7 +142,8 @@ class NavModule:
             trans = self.tf_buffer.lookup_transform(
                 target_frame,
                 source_frame,
-                rclpy.time.Time()
+                rclpy.time.Time(),
+                timeout=Duration(seconds=0.1)
             )
 
             x = trans.transform.translation.x
@@ -189,6 +199,7 @@ class NavModule:
         return goal
 
     def send_goal(self, goal):
+        #self.sent_new_goal = True
 
         self.get_logger().info("NavModule.->Sending Nav Goal")
 
