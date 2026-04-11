@@ -7,19 +7,19 @@ from typing import Optional, Union
 import numpy as np
 import rclpy
 import tf2_ros
-from actionlib_msgs.msg import GoalStatus
 from geometry_msgs.msg import Pose2D, PoseStamped
+from pumas_interfaces.action import PumasNav
 from pumas_interfaces.msg import Joints, StartAndEndJoints
 from pumas_interfaces.srv import ParamReadWrite
+from rclpy.action import ActionClient
+from rclpy.clock import Clock
+from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import Empty, Float32MultiArray
 from tf2_ros import TransformException
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 from visualization_msgs.msg import Marker
-
-from rclpy.duration import Duration
-
 
 default_arm_pose = {
     "arm_flex_joint": -0.26,  # default is 0.0
@@ -58,41 +58,38 @@ class NavModule:
         self.marker = Marker()
         self.marker_num = 0
 
-        self.global_goal_reached = False
-        self.goal_reached = False
         self.robot_stop = False
-        self.sent_new_goal = False
 
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
 
         # Publishers
         self.pub_marker = self.create_publisher(Marker, "/nav_goal_marker", 10)
-        self.pub_global_goal = self.create_publisher(
-            PoseStamped, "/move_base_simple/goal", 10
-        )
         self.pub_dist_angle = self.create_publisher(
             Float32MultiArray, "/simple_move/goal_dist_angle", 10
         )
         self.pub_robot_stop = self.create_publisher(
             Empty, "/navigation/stop", 10)
-        self.pub_move_joint_pose = self.create_publisher(
-            StartAndEndJoints, "/motion_synth/joint_pose", 10
-        )
 
-        # Subscribers
-        self.create_subscription(
-            GoalStatus, "/simple_move/goal_reached", self.callback_goal_reached, 10
-        )
-        self.create_subscription(
-            GoalStatus, "/navigation/status", self.callback_global_goal_reached, 10
-        )
         self.create_subscription(
             Empty, "/stop", self.callback_stop, 10)
 
         # Service Clients
         self.param_rw_client = self.create_client(
             ParamReadWrite, "/param_read_write")
+
+        # pumasnav action cli
+        self.nav_action_client = ActionClient(
+            self._node, PumasNav, "/pumasnav")
+        self._goal_handle = None
+        self._result_future = None
+        self._send_goal_future = None
+
+        self._action_feedback = None
+        self._action_done = False
+        self._action_success = False
+        self._action_near_goal = False
+        self._action_message = ""
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(
@@ -120,19 +117,51 @@ class NavModule:
             self.get_logger().error("NavModule.->param_read_write service call failed")
             return None
 
-    def callback_goal_reached(self, msg):
-        self.goal_reached = False
-        if msg.status == GoalStatus.SUCCEEDED:
-            self.goal_reached = True
+    def reset_action_state(self):
+        self._goal_handle = None
+        self._result_future = None
+        self._send_goal_future = None
+        self._action_feedback = None
+        self._action_done = False
+        self._action_success = False
+        self._action_near_goal = False
+        self._action_message = ""
 
-    def callback_global_goal_reached(self, msg):
-        if msg.status == GoalStatus.SUCCEEDED:
-            self.global_goal_reached = True
-            #if self.sent_new_goal:
-            #    self.global_goal_reached = False
-            #    self.sent_new_goal = False
-            #else:
-            #    self.global_goal_reached = True
+    def nav_feedback_callback(self, feedback_msg):
+        feedback = feedback_msg.feedback
+        self._action_feedback = feedback
+        self.get_logger().info(
+            f"Nav feedback: state={feedback.state_name}, "
+            f"dist={feedback.remaining_distance:.3f}, "
+            f"near={feedback.near_goal_reached}, "
+            f"msg={feedback.message}"
+        )
+
+    def nav_result_callback(self, future):
+        result = future.result().result
+        self._action_done = True
+        self._action_success = bool(result.success)
+        self._action_near_goal = bool(result.near_goal_reached)
+        self._action_message = result.message
+
+    def nav_goal_response_callback(self, future):
+        goal_handle = future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().warn("NavModule.->PumasNav goal rejected")
+            self._action_done = True
+            self._action_success = False
+            self._action_message = "Goal rejected"
+            return
+
+        self.get_logger().info("NavModule.->PumasNav goal accepted")
+        self._goal_handle = goal_handle
+        self._result_future = goal_handle.get_result_async()
+        self._result_future.add_done_callback(self.nav_result_callback)
+
+    def cancel_nav_action(self):
+        if self._goal_handle is not None:
+            self.get_logger().warn("NavModule.->Canceling PumasNav goal")
+            self._goal_handle.cancel_goal_async()
 
     def callback_stop(self, msg):
         self.robot_stop = True
@@ -185,70 +214,81 @@ class NavModule:
         joints.head_tilt_joint = joint_poses["head_tilt_joint"]
         return joints
 
-    def create_goal_pose(self, x, y, yaw, frame_id):
-        goal = PoseStamped()
-        goal.header.frame_id = frame_id
-        goal.pose.position.x = x
-        goal.pose.position.y = y
-        goal.pose.position.z = 0.0
-        q = quaternion_from_euler(0, 0, yaw)
-        goal.pose.orientation.x = q[0]
-        goal.pose.orientation.y = q[1]
-        goal.pose.orientation.z = q[2]
-        goal.pose.orientation.w = q[3]
-        return goal
+    # def create_goal_pose(self, x, y, yaw, frame_id):
+    #    goal = PoseStamped()
+    #    goal.header.frame_id = frame_id
+    #    goal.pose.position.x = x
+    #    goal.pose.position.y = y
+    #    goal.pose.position.z = 0.0
+    #    q = quaternion_from_euler(0, 0, yaw)
+    #    goal.pose.orientation.x = q[0]
+    #    goal.pose.orientation.y = q[1]
+    #    goal.pose.orientation.z = q[2]
+    #    goal.pose.orientation.w = q[3]
+    #    return goal
 
-    def send_goal(self, goal):
-        #self.sent_new_goal = True
+    def send_nav_action_goal(self, goal: Pose2D):
+        if not self.nav_action_client.wait_for_server(timeout_sec=3.0):
+            self.get_logger().error("NavModule.->PumasNav action server not available")
+            self._action_done = True
+            self._action_success = False
+            self._action_message = "Action server unavailable"
+            return
 
-        self.get_logger().info("NavModule.->Sending Nav Goal")
+        goal_msg = PumasNav.Goal()
 
-        if (
-            self.motion_synth_start_pose is not None
-            or self.motion_synth_end_pose is not None
-        ):
+        goal_pose = PoseStamped()
+        goal_pose.header.frame_id = "map"
+        goal_pose.header.stamp = Clock().now().to_msg()
+        goal_pose.pose.position.x = float(goal.x)
+        goal_pose.pose.position.y = float(goal.y)
+        goal_pose.pose.position.z = 0.0
 
-            start_and_end_joints = StartAndEndJoints()
-            start_and_end_joints.has_arm_start_pose = False
-            start_and_end_joints.has_arm_end_pose = False
+        q = quaternion_from_euler(0.0, 0.0, float(goal.theta))
+        goal_pose.pose.orientation.x = q[0]
+        goal_pose.pose.orientation.y = q[1]
+        goal_pose.pose.orientation.z = q[2]
+        goal_pose.pose.orientation.w = q[3]
 
-            if self.motion_synth_start_pose is not None:
-                start_and_end_joints.has_arm_start_pose = True
-                start_and_end_joints.start_pose = self.create_arm_joint_goal(
-                    joint_poses=self.motion_synth_start_pose
-                )
-            else:
-                start_and_end_joints.has_arm_start_pose = True
-                # startが無いなら自動でgo_pose()代入
-                start_and_end_joints.start_pose = self.create_arm_joint_goal(
-                    joint_poses=default_arm_pose
-                )
+        goal_msg.goal = goal_pose
 
-            if self.motion_synth_end_pose is not None:
-                start_and_end_joints.has_arm_end_pose = True
-                start_and_end_joints.end_pose = self.create_arm_joint_goal(
-                    joint_poses=self.motion_synth_end_pose
-                )
-            else:
-                # goalが無い場合
-                start_and_end_joints.has_arm_end_pose = False
+        # TODO
+        # goal_msg.patience = True
+        # goal_msg.proximity_criterion = 2.0
 
-            self.pub_move_joint_pose.publish(start_and_end_joints)
+        arm_goal = StartAndEndJoints()
+        arm_goal.has_arm_start_pose = False
+        arm_goal.has_arm_end_pose = False
 
-        self.get_logger().info(
-            f"NavModule.->Publishing Global Goal: x={goal.pose.position.x}, y={goal.pose.position.y}"
+        if self.motion_synth_start_pose is not None:
+            arm_goal.has_arm_start_pose = True
+            arm_goal.start_pose = self.create_arm_joint_goal(
+                self.motion_synth_start_pose)
+
+        if self.motion_synth_end_pose is not None:
+            arm_goal.has_arm_end_pose = True
+            arm_goal.end_pose = self.create_arm_joint_goal(
+                self.motion_synth_end_pose)
+
+        goal_msg.arm_joints = arm_goal
+        goal_msg.use_arm = arm_goal.has_arm_start_pose or arm_goal.has_arm_end_pose
+
+        self.reset_action_state()
+        self.marker_plot(goal_pose)
+
+        self._send_goal_future = self.nav_action_client.send_goal_async(
+            goal_msg,
+            feedback_callback=self.nav_feedback_callback,
         )
-        self.marker_plot(goal)
-        self.pub_global_goal.publish(goal)
+        self._send_goal_future.add_done_callback(
+            self.nav_goal_response_callback)
 
     def handle_robot_stop(self):
-        if not self.global_goal_reached:
-            msg_stop = Empty()
-            self.pub_robot_stop.publish(msg_stop)
+        self.pub_robot_stop.publish(Empty())
 
     def marker_plot(self, goal):
         self.marker.header.frame_id = "map"
-        self.marker.header.stamp = self.get_clock().now().to_msg()
+        self.marker.header.stamp = Clock().now().to_msg()
         self.marker.ns = "goal_markers"
         self.marker.id = self.marker_num
         self.marker_num += 1
@@ -265,53 +305,47 @@ class NavModule:
         self.pub_marker.publish(self.marker)
 
     def initialize_before_new_goal(self, send_stop=True):
-        self.global_goal_reached = False
-        self.goal_reached = False
         self.robot_stop = False
 
-        if send_stop:
-            self.pub_robot_stop.publish(Empty())
+        if send_stop and self._goal_handle is not None:
+            self.cancel_nav_action()
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
 
     def go_abs(self, goal: Pose2D, timeout, goal_distance=None, keep_motion_synth=False) -> bool:
         self.get_logger().info(
-            f"NavModule.->Go Absolute Goal: x={goal.x}, y={goal.y}, theta={goal.theta}"
+            f"NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}"
         )
 
-        self.global_goal_reached = False
-        self.goal_reached = False
         self.robot_stop = False
 
         if not keep_motion_synth:
             self.motion_synth_start_pose = None
             self.motion_synth_end_pose = None
 
-        current_pose = self.get_global_pose_from_tf("map", "base_footprint")
-        if current_pose is not None:
-            current_x, current_y, _ = current_pose
-            current_distance = math.sqrt(
-                (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
-            )
-            if current_distance <= 0.05:
-                self.get_logger().info("NavModule.->Already at goal")
-                return True
-
         attempts = int(timeout * 10) if timeout != 0 else float("inf")
-        goal_pose = self.create_goal_pose(goal.x, goal.y, goal.theta, "map")
-        self.send_goal(goal_pose)
 
-        executor = SingleThreadedExecutor()
-        executor.add_node(self._node)
+        self.send_nav_action_goal(goal)
+
+        if not self._external_node:
+            executor = SingleThreadedExecutor()
+            executor.add_node(self._node)
+        else:
+            executor = None
 
         result = False
+        forced_stop_triggered = False
+        cancel_wait_count = 0
 
-        while (
-            not self.global_goal_reached
-            and rclpy.ok()
-            and not self.robot_stop
-            and attempts >= 0
-        ):
+        while rclpy.ok() and not self.robot_stop and attempts >= 0:
+
+            if executor is not None:
+                executor.spin_once(timeout_sec=0.1)
+
+            if self._action_done:
+                result = self._action_success
+                break
+
             if goal_distance is not None:
                 current_pose = self.get_global_pose_from_tf(
                     "map", "base_footprint")
@@ -320,18 +354,32 @@ class NavModule:
                     current_distance = math.sqrt(
                         (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
                     )
+
                     if current_distance <= goal_distance:
-                        result = True
-                        break
+                        if not forced_stop_triggered:
+                            self.get_logger().warn(
+                                f"NavModule.->Within goal_distance ({goal_distance} m). Canceling navigation action."
+                            )
+                            forced_stop_triggered = True
+                            self.cancel_nav_action()
+                        else:
+                            cancel_wait_count += 1
+
+                        if cancel_wait_count >= 5:   # 0.5s, TODO future complete
+                            self.get_logger().warn(
+                                "NavModule.->Forced stop at goal_distance completed"
+                            )
+                            result = True
+                            break
 
             attempts -= 1
-            executor.spin_once(timeout_sec=0.1)
 
-        if self.global_goal_reached:
-            result = True
-        elif self.robot_stop:
+        if self.robot_stop:
+            self.cancel_nav_action()
             result = False
-        else:
+        elif attempts < 0 and not self._action_done and not forced_stop_triggered:
+            self.get_logger().warn("NavModule.->Timeout waiting for PumasNav result")
+            self.cancel_nav_action()
             result = False
 
         if not result:

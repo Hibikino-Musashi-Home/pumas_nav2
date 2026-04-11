@@ -173,6 +173,8 @@
   </node>
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
   </node>
+  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen" emulate_tty="true">
+  </node>
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
     <param name="torso_default_pose" value="0.0"/>

@@ -58,6 +58,11 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  ${PROJECT_NAME}/pumas_viz_goal_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Ensure both are included
 #install(TARGETS
 #_node
