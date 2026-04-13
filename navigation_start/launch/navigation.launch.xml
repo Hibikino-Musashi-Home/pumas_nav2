@@ -32,8 +32,8 @@
   <arg name="laser_min_z" default="0.022"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.35"/>
-  <arg name="cloud_max_x" default="0.65"/>
+  <arg name="cloud_min_x" default="0.40"/>
+  <arg name="cloud_max_x" default="0.70"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
@@ -124,10 +124,10 @@
     <param name="diagonal_paths" value="True"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
-    <param name="max_linear_speed" value="1.1"/>
-    <param name="max_angular_speed" value="1.4"/>
-    <param name="control_alpha" value="0.3"/>
-    <param name="control_beta" value="0.12"/>
+    <param name="max_linear_speed" value="0.8"/>
+    <param name="max_angular_speed" value="1.25"/>
+    <param name="control_alpha" value="0.2"/>
+    <param name="control_beta" value="0.8"/>
     <param name="move_head" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
@@ -152,9 +152,9 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
     <param name="laser_pot_fields_d0" value="0.50"/>
-    <param name="laser_pot_fields_k_rej" value="0.40"/>
-    <param name="cloud_pot_fields_d0" value="0.80"/>
-    <param name="cloud_pot_fields_k_rej" value="0.20"/>
+    <param name="laser_pot_fields_k_rej" value="0.30"/>
+    <param name="cloud_pot_fields_d0" value="0.70"/>
+    <param name="cloud_pot_fields_k_rej" value="0.30"/>
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
     <param name="lidar_points_threshold" value="$(var lidar_points_threshold)"/>
@@ -172,6 +172,8 @@
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
   </node>
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
+  </node>
+  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen" emulate_tty="true">
   </node>
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">

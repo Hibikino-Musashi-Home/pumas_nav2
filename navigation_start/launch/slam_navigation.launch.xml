@@ -9,7 +9,8 @@
   <arg name="pose_topic" default="/pose"/>
   <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel"/>
   <arg name="laser_scan_topic" default="/scan"/>
-  <arg name="point_cloud_topic" default="/head_rgbd_sensor/depth_registered/rectified_points"/>
+  <arg name="point_cloud_topic" default="/head_rgbd_sensor/reconsted/points"/>
+
   <arg name="bumper_f_topic" default="/base_f_bumper_sensor"/>
 
   <arg name="use_lidar" default="True"/>
@@ -29,13 +30,14 @@
   <arg name="laser_max_x" default="0.50"/>
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
-  <arg name="laser_min_z" default="0.025"/>
+  <arg name="laser_min_z" default="0.025"/> <!-- hsrc -->
+  <!--arg name="laser_min_z" default="0.022"/--> <!-- hsrc ex-->
   <arg name="laser_max_z" default="1.00"/>
-  <arg name="cloud_min_x" default="0.30"/>
-  <arg name="cloud_max_x" default="0.80"/>
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.65"/>
   <arg name="cloud_min_y" default="-0.30"/>
   <arg name="cloud_max_y" default="0.30"/>
-  <arg name="cloud_min_z" default="0.01"/>
+  <arg name="cloud_min_z" default="0.05"/>
   <arg name="cloud_max_z" default="1.20"/>
 
   <!-- Map servers -->
@@ -90,8 +92,8 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
     <param name="decay_factor" value="20"/>    
-    <param name="inflation_radius" value="0.22"/>
-    <param name="cost_radius" value="0.25"/> 
+    <param name="inflation_radius" value="0.18"/>
+    <param name="cost_radius" value="0.20"/> 
 
     <param name="use_online" value="True"/>
 
@@ -132,7 +134,7 @@
         pkg="simple_move"  
         exec="simple_move_node"  
         output="screen">
-    <param name="max_linear_speed" value="0.8"/>
+    <param name="max_linear_speed" value="1.0"/>
     <param name="max_angular_speed" value="1.25"/>
 
     <param name="control_alpha" value="0.2"/>
@@ -171,10 +173,10 @@
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
     <param name="laser_pot_fields_d0" value="0.50"/>
-    <param name="laser_pot_fields_k_rej" value="0.40"/>
+    <param name="laser_pot_fields_k_rej" value="0.30"/>
 
-    <param name="cloud_pot_fields_d0" value="0.80"/>
-    <param name="cloud_pot_fields_k_rej" value="0.20"/>
+    <param name="cloud_pot_fields_d0" value="0.70"/>
+    <param name="cloud_pot_fields_k_rej" value="0.30"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
@@ -216,8 +218,13 @@
         output="screen">
         <param name="pan_min" value="-3.14" />
         <param name="pan_max" value="1.74" />
-        <param name="tilt_min" value="-0.9" />
+        <param name="tilt_min" value="-0.7" />
         <param name="tilt_max" value="0.47" />
+  </node>
+
+  <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
+  </node>
+  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen">
   </node>
 
   <!-- RVIZ2 -->

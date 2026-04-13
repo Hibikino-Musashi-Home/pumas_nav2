@@ -30,6 +30,9 @@
 #include "pumas_interfaces/action/motion_synthesis.hpp"
 #include "pumas_interfaces/msg/joints.hpp"
 #include "pumas_interfaces/msg/start_and_end_joints.hpp"
+
+#include "pumas_interfaces/action/pumas_nav.hpp"
+
 #include "rclcpp_action/rclcpp_action.hpp"
 
 // Standard
@@ -41,7 +44,7 @@
 #include <vector>
 ///
 
-#define RATE 10
+// #define RATE 10
 
 #define SM_INIT 0
 #define SM_WAITING_FOR_TASK 1
@@ -55,8 +58,8 @@
 #define SM_WAIT_FOR_NOT_POT_FIELDS 124
 #define SM_START_MOVE_PATH 3
 #define SM_WAIT_FOR_MOVE_FINISHED 4
-#define SM_COLLISION_DETECTED 5
-#define SM_STOP_RECEIVED 51
+// #define SM_COLLISION_DETECTED 5
+// #define SM_STOP_RECEIVED 51
 #define SM_CORRECT_FINAL_ANGLE 6
 #define SM_WAIT_FOR_ANGLE_CORRECTED 7
 #define SM_FINAL 17
@@ -69,8 +72,10 @@
 
 // motionsynthesis client by r.kobayashi
 using MotionSynthesis = pumas_interfaces::action::MotionSynthesis;
+using PumasNav = pumas_interfaces::action::PumasNav;
 using GoalHandleMotionSynthesis =
     rclcpp_action::ClientGoalHandle<MotionSynthesis>;
+using GoalHandlePumasNav = rclcpp_action::ServerGoalHandle<PumasNav>;
 
 class MotionPlannerNode : public rclcpp::Node {
 public:
@@ -129,13 +134,6 @@ public:
         std::bind(&MotionPlannerNode::callback_navigation_stop, this,
                   std::placeholders::_1));
 
-    //// goal
-    sub_simple_goal_ =
-        this->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/nav_control/goal", rclcpp::SensorDataQoS(),
-            std::bind(&MotionPlannerNode::callback_simple_goal, this,
-                      std::placeholders::_1));
-
     sub_move_goal_status_ =
         this->create_subscription<actionlib_msgs::msg::GoalStatus>(
             make_name("/simple_move/goal_reached"), rclcpp::SensorDataQoS(),
@@ -171,6 +169,16 @@ public:
       RCLCPP_INFO(this->get_logger(),
                   "MotionPlanner.-> MotionSynth action server is ready.");
     }
+
+    // pumas nav action
+    nav_action_server_ = rclcpp_action::create_server<PumasNav>(
+        this, "/pumasnav",
+        std::bind(&MotionPlannerNode::handle_goal, this, std::placeholders::_1,
+                  std::placeholders::_2),
+        std::bind(&MotionPlannerNode::handle_cancel, this,
+                  std::placeholders::_1),
+        std::bind(&MotionPlannerNode::handle_accepted, this,
+                  std::placeholders::_1));
 
     // ############
     //  Wait for transforms
@@ -228,8 +236,8 @@ private:
   std_msgs::msg::Float32MultiArray msg_goal_dist_angle;
 
   // ROS 2 service object (split request/response)
-  std_srvs::srv::Trigger::Request srv_check_obstacles_request;
-  std_srvs::srv::Trigger::Response srv_check_obstacles_response;
+  //  std_srvs::srv::Trigger::Request srv_check_obstacles_request;
+  //  std_srvs::srv::Trigger::Response srv_check_obstacles_response;
 
   // Flags for waiting clients in Switch/Case
   bool is_in_obstacles_ = false;
@@ -245,9 +253,9 @@ private:
 
   // motion_synth
   bool arm_goal_received = false;
-  bool arm_goal_reached = false;
-  bool has_arm_start_pose = false;
-  bool has_arm_end_pose = false;
+  //  bool arm_goal_reached = false;
+  //  bool has_arm_start_pose = false;
+  //  bool has_arm_end_pose = false;
   pumas_interfaces::msg::StartAndEndJoints target_arm_pose;
 
   rclcpp::Time no_cloud_pot_fields_start_time_;
@@ -275,8 +283,6 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr sub_nav_ctrl_stop_;
 
   //// goal
-  rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr
-      sub_simple_goal_;
   rclcpp::Subscription<actionlib_msgs::msg::GoalStatus>::SharedPtr
       sub_move_goal_status_;
 
@@ -288,6 +294,12 @@ private:
   rclcpp::Subscription<pumas_interfaces::msg::StartAndEndJoints>::SharedPtr
       sub_arm_goal_;
   rclcpp_action::Client<MotionSynthesis>::SharedPtr motion_synth_client_;
+
+  // nav action
+  rclcpp_action::Server<PumasNav>::SharedPtr nav_action_server_;
+  std::shared_ptr<GoalHandlePumasNav> active_goal_handle_;
+  bool action_active_ = false;
+  bool cancel_requested_ = false;
 
   // ############
   //  Service clients
@@ -309,12 +321,41 @@ private:
   bool services_ready_ = false;
 
   // Used to wait for first message
-  std::shared_ptr<std::promise<std_msgs::msg::Bool::SharedPtr>>
-      collision_risk_promise_;
+  // std::shared_ptr<std::promise<std_msgs::msg::Bool::SharedPtr>>
+  //    collision_risk_promise_;
   bool waiting_for_potential_fields_ = false;
 
   // Main processing loop
   rclcpp::TimerBase::SharedPtr processing_timer_;
+
+  // pumas action
+  rclcpp_action::GoalResponse
+  handle_goal(const rclcpp_action::GoalUUID &uuid,
+              std::shared_ptr<const PumasNav::Goal> goal) {
+    (void)uuid;
+    (void)goal;
+
+    if (action_active_) {
+      RCLCPP_WARN(this->get_logger(),
+                  "MotionPlanner.-> Rejecting new goal because another "
+                  "navigation task is active.");
+      return rclcpp_action::GoalResponse::REJECT;
+    }
+
+    RCLCPP_INFO(this->get_logger(),
+                "MotionPlanner.-> Navigation action goal accepted request.");
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+  }
+
+  rclcpp_action::CancelResponse
+  handle_cancel(const std::shared_ptr<GoalHandlePumasNav> goal_handle) {
+    (void)goal_handle;
+    RCLCPP_WARN(this->get_logger(),
+                "MotionPlanner.-> Cancel request received.");
+    cancel_requested_ = true;
+    stop_ = true;
+    return rclcpp_action::CancelResponse::ACCEPT;
+  }
 
   // ############
   //  Runtime parameter update callback
@@ -478,19 +519,6 @@ private:
     }
   }
 
-  void
-  callback_simple_goal(const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
-    try {
-      std::cout << "MotionPlanner.-> New goal received." << std::endl;
-      global_goal_ = msg->pose;
-      new_global_goal_ = true;
-    } catch (const std::exception &e) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "MotionPlanner.-> Error processing callback_simple_goal: %s",
-                   e.what());
-    }
-  }
-
   void callback_simple_move_goal_status(
       const actionlib_msgs::msg::GoalStatus::SharedPtr msg) {
     try {
@@ -559,6 +587,8 @@ private:
     if (!clt_plan_path_augmented_->wait_for_service(std::chrono::seconds(1))) {
       RCLCPP_ERROR(this->get_logger(),
                    "MotionPlanner.-> Service not available.");
+      is_path_ = false;
+      is_path_response_ = true;
       return;
     }
 
@@ -670,6 +700,99 @@ private:
     motion_synth_client_->async_send_goal(goal_msg, send_goal_options);
   }
 
+  void handle_accepted(const std::shared_ptr<GoalHandlePumasNav> goal_handle) {
+    active_goal_handle_ = goal_handle;
+    action_active_ = true;
+    cancel_requested_ = false;
+
+    const auto goal = goal_handle->get_goal();
+
+    global_goal_ = goal->goal.pose;
+    new_global_goal_ = true;
+
+    // patience_ = goal->patience;
+    // proximity_criterion_ = goal->proximity_criterion;
+
+    if (goal->use_arm) {
+      target_arm_pose = goal->arm_joints;
+      arm_goal_received = true;
+    } else {
+      arm_goal_received = false;
+    }
+
+    near_goal_sent = false;
+  }
+
+  void publish_nav_feedback(const std::string &state_name,
+                            const std::string &message = "") {
+    if (!action_active_ || !active_goal_handle_) {
+      return;
+    }
+
+    auto feedback = std::make_shared<PumasNav::Feedback>();
+
+    get_robot_position();
+    float remaining_distance =
+        std::sqrt(std::pow(global_goal_.position.x - robot_x_, 2) +
+                  std::pow(global_goal_.position.y - robot_y_, 2));
+
+    feedback->state_name = state_name;
+    feedback->remaining_distance = remaining_distance;
+    feedback->collision_risk = collision_risk_;
+    feedback->near_goal_reached = near_goal_sent;
+    feedback->message = message;
+
+    active_goal_handle_->publish_feedback(feedback);
+  }
+
+  void finish_action_success(const std::string &message) {
+    if (!action_active_ || !active_goal_handle_) {
+      return;
+    }
+
+    auto result = std::make_shared<PumasNav::Result>();
+    result->success = true;
+    result->near_goal_reached = near_goal_sent;
+    result->message = message;
+
+    active_goal_handle_->succeed(result);
+    active_goal_handle_.reset();
+    action_active_ = false;
+    cancel_requested_ = false;
+  }
+
+  void finish_action_abort(const std::string &message) {
+    if (!action_active_ || !active_goal_handle_) {
+      return;
+    }
+
+    auto result = std::make_shared<PumasNav::Result>();
+    result->success = false;
+    result->near_goal_reached = near_goal_sent;
+    result->message = message;
+
+    active_goal_handle_->abort(result);
+    active_goal_handle_.reset();
+    action_active_ = false;
+    cancel_requested_ = false;
+  }
+
+  void finish_action_cancel(const std::string &message) {
+    if (!action_active_ || !active_goal_handle_) {
+      return;
+    }
+
+    auto result = std::make_shared<PumasNav::Result>();
+    result->success = false;
+    result->near_goal_reached = near_goal_sent;
+    result->message = message;
+
+    active_goal_handle_->canceled(result);
+    active_goal_handle_.reset();
+    action_active_ = false;
+    cancel_requested_ = false;
+  }
+
   // ############
   // Simple Move main processing
   void motion_planner_processing() {
@@ -682,6 +805,20 @@ private:
       if (stop_) {
         stop_ = false;
         state = SM_INIT;
+        // if (current_status == actionlib_msgs::msg::GoalStatus::ACTIVE) {
+        //   current_status =
+        //       publish_status(actionlib_msgs::msg::GoalStatus::ABORTED,
+        //       goal_id,
+        //                      "Stop signal received. Task cancelled");
+        // }
+        if (action_active_) {
+          if (cancel_requested_) {
+            finish_action_cancel("Navigation task canceled");
+          } else {
+            finish_action_abort("Stop signal received. Task aborted");
+          }
+        }
+
         if (current_status == actionlib_msgs::msg::GoalStatus::ACTIVE) {
           current_status =
               publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
@@ -706,6 +843,7 @@ private:
       }
 
       case SM_WAITING_FOR_TASK: {
+        publish_nav_feedback("SM_WAITING_FOR_TASK", "Waiting for task");
         if (new_global_goal_) {
           new_global_goal_ = false;
           state = SM_CALCULATE_PATH;
@@ -726,6 +864,7 @@ private:
       }
 
       case SM_CALCULATE_PATH: {
+        publish_nav_feedback("CALCULATE_PATH", "Calculating path");
         get_robot_position();
         // plan_path_from_augmented_map(robot_x_, robot_y_,
         // global_goal_.position.x, global_goal_.position.y);
@@ -802,38 +941,66 @@ private:
           std::cout << "MotionPlanner.-> Robot is inside an obstacle. Moving "
                        "backwards..."
                     << std::endl;
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+
           msg_goal_dist_angle.data.resize(2);
           msg_goal_dist_angle.data[0] = -0.15;
           msg_goal_dist_angle.data[1] = 0;
           pub_goal_dist_angle_->publish(msg_goal_dist_angle);
           state = SM_WAITING_FOR_MOVE_BACKWARDS;
         } else {
-          current_status =
-              publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
-                             "Cannot calc path from start to goal");
+          // current_status =
+          //     publish_status(actionlib_msgs::msg::GoalStatus::ABORTED,
+          //     goal_id,
+          //                    "Cannot calc path from start to goal");
+          current_status = publish_status(
+              actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id,
+              "Recalculating path because start pose is inside obstacle");
           // state = SM_INIT;
           state = SM_CALCULATE_PATH;
         }
         break;
       }
 
-      case SM_WAITING_FOR_MOVE_BACKWARDS: {
+      // case SM_WAITING_FOR_MOVE_BACKWARDS: {
+      //   if (simple_move_goal_status_.status ==
+      //           actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
+      //       simple_move_status_id_ == -1) {
+      //     simple_move_goal_status_.status = 0;
+      //     std::cout << "MotionPlanner.-> Moved backwards succesfully."
+      //               << std::endl;
+      //   } else if (simple_move_goal_status_.status ==
+      //              actionlib_msgs::msg::GoalStatus::ABORTED) {
+      //     simple_move_goal_status_.status = 0;
+      //     std::cout << "MotionPlanner.-> Simple move reported move aborted. "
+      //               << std::endl;
+      //   }
+      //   state = SM_CALCULATE_PATH;
+      //   break;
+      // }
+      case SM_WAITING_FOR_MOVE_BACKWARDS: { // TODO id -1 -> id 0?
         if (simple_move_goal_status_.status ==
                 actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
             simple_move_status_id_ == -1) {
           simple_move_goal_status_.status = 0;
-          std::cout << "MotionPlanner.-> Moved backwards succesfully."
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Moved backwards successfully."
                     << std::endl;
+          state = SM_CALCULATE_PATH;
         } else if (simple_move_goal_status_.status ==
                    actionlib_msgs::msg::GoalStatus::ABORTED) {
           simple_move_goal_status_.status = 0;
-          std::cout << "MotionPlanner.-> Simple move reported move aborted. "
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Simple move reported move aborted."
                     << std::endl;
+          state = SM_CALCULATE_PATH;
+        } else {
+          // while backwards
+          break;
         }
-        state = SM_CALCULATE_PATH;
         break;
       }
-
       case SM_CHECK_IF_OBSTACLES: {
         are_there_obs_ = false;
         is_check_obs_response_ = false;
@@ -874,6 +1041,7 @@ private:
           current_status =
               publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
                              "Cannot calculate path from start to goal point");
+          finish_action_abort("Cannot calculate path from start to goal point");
           state = SM_INIT;
         } else {
           std::cout << "MotionPlanner.->Temporal obstacles detected. Waiting "
@@ -929,7 +1097,9 @@ private:
           current_status = publish_status(
               actionlib_msgs::msg::GoalStatus::ABORTED, this->goal_id,
               "Cannot calculate path from start to goal point");
+          finish_action_abort("Cannot calculate path from start to goal point");
           state = SM_INIT;
+
         } else if (!are_still_obs_) {
           std::cout << "MotionPlanner.-> Temporal obstacles removed."
                     << std::endl;
@@ -975,12 +1145,16 @@ private:
             RCLCPP_WARN(
                 this->get_logger(),
                 "MotionPlanner.-> Potential fields received but invalid.");
+            waiting_for_potential_fields_ = false;
+            finish_action_abort("Potential fields received but invalid");
             state = SM_INIT;
           }
         } else if ((this->now() - pot_fields_start_time_).seconds() > 10.0) {
           RCLCPP_WARN(
               this->get_logger(),
               "MotionPlanner.-> Timeout waiting for potential fields message.");
+
+          finish_action_abort("Timeout waiting for potential fields message");
           waiting_for_potential_fields_ = false;
           state = SM_INIT;
         }
@@ -1008,6 +1182,7 @@ private:
       }
 
       case SM_WAIT_FOR_MOVE_FINISHED: {
+        publish_nav_feedback("WAIT_FOR_MOVE_FINISHED", "Following path");
         get_robot_position();
         error = sqrt(pow(global_goal_.position.x - robot_x_, 2) +
                      pow(global_goal_.position.y - robot_y_, 2));
@@ -1029,6 +1204,7 @@ private:
           std::cout << "MotionPlanner.->Error less than proximity criterion. "
                        "Sending near goal point status."
                     << std::endl;
+          publish_nav_feedback("NEAR_GOAL", "Near goal point");
           publish_status(actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id,
                          "Near goal point");
         }
@@ -1155,6 +1331,7 @@ private:
         current_status =
             publish_status(actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id,
                            "Global goal point reached");
+        finish_action_success("Global goal point reached");
         state = SM_INIT;
         break;
       }
@@ -1170,6 +1347,15 @@ private:
       RCLCPP_ERROR(this->get_logger(),
                    "MotionPlanner.-> Error in MotionPlanner processing: %s",
                    e.what());
+      if (current_status == actionlib_msgs::msg::GoalStatus::ACTIVE) {
+        current_status =
+            publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
+                           "Exception in motion_planner_processing core");
+      }
+      if (action_active_) {
+        finish_action_abort("Exception in motion_planner_processing core");
+      }
+      state = SM_INIT;
     }
   }
 };
