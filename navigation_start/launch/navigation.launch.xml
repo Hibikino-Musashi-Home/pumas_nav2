@@ -59,6 +59,7 @@
     <param name="autostart" value="true"/>
     <param name="node_names" value="['static_map_server', 'prohibition_map_server']"/>
   </node>
+
   <!-- Map Enhancer -->
   <node name="map_enhancer" pkg="augment_gridmap_online" exec="augment_gridmap_online_node" output="screen" respawn="true">
     <remap from="point_obstacle" to="/clicked_point"/>
@@ -68,6 +69,7 @@
     <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
+
   <!-- Localization  -->
   <!-- KILL AMCL localization if necessary -->
   <!--executable cmd="ros2 node kill amcl"/-->
@@ -91,6 +93,7 @@
     <remap from="mcl_pose" to="$(var pose_topic)"/>
     <remap from="map" to="/map"/>
   </node-->
+
   <!-- Map Augmenters -->
   <node name="map_augmenter" pkg="map_augmenter" exec="map_augmenter_node" output="screen" respawn="true">
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
@@ -119,6 +122,7 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
   </node>
+
   <!-- Path Planner -->
   <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="screen" respawn="true">
     <param name="diagonal_paths" value="True"/>
@@ -132,6 +136,7 @@
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
+
   <!-- Potential Fields -->
   <node name="potential_fields" pkg="potential_fields" exec="potential_fields_node" output="screen" respawn="true">
     <param name="debug" value="False"/>
@@ -162,19 +167,28 @@
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
+
   <node name="publish_enable" pkg="potential_fields" exec="publish_enable.py" output="screen" respawn="true"/>
   <!-- Motion Planner -->
+
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
   </node>
+
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
   </node>
+
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
   </node>
+
   <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen" emulate_tty="true">
   </node>
+
+  <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
+  </node>
+
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
     <param name="torso_default_pose" value="0.0"/>
@@ -187,6 +201,7 @@
     <param name="tilt_min" value="-0.7"/>
     <param name="tilt_max" value="0.47"/>
   </node>
+
   <!-- RVIZ2 -->
   <node name="rviz2" pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share navigation_start)/rviz/config.rviz               --ros-args --log-level rviz2:=warn" output="screen"/>
 </launch>

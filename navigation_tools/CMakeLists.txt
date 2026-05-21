@@ -63,6 +63,11 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  ${PROJECT_NAME}/pot_fields_updator.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Ensure both are included
 #install(TARGETS
 #_node

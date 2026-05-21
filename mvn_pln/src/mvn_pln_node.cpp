@@ -294,6 +294,11 @@ private:
   rclcpp::Subscription<pumas_interfaces::msg::StartAndEndJoints>::SharedPtr
       sub_arm_goal_;
   rclcpp_action::Client<MotionSynthesis>::SharedPtr motion_synth_client_;
+  // Strong ref to the in-flight motion_synth goal. rclcpp_action stores only
+  // weak_ptr internally, so without this the handle gets GC'd and the result
+  // is dropped with "unknown result response, ignoring" — leaving end_pose
+  // unexecuted.
+  std::shared_ptr<GoalHandleMotionSynthesis> motion_synth_goal_handle_;
 
   // nav action
   rclcpp_action::Server<PumasNav>::SharedPtr nav_action_server_;
@@ -682,9 +687,20 @@ private:
     goal_msg.apply_goal_pose = arm_joints.has_arm_end_pose;
     goal_msg.start_pose = arm_joints.start_pose;
     goal_msg.goal_pose = arm_joints.end_pose;
+    goal_msg.motion_execution_time = arm_joints.motion_execution_time;
 
     auto send_goal_options =
         rclcpp_action::Client<MotionSynthesis>::SendGoalOptions();
+    send_goal_options.goal_response_callback =
+        [this](std::shared_ptr<GoalHandleMotionSynthesis> goal_handle) {
+          if (!goal_handle) {
+            RCLCPP_WARN(this->get_logger(),
+                        "motion_synth goal was rejected by server");
+            motion_synth_goal_handle_.reset();
+          } else {
+            motion_synth_goal_handle_ = goal_handle;
+          }
+        };
     send_goal_options.result_callback =
         [this](const GoalHandleMotionSynthesis::WrappedResult &result) {
           if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
@@ -694,9 +710,9 @@ private:
                         "motion_synth action failed or canceled (code: %d)",
                         static_cast<int>(result.code));
           }
+          motion_synth_goal_handle_.reset();
         };
 
-    // TODO
     motion_synth_client_->async_send_goal(goal_msg, send_goal_options);
   }
 
