@@ -6,16 +6,19 @@ import time
 
 import numpy as np
 import rclpy
-import tf_transformations
+import tf2_ros
 from actionlib_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Path
 from pumas_interfaces.action import MotionSynthesis
 from pumas_interfaces.msg import MotionPose
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import Float32, Float32MultiArray
+from tf2_ros import TransformException
+from tf_transformations import euler_from_quaternion
 
 
 class MotionSynth(Node):
@@ -24,8 +27,9 @@ class MotionSynth(Node):
 
         # Action callback runs synchronously and blocks (time.sleep). It MUST
         # be on a separate callback group from the subscriptions so that under
-        # MultiThreadedExecutor, /pose, /navigation/status, and
-        # /simple_move/goal_path keep arriving while execute_callback waits.
+        # MultiThreadedExecutor, /navigation/status and /simple_move/goal_path
+        # keep arriving while execute_callback waits. The robot pose is now
+        # pulled on-demand from TF inside the loop (see get_global_pose_from_tf).
         self._action_cb_group = MutuallyExclusiveCallbackGroup()
         self._sub_cb_group = MutuallyExclusiveCallbackGroup()
 
@@ -55,21 +59,9 @@ class MotionSynth(Node):
         self.path_received = False
         self.path_points = []
 
-        # Subscribe to the localization output. The system runs emcl2_node
-        # (see pumas_nav2_localization.launch.py:255-272) which publishes
-        # PoseWithCovarianceStamped on mcl_pose, remapped to /pose via the
-        # pose_topic arg (default "/pose", launch line 149). /global_pose
-        # (the previous topic name here) is not published anywhere in this
-        # workspace, so this subscription was silently dead and
-        # self.current_pose stayed None, blocking the arm-motion trigger
-        # loop.
-        self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/pose',
-            self.global_pose_callback,
-            10,
-            callback_group=self._sub_cb_group,
-        )
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         self.create_subscription(
             GoalStatus,
             '/navigation/status',
@@ -102,14 +94,25 @@ class MotionSynth(Node):
         self.get_logger().info(
             f'motion_synth -> Received Path Length: {len(self.path_points)}')
 
-    def global_pose_callback(self, msg):
-        # PoseWithCovarianceStamped → msg.pose is PoseWithCovariance,
-        # so the Pose itself lives at msg.pose.pose.
-        position = msg.pose.pose.position
-        orientation = msg.pose.pose.orientation
-        q = [orientation.x, orientation.y, orientation.z, orientation.w]
-        yaw = tf_transformations.euler_from_quaternion(q)[2]
-        self.current_pose = (position.x, position.y, yaw)
+    def get_global_pose_from_tf(self, target_frame='map', source_frame='base_footprint'):
+        try:
+            trans = self.tf_buffer.lookup_transform(
+                target_frame, source_frame, rclpy.time.Time(), timeout=Duration(seconds=0.1)
+            )
+
+            x = trans.transform.translation.x
+            y = trans.transform.translation.y
+            q = trans.transform.rotation
+            euler = euler_from_quaternion([q.x, q.y, q.z, q.w])
+            yaw = euler[2]
+
+            return x, y, yaw
+
+        except TransformException as ex:
+            self.get_logger().warn(
+                f'motion_synth -> TF lookup failed: {target_frame} -> {source_frame}: {ex}'
+            )
+            return None
 
     def navigation_status_callback(self, msg):
         # actionlib_msgs/GoalStatus uses SUCCEEDED=3 (not STATUS_SUCCEEDED=4
@@ -355,6 +358,10 @@ class MotionSynth(Node):
                 self.get_logger().info('Goal canceled.')
                 goal_handle.canceled()
                 return MotionSynthesis.Result(result=False)
+
+            pose_from_tf = self.get_global_pose_from_tf()
+            if pose_from_tf is not None:
+                self.current_pose = pose_from_tf
 
             if not triggered and self.current_pose:
                 elapsed_sec = (self.get_clock().now() -

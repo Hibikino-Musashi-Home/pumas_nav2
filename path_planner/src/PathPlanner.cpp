@@ -7,12 +7,20 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
                         const nav_msgs::msg::OccupancyGrid &cost_map,
                         const geometry_msgs::msg::Pose &start_pose,
                         const geometry_msgs::msg::Pose &goal_pose,
-                        bool diagonal_paths, nav_msgs::msg::Path &result_path) {
+                        bool diagonal_paths, nav_msgs::msg::Path &result_path,
+                        bool use_online) {
 
   std::cout << "PathCalculator.-> Calculating by A* from "
             << start_pose.position.x << "  ";
   std::cout << start_pose.position.y << "  to " << goal_pose.position.x << "  "
             << goal_pose.position.y << std::endl;
+
+  // use_online=true: treat unknown (-1) cells as traversable goals (SLAM mode);
+  // use_online=false: only free (0) cells are navigable (default static-map
+  // mode).
+  auto allow_unknown_space_to_navigate = [use_online](int8_t v) {
+    return use_online ? (v <= 0) : (v == 0);
+  };
 
   int idx_start_x;
   int idx_start_y;
@@ -47,8 +55,8 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   int MAX_GOAL_UPDATE = 16; // points on circle
   double angle_increment = 2 * M_PI / (MAX_GOAL_UPDATE);
 
-  if (map.data[idx_goal] != 0) {
-    while (loop_count < 40) {
+  if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
+    while (loop_count < 10) { // TODO
 
       double angle = count * angle_increment;
       idx_goal_y =
@@ -74,7 +82,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
 
         idx_goal = idx_goal_y * map.info.width + idx_goal_x;
 
-        if (map.data[idx_goal] == 0) {
+        if (allow_unknown_space_to_navigate(map.data[idx_goal])) {
           double distance =
               std::hypot(idx_goal_x - _idx_goal_x, idx_goal_y - _idx_goal_y);
           if (distance < best_distance) {
@@ -130,12 +138,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     return true;
   }
 
-  if (map.data[idx_goal] != 0) {
+  if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
     std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
               << std::endl;
     return false;
   }
-  if (map.data[idx_start] != 0) {
+  if (!allow_unknown_space_to_navigate(map.data[idx_start])) {
     std::cout << "PathPlanner.->Start point is inside non-free space!!!!"
               << std::endl;
     return false;
@@ -182,7 +190,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
           ni >= static_cast<int>(map.data.size())) // check out of range
         continue;
 
-      if (map.data[node_neighbors[i]] != 0 ||
+      if (!allow_unknown_space_to_navigate(map.data[node_neighbors[i]]) ||
           nodes[node_neighbors[i]].in_closed_list)
         continue;
 

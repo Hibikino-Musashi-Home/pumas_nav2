@@ -16,7 +16,8 @@ public:
                       const geometry_msgs::msg::Pose &start_pose,
                       const geometry_msgs::msg::Pose &goal_pose,
                       bool diagonal_paths,
-                      nav_msgs::msg::Path &result_path);
+                      nav_msgs::msg::Path &result_path,
+                      bool use_online = false);
 
     static nav_msgs::msg::Path SmoothPath(
                       const nav_msgs::msg::Path& path, 

@@ -15,15 +15,19 @@ public:
         this->declare_parameter<float>("smooth_alpha",  0.1f);
         this->declare_parameter<float>("smooth_beta",   0.9f);
         this->declare_parameter<bool>("diagonal_paths", false);
+        this->declare_parameter<bool>("use_online",     false);
 
         // Initialize internal variables from declared parameters
         this->get_parameter("use_namespace",    use_namespace_);
         this->get_parameter("smooth_alpha",     smooth_alpha_);
         this->get_parameter("smooth_beta",      smooth_beta_);
         this->get_parameter("diagonal_paths",   diagonal_paths_);
+        this->get_parameter("use_online",       use_online_);
 
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Smooth Alpha: %.2f, Beta: %.2f, Diagonal: %s",
-                    smooth_alpha_, smooth_beta_, diagonal_paths_ ? "true" : "false");
+        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Smooth Alpha: %.2f, Beta: %.2f, Diagonal: %s, UseOnline: %s",
+                    smooth_alpha_, smooth_beta_,
+                    diagonal_paths_ ? "true" : "false",
+                    use_online_ ? "true" : "false");
 
         // Setup parameter change callback
         param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -54,6 +58,7 @@ private:
     float smooth_alpha_;
     float smooth_beta_;
     bool diagonal_paths_;
+    bool use_online_;
 
     // Service clients
     rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_static_map_;
@@ -96,6 +101,7 @@ private:
             else if (param.get_name() == "smooth_alpha")    smooth_alpha_   = param.as_double();
             else if (param.get_name() == "smooth_beta")     smooth_beta_    = param.as_double();
             else if (param.get_name() == "diagonal_paths")  diagonal_paths_ = param.as_bool();
+            else if (param.get_name() == "use_online")      use_online_     = param.as_bool();
 
             else
             {
@@ -257,7 +263,7 @@ private:
         nav_msgs::msg::Path path;
         bool success = PathPlanner::AStar(map_, cost_map_,
             request->start.pose, request->goal.pose,
-            diagonal_paths_, path);
+            diagonal_paths_, path, use_online_);
 
         if (success) {
             nav_msgs::msg::Path smoothed = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
@@ -299,7 +305,7 @@ private:
         nav_msgs::msg::Path path;
         bool success = PathPlanner::AStar(augmented_map_, augmented_cost_map_,
             request->start.pose, request->goal.pose,
-            diagonal_paths_, path);
+            diagonal_paths_, path, use_online_);
 
         if (success) {
             nav_msgs::msg::Path smoothed = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);

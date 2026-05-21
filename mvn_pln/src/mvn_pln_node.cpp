@@ -56,10 +56,9 @@
 #define SM_ENABLE_POT_FIELDS 23
 #define SM_WAIT_FOR_POT_FIELDS 24
 #define SM_WAIT_FOR_NOT_POT_FIELDS 124
+#define SM_WAIT_FOR_CLEAR_MEMORY_RESPONSE 125
 #define SM_START_MOVE_PATH 3
 #define SM_WAIT_FOR_MOVE_FINISHED 4
-// #define SM_COLLISION_DETECTED 5
-// #define SM_STOP_RECEIVED 51
 #define SM_CORRECT_FINAL_ANGLE 6
 #define SM_WAIT_FOR_ANGLE_CORRECTED 7
 #define SM_FINAL 17
@@ -88,12 +87,14 @@ public:
     this->declare_parameter<bool>("patience", true);
     this->declare_parameter<float>("proximity_criterion", 2.0f);
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
+    this->declare_parameter<bool>("memory_all_obstacles", false);
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("patience", patience_);
     this->get_parameter("proximity_criterion", proximity_criterion_);
     this->get_parameter("base_link_name", base_link_name_);
+    this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
@@ -235,10 +236,6 @@ private:
   std_msgs::msg::Bool msg_bool;
   std_msgs::msg::Float32MultiArray msg_goal_dist_angle;
 
-  // ROS 2 service object (split request/response)
-  //  std_srvs::srv::Trigger::Request srv_check_obstacles_request;
-  //  std_srvs::srv::Trigger::Response srv_check_obstacles_response;
-
   // Flags for waiting clients in Switch/Case
   bool is_in_obstacles_ = false;
   bool is_in_obstacles_response_ = false;
@@ -253,14 +250,19 @@ private:
 
   // motion_synth
   bool arm_goal_received = false;
-  //  bool arm_goal_reached = false;
-  //  bool has_arm_start_pose = false;
-  //  bool has_arm_end_pose = false;
   pumas_interfaces::msg::StartAndEndJoints target_arm_pose;
 
   rclcpp::Time no_cloud_pot_fields_start_time_;
   rclcpp::Duration no_cloud_pot_fields_duration_{2, 0}; // 2 seconds
   bool is_temporary_no_cloud_pot_fields_ = false;
+
+  // Memory obstacle clear flow (used when memory_all_obstacles is enabled and
+  // path planning has just failed — we wipe accumulated memory then retry)
+  bool memory_all_obstacles_ = false;
+  bool clear_memory_request_sent_ = false;
+  bool clear_memory_response_received_ = false;
+  bool clear_memory_success_ = false;
+  bool clear_memory_failed_ = false;
 
   rclcpp::Time pot_fields_start_time_;
 
@@ -314,6 +316,8 @@ private:
   rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_aug_costmap_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_are_there_obs_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_is_in_obstacles_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr
+      clt_clear_memory_all_obstacles_;
 
   std::vector<std::thread> threads_;
 
@@ -326,8 +330,6 @@ private:
   bool services_ready_ = false;
 
   // Used to wait for first message
-  // std::shared_ptr<std::promise<std_msgs::msg::Bool::SharedPtr>>
-  //    collision_risk_promise_;
   bool waiting_for_potential_fields_ = false;
 
   // Main processing loop
@@ -378,6 +380,8 @@ private:
         proximity_criterion_ = param.as_double();
       else if (param.get_name() == "base_link_name")
         base_link_name_ = param.as_string();
+      else if (param.get_name() == "memory_all_obstacles")
+        memory_all_obstacles_ = param.as_bool();
 
       else {
         result.successful = false;
@@ -473,6 +477,9 @@ private:
         make_name("/map_augmenter/are_there_obstacles"));
     clt_is_in_obstacles_ = this->create_client<std_srvs::srv::Trigger>(
         make_name("/map_augmenter/is_inside_obstacles"));
+    clt_clear_memory_all_obstacles_ =
+        this->create_client<std_srvs::srv::Trigger>(
+            make_name("/map_augmenter/clear_memory_all_obstacles"));
 
     service_check_timer_ =
         this->create_wall_timer(std::chrono::seconds(1), [this]() {
@@ -483,7 +490,9 @@ private:
               clt_get_aug_map_->wait_for_service(std::chrono::seconds(0)) &&
               clt_get_aug_costmap_->wait_for_service(std::chrono::seconds(0)) &&
               clt_are_there_obs_->wait_for_service(std::chrono::seconds(0)) &&
-              clt_is_in_obstacles_->wait_for_service(std::chrono::seconds(0))) {
+              clt_is_in_obstacles_->wait_for_service(std::chrono::seconds(0)) &&
+              clt_clear_memory_all_obstacles_->wait_for_service(
+                  std::chrono::seconds(0))) {
             RCLCPP_INFO(this->get_logger(),
                         "MotionPlanner.-> All motion planner clients are now "
                         "available.");
@@ -716,6 +725,37 @@ private:
     motion_synth_client_->async_send_goal(goal_msg, send_goal_options);
   }
 
+  void request_clear_memory_all_obstacles() {
+    if (clear_memory_request_sent_) {
+      return;
+    }
+
+    clear_memory_request_sent_ = true;
+    clear_memory_response_received_ = false;
+    clear_memory_success_ = false;
+    clear_memory_failed_ = false;
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+
+    clt_clear_memory_all_obstacles_->async_send_request(
+        request,
+        [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+          try {
+            auto response = future.get();
+            clear_memory_success_ = response->success;
+          } catch (const std::exception &e) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "MotionPlanner.-> Failed to call "
+                         "clear_memory_all_obstacles: %s",
+                         e.what());
+            clear_memory_failed_ = true;
+          }
+
+          clear_memory_response_received_ = true;
+          clear_memory_request_sent_ = false;
+        });
+  }
+
   void handle_accepted(const std::shared_ptr<GoalHandlePumasNav> goal_handle) {
     active_goal_handle_ = goal_handle;
     action_active_ = true;
@@ -725,9 +765,6 @@ private:
 
     global_goal_ = goal->goal.pose;
     new_global_goal_ = true;
-
-    // patience_ = goal->patience;
-    // proximity_criterion_ = goal->proximity_criterion;
 
     if (goal->use_arm) {
       target_arm_pose = goal->arm_joints;
@@ -821,12 +858,7 @@ private:
       if (stop_) {
         stop_ = false;
         state = SM_INIT;
-        // if (current_status == actionlib_msgs::msg::GoalStatus::ACTIVE) {
-        //   current_status =
-        //       publish_status(actionlib_msgs::msg::GoalStatus::ABORTED,
-        //       goal_id,
-        //                      "Stop signal received. Task cancelled");
-        // }
+
         if (action_active_) {
           if (cancel_requested_) {
             finish_action_cancel("Navigation task canceled");
@@ -882,8 +914,6 @@ private:
       case SM_CALCULATE_PATH: {
         publish_nav_feedback("CALCULATE_PATH", "Calculating path");
         get_robot_position();
-        // plan_path_from_augmented_map(robot_x_, robot_y_,
-        // global_goal_.position.x, global_goal_.position.y);
         get_plan_path_from_augmented_map(robot_x_, robot_y_,
                                          global_goal_.position.x,
                                          global_goal_.position.y);
@@ -905,8 +935,22 @@ private:
                     << std::endl;
           pub_simple_move_stop_->publish(std_msgs::msg::Empty());
 
-          state =
-              patience_ ? SM_CHECK_IF_OBSTACLES : SM_CHECK_IF_INSIDE_OBSTACLES;
+          if (memory_all_obstacles_) {
+            if (!clt_clear_memory_all_obstacles_->wait_for_service(
+                    std::chrono::seconds(1))) {
+              RCLCPP_ERROR(this->get_logger(),
+                           "MotionPlanner.-> clear_memory_all_obstacles "
+                           "service not available; falling back.");
+              state = patience_ ? SM_CHECK_IF_OBSTACLES
+                                : SM_CHECK_IF_INSIDE_OBSTACLES;
+            } else {
+              request_clear_memory_all_obstacles();
+              state = SM_WAIT_FOR_CLEAR_MEMORY_RESPONSE;
+            }
+          } else {
+            state = patience_ ? SM_CHECK_IF_OBSTACLES
+                              : SM_CHECK_IF_INSIDE_OBSTACLES;
+          }
         } else {
           if (is_temporary_no_cloud_pot_fields_) {
             no_cloud_pot_fields_start_time_ = this->now(); // reset timer
@@ -915,6 +959,29 @@ private:
             state = SM_ENABLE_POT_FIELDS;
           }
         }
+        break;
+      }
+
+      case SM_WAIT_FOR_CLEAR_MEMORY_RESPONSE: {
+        if (!clear_memory_response_received_) {
+          break;
+        }
+
+        if (clear_memory_failed_) {
+          RCLCPP_WARN(
+              this->get_logger(),
+              "MotionPlanner.-> clear_memory_all_obstacles call failed.");
+        } else if (clear_memory_success_) {
+          RCLCPP_WARN(this->get_logger(),
+                      "MotionPlanner.-> Cleared memory obstacles due to path "
+                      "planning failure; retrying path calculation.");
+        } else {
+          RCLCPP_WARN(
+              this->get_logger(),
+              "MotionPlanner.-> clear_memory_all_obstacles returned false.");
+        }
+
+        state = SM_CALCULATE_PATH;
         break;
       }
 
@@ -973,29 +1040,13 @@ private:
           current_status = publish_status(
               actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id,
               "Recalculating path because start pose is inside obstacle");
-          // state = SM_INIT;
+          // state = SM_INIT; //default impl
           state = SM_CALCULATE_PATH;
         }
         break;
       }
 
-      // case SM_WAITING_FOR_MOVE_BACKWARDS: {
-      //   if (simple_move_goal_status_.status ==
-      //           actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-      //       simple_move_status_id_ == -1) {
-      //     simple_move_goal_status_.status = 0;
-      //     std::cout << "MotionPlanner.-> Moved backwards succesfully."
-      //               << std::endl;
-      //   } else if (simple_move_goal_status_.status ==
-      //              actionlib_msgs::msg::GoalStatus::ABORTED) {
-      //     simple_move_goal_status_.status = 0;
-      //     std::cout << "MotionPlanner.-> Simple move reported move aborted. "
-      //               << std::endl;
-      //   }
-      //   state = SM_CALCULATE_PATH;
-      //   break;
-      // }
-      case SM_WAITING_FOR_MOVE_BACKWARDS: { // TODO id -1 -> id 0?
+      case SM_WAITING_FOR_MOVE_BACKWARDS: {
         if (simple_move_goal_status_.status ==
                 actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
             simple_move_status_id_ == -1) {
@@ -1017,6 +1068,7 @@ private:
         }
         break;
       }
+
       case SM_CHECK_IF_OBSTACLES: {
         are_there_obs_ = false;
         is_check_obs_response_ = false;
@@ -1198,6 +1250,7 @@ private:
       }
 
       case SM_WAIT_FOR_MOVE_FINISHED: {
+
         publish_nav_feedback("WAIT_FOR_MOVE_FINISHED", "Following path");
         get_robot_position();
         error = sqrt(pow(global_goal_.position.x - robot_x_, 2) +
@@ -1250,7 +1303,7 @@ private:
           is_temporary_no_cloud_pot_fields_ = true;
 
           state = SM_CALCULATE_PATH;
-          // state = SM_WAIT_FOR_NOT_POT_FIELDS;
+          // state = SM_WAIT_FOR_NOT_POT_FIELDS; // default impl
         } else if (simple_move_goal_status_.status ==
                    actionlib_msgs::msg::GoalStatus::ABORTED) {
           simple_move_goal_status_.status = 0;
@@ -1273,23 +1326,19 @@ private:
           pot_fields_start_time_ = this->now();
           no_cloud_pot_fields_start_time_ = this->now();
         }
-
         if ((this->now() - pot_fields_start_time_).seconds() > 1.0) {
           pot_fields_start_time_ = this->now();
           if (is_pot_fields_response_) {
             RCLCPP_WARN(this->get_logger(),
                         "MotionPlanner.-> Potential fields with point cloud "
                         "have been disabled.");
-
             collision_risk_ = false;
             waiting_for_potential_fields_ = false;
 
             state = SM_CALCULATE_PATH;
           }
-        }
-
-        else if ((this->now() - no_cloud_pot_fields_start_time_).seconds() >
-                 10.0) {
+        } else if ((this->now() - no_cloud_pot_fields_start_time_).seconds() >
+                   10.0) {
           RCLCPP_WARN(
               this->get_logger(),
               "MotionPlanner.-> Timeout waiting for potential fields message.");
@@ -1298,7 +1347,6 @@ private:
 
           state = SM_CALCULATE_PATH;
         }
-
         break;
       }
 
