@@ -26,6 +26,7 @@
 
   <arg name="mvn_pln_patience" default="False"/>
   <arg name="use_online" default="True"/>
+  <arg name="memory_all_obstacles" default="True"/>
 
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>
@@ -98,6 +99,7 @@
     <param name="cost_radius" value="0.20"/> 
 
     <param name="use_online" value="$(var use_online)"/>
+    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
 
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
@@ -203,6 +205,7 @@
         output="screen">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
   </node>
 
   <!-- Hardware Controller -->

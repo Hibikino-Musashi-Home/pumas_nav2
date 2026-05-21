@@ -21,6 +21,7 @@
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
   <arg name="mvn_pln_patience" default="False"/>
+  <arg name="memory_all_obstacles" default="False"/>
 
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
@@ -44,6 +45,15 @@
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
 
+  <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
+  <!-- When add_static_obstacles is True, map_enhancer loads
+       <share(hma_env_manage2)>/io/config/<env_furniture_file>.yaml
+       (resolved at runtime via ament_index_cpp) and stamps each entry's
+       `plane` polygon as obstacle cells. -->
+  <arg name="add_static_obstacles" default="True"/>
+  <arg name="env_furniture_pkg" default="hma_env_manage2"/>
+  <arg name="env_furniture_file" default="env_furniture_wrs2020"/> <!--change your env_furniture-->
+
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
@@ -65,6 +75,12 @@
     <param name="obstacle_radius" value="0.05"/>
     <param name="debug" value="True"/>
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
+    <!-- Static furniture obstacles. The node skips the loader entirely when
+         add_static_obstacles is false, so the env_furniture_pkg package only
+         needs to exist at runtime when add_static_obstacles is true. -->
+    <param name="add_static_obstacles" value="$(var add_static_obstacles)"/>
+    <param name="furniture_pkg" value="$(var env_furniture_pkg)"/>
+    <param name="furniture_path" value="$(var env_furniture_file)"/>
     <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
@@ -106,6 +122,7 @@
     <param name="inflation_radius" value="0.12"/>
     <param name="cost_radius" value="0.17"/>
     <param name="use_online" value="False"/>
+    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
     <param name="laser_max_y" value="$(var laser_max_y)"/>
@@ -168,6 +185,7 @@
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
   </node>
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
