@@ -489,9 +489,9 @@ if __name__ == '__main__':
     }
 
     # goal = Pose2D(x=2.58, y=2.0, theta=0.0)
-    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
+    goal = Pose2D(x=5.7, y=0.4, theta=0.0)
     success = nav.nav_goal(
-        goal, motion_synth_pose=ms_config, timeout=0, goal_distance=None, motion_execution_time=1.5
+        goal, motion_synth_pose=ms_config, timeout=0, goal_distance=None, motion_execution_time=0.2
     )
 
     # goal = Pose2D(x=0.0, y=0.0, theta=0.0)

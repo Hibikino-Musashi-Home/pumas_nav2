@@ -2,8 +2,9 @@
 <launch>
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
-  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/wrs2020/map.yaml"/>
-  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/wrs2020/map.yaml"/>
+  <arg name="map_name" default="rc26_3330"/>
+  <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/$(var map_name)/map.yaml"/>
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/$(var map_name)/map.yaml"/>
   <arg name="odom_topic" default="/odom"/>
   <arg name="pose_topic" default="/pose"/>
   <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel"/>
@@ -20,7 +21,10 @@
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
+
   <arg name="mvn_pln_patience" default="False"/>
+
+  <arg name="use_online" default="False"/>
   <arg name="memory_all_obstacles" default="False"/>
 
   <!--depth-->
@@ -52,7 +56,7 @@
        `plane` polygon as obstacle cells. -->
   <arg name="add_static_obstacles" default="True"/>
   <arg name="env_furniture_pkg" default="hma_env_manage2"/>
-  <arg name="env_furniture_file" default="env_furniture_wrs2020"/> <!--change your env_furniture-->
+  <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
 
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
@@ -124,7 +128,7 @@
     <param name="decay_factor" value="5"/>
     <param name="inflation_radius" value="0.12"/>
     <param name="cost_radius" value="0.17"/>
-    <param name="use_online" value="False"/>
+    <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
@@ -143,7 +147,7 @@
   <!-- Path Planner -->
   <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="screen" respawn="true">
     <param name="diagonal_paths" value="True"/>
-    <param name="use_online" value="$var use_online"/>
+    <param name="use_online" value="$(var use_online)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="0.8"/>
