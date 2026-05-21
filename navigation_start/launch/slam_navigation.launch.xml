@@ -25,6 +25,7 @@
   <arg name="lidar_points_threshold" default="20"/>
 
   <arg name="mvn_pln_patience" default="False"/>
+  <arg name="use_online" default="True"/>
   <arg name="memory_all_obstacles" default="True"/>
 
   <arg name="laser_min_x" default="0.17"/>
@@ -81,7 +82,8 @@
         output="screen">
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
-    <param name="static_map_server" value="/static_map"/>
+    <!--param name="static_map_server" value="/static_map"/-->
+    <param name="static_map_server" value="/slam_toolbox/dynamic_map"/>
     <param name="prohibition_map_server" value="/prohibition_map"/>
     
     <remap from="point_obstacle" to="/clicked_point"/>
@@ -96,7 +98,7 @@
     <param name="inflation_radius" value="0.18"/>
     <param name="cost_radius" value="0.20"/> 
 
-    <param name="use_online" value="True"/>
+    <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
 
     <param name="laser_max_x" value="$(var laser_max_x)"/>
@@ -129,6 +131,7 @@
         exec="path_planner_node" 
         output="screen"
         respawn="true">
+    <param name="use_online" value="$(var use_online)"/>
     <param name="diagonal_paths" value="True"/>
   </node>
 
