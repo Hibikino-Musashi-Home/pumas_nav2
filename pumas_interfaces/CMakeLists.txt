@@ -18,6 +18,7 @@ find_package(nav_msgs REQUIRED)
 set(msg_files
   "msg/Joints.msg"
   "msg/StartAndEndJoints.msg"
+  "msg/MotionPose.msg"
 )
 
 set(srv_files

@@ -10,6 +10,8 @@
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
 #include <control_msgs/msg/joint_trajectory_controller_state.hpp>
 
+#include <pumas_interfaces/msg/motion_pose.hpp>
+
 #include <string>
 #include <cmath>
 
@@ -69,6 +71,13 @@ public:
       head_state_topic_, rclcpp::QoS(10).reliable(),
       std::bind(&HeadController::headStateCallback, this, std::placeholders::_1));
 
+    // motion_synth publishes a MotionPose (full Joints + motion_execution_time)
+    // on a single topic shared with arm_controller. We pick up the head pan/tilt
+    // fields and ignore the arm/lift fields.
+    sub_motion_pose_ = this->create_subscription<pumas_interfaces::msg::MotionPose>(
+      "/hardware/motion_pose", rclcpp::QoS(10).reliable(),
+      std::bind(&HeadController::motionPoseCallback, this, std::placeholders::_1));
+
     // Init
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(100),
@@ -99,7 +108,14 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                    pub_head_goal_reached_;
 
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr    sub_head_goal_pose_;
+  rclcpp::Subscription<pumas_interfaces::msg::MotionPose>::SharedPtr   sub_motion_pose_;
   rclcpp::Subscription<control_msgs::msg::JointTrajectoryControllerState>::SharedPtr sub_head_state_;
+
+  // Default time_from_start for trajectories. Used when the caller does not
+  // override (legacy simple_move path). motion_synth provides its own value
+  // via HeadGoalPose.motion_execution_time.
+  static constexpr double kDefaultHeadTimeFromStart = 0.0;
+  double head_time_from_start_{kDefaultHeadTimeFromStart};
 
   std::vector<float> head_goal_pose_;
   std::vector<float> head_current_pose_;
@@ -220,17 +236,42 @@ private:
     pub_head_goal_reached_->publish(b);
   }
 
+  void motionPoseCallback(const pumas_interfaces::msg::MotionPose::SharedPtr msg)
+  {
+    head_time_from_start_ = (msg->motion_execution_time > 0.0f)
+        ? static_cast<double>(msg->motion_execution_time)
+        : kDefaultHeadTimeFromStart;
+
+    head_goal_pose_[0] = std::clamp(
+        msg->joints.head_pan_joint,
+        static_cast<float>(pan_min_), static_cast<float>(pan_max_));
+    head_goal_pose_[1] = std::clamp(
+        msg->joints.head_tilt_joint,
+        static_cast<float>(tilt_min_), static_cast<float>(tilt_max_));
+
+    goal_received_ = true;
+    RCLCPP_INFO(this->get_logger(),
+                "head_node.->Received motion pose: pan=%.3f tilt=%.3f time=%.3f s",
+                head_goal_pose_[0], head_goal_pose_[1], head_time_from_start_);
+
+    sendHeadGoalTrajectory(head_goal_pose_[0], head_goal_pose_[1]);
+  }
+
   void sendHeadGoalTrajectory(float pan, float tilt)
   {
     trajectory_msgs::msg::JointTrajectory traj;
-    traj.joint_names = {"head_pan_joint", "head_tilt_joint"}; 
+    traj.joint_names = {"head_pan_joint", "head_tilt_joint"};
 
     trajectory_msgs::msg::JointTrajectoryPoint p;
     p.positions = {pan, tilt};
-    p.time_from_start = rclcpp::Duration::from_seconds(0.0);
+    p.time_from_start = rclcpp::Duration::from_seconds(head_time_from_start_);
 
     traj.points.push_back(p);
     pub_head_goal_traj_->publish(traj);
+
+    // Reset to default after consuming so the override does not bleed into
+    // subsequent commands from other publishers.
+    head_time_from_start_ = kDefaultHeadTimeFromStart;
   }
 
 };

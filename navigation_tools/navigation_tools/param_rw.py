@@ -24,6 +24,12 @@ class ParamReadWriteServer(Node):
         self._service_cb_group = MutuallyExclusiveCallbackGroup()
         self._client_cb_group = MutuallyExclusiveCallbackGroup()
 
+        # Cached clients keyed by service name. Reusing clients avoids the
+        # InvalidHandle race that happens when destroy_client() is called
+        # while the executor still references the client in its wait set.
+        self._get_clients = {}
+        self._set_clients = {}
+
         self.srv = self.create_service(
             ParamReadWrite,
             "/param_read_write",
@@ -102,41 +108,54 @@ class ParamReadWriteServer(Node):
             return False
         return True
 
+    def _get_get_client(self, service_name):
+        client = self._get_clients.get(service_name)
+        if client is None:
+            client = self.create_client(
+                GetParameters, service_name, callback_group=self._client_cb_group
+            )
+            self._get_clients[service_name] = client
+        return client
+
+    def _get_set_client(self, service_name):
+        client = self._set_clients.get(service_name)
+        if client is None:
+            client = self.create_client(
+                SetParameters, service_name, callback_group=self._client_cb_group
+            )
+            self._set_clients[service_name] = client
+        return client
+
     def read_param(self, node_name, param_name):
         service_name = f"/{node_name}/get_parameters"
-        client = self.create_client(
-            GetParameters, service_name, callback_group=self._client_cb_group
-        )
+        client = self._get_get_client(service_name)
 
-        try:
-            if not client.wait_for_service(timeout_sec=2.0):
-                self.get_logger().warn(
-                    f"ParamRW.-> {service_name} not available."
-                )
-                return None
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                f"ParamRW.-> {service_name} not available."
+            )
+            return None
 
-            req = GetParameters.Request(names=[param_name])
-            future = client.call_async(req)
-            if not self._wait_inner_future(future, service_name):
-                return None
+        req = GetParameters.Request(names=[param_name])
+        future = client.call_async(req)
+        if not self._wait_inner_future(future, service_name):
+            return None
 
-            result = future.result()
-            if result is None or not result.values:
-                return None
+        result = future.result()
+        if result is None or not result.values:
+            return None
 
-            v = result.values[0]
-            if v.type == ParameterType.PARAMETER_BOOL:
-                return v.bool_value
-            elif v.type == ParameterType.PARAMETER_INTEGER:
-                return v.integer_value
-            elif v.type == ParameterType.PARAMETER_DOUBLE:
-                return v.double_value
-            elif v.type == ParameterType.PARAMETER_STRING:
-                return v.string_value
-            else:
-                return None
-        finally:
-            self.destroy_client(client)
+        v = result.values[0]
+        if v.type == ParameterType.PARAMETER_BOOL:
+            return v.bool_value
+        elif v.type == ParameterType.PARAMETER_INTEGER:
+            return v.integer_value
+        elif v.type == ParameterType.PARAMETER_DOUBLE:
+            return v.double_value
+        elif v.type == ParameterType.PARAMETER_STRING:
+            return v.string_value
+        else:
+            return None
 
     def write_param(self, node_name, param_name, new_value):
         service_name = f"/{node_name}/set_parameters"
@@ -144,56 +163,51 @@ class ParamReadWriteServer(Node):
             f"ParamRW.-> Writing /{node_name}/{param_name} = {new_value}"
         )
 
-        client = self.create_client(
-            SetParameters, service_name, callback_group=self._client_cb_group
-        )
+        client = self._get_set_client(service_name)
 
-        try:
-            if not client.wait_for_service(timeout_sec=2.0):
-                self.get_logger().warn(
-                    f"ParamRW.-> {service_name} not available."
-                )
-                return False
-
-            param_value = ParameterValue()
-            if isinstance(new_value, bool):
-                param_value.type = ParameterType.PARAMETER_BOOL
-                param_value.bool_value = new_value
-            elif isinstance(new_value, int):
-                param_value.type = ParameterType.PARAMETER_INTEGER
-                param_value.integer_value = new_value
-            elif isinstance(new_value, float):
-                param_value.type = ParameterType.PARAMETER_DOUBLE
-                param_value.double_value = new_value
-            elif isinstance(new_value, str):
-                param_value.type = ParameterType.PARAMETER_STRING
-                param_value.string_value = new_value
-            else:
-                self.get_logger().warn(
-                    f"Unsupported type for parameter: {type(new_value)}"
-                )
-                return False
-
-            req = SetParameters.Request(
-                parameters=[Parameter(name=param_name, value=param_value)]
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().warn(
+                f"ParamRW.-> {service_name} not available."
             )
-            future = client.call_async(req)
-            if not self._wait_inner_future(future, service_name):
-                return False
+            return False
 
-            result = future.result()
-            if result is None or not result.results:
-                return False
+        param_value = ParameterValue()
+        if isinstance(new_value, bool):
+            param_value.type = ParameterType.PARAMETER_BOOL
+            param_value.bool_value = new_value
+        elif isinstance(new_value, int):
+            param_value.type = ParameterType.PARAMETER_INTEGER
+            param_value.integer_value = new_value
+        elif isinstance(new_value, float):
+            param_value.type = ParameterType.PARAMETER_DOUBLE
+            param_value.double_value = new_value
+        elif isinstance(new_value, str):
+            param_value.type = ParameterType.PARAMETER_STRING
+            param_value.string_value = new_value
+        else:
+            self.get_logger().warn(
+                f"Unsupported type for parameter: {type(new_value)}"
+            )
+            return False
 
-            success = all(r.successful for r in result.results)
-            if not success:
-                reasons = [r.reason for r in result.results if not r.successful]
-                self.get_logger().warn(
-                    f"ParamRW.-> Failed to set /{node_name}/{param_name}: {reasons}"
-                )
-            return success
-        finally:
-            self.destroy_client(client)
+        req = SetParameters.Request(
+            parameters=[Parameter(name=param_name, value=param_value)]
+        )
+        future = client.call_async(req)
+        if not self._wait_inner_future(future, service_name):
+            return False
+
+        result = future.result()
+        if result is None or not result.results:
+            return False
+
+        success = all(r.successful for r in result.results)
+        if not success:
+            reasons = [r.reason for r in result.results if not r.successful]
+            self.get_logger().warn(
+                f"ParamRW.-> Failed to set /{node_name}/{param_name}: {reasons}"
+            )
+        return success
 
 
 def main(args=None):

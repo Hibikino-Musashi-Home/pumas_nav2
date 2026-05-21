@@ -62,6 +62,10 @@ class NavModule:
 
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
+        # Forwarded to StartAndEndJoints.motion_execution_time →
+        # MotionSynthesis.motion_execution_time → arm/head goal_pose_time.
+        # 0.0 means "use server default (0.5 s)".
+        self.motion_execution_time = 0.0
 
         # Publishers
         self.pub_marker = self.create_publisher(Marker, '/nav_goal_marker', 10)
@@ -275,6 +279,7 @@ class NavModule:
             arm_goal.end_pose = self.create_arm_joint_goal(
                 self.motion_synth_end_pose)
 
+        arm_goal.motion_execution_time = float(self.motion_execution_time)
         goal_msg.arm_joints = arm_goal
         goal_msg.use_arm = arm_goal.has_arm_start_pose or arm_goal.has_arm_end_pose
 
@@ -316,17 +321,28 @@ class NavModule:
             self.cancel_nav_action()
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
+        self.motion_execution_time = 0.0
 
-    def go_abs(self, goal: Pose2D, timeout, goal_distance=None, keep_motion_synth=False) -> bool:
+    def go_abs(
+        self,
+        goal: Pose2D,
+        timeout,
+        goal_distance=None,
+        motion_synth=False,
+        motion_execution_time=None,
+    ) -> bool:
         self.get_logger().info(
             f'NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}'
         )
 
         self.robot_stop = False
 
-        if not keep_motion_synth:
+        if not motion_synth:
             self.motion_synth_start_pose = None
             self.motion_synth_end_pose = None
+
+        if motion_execution_time is not None:
+            self.motion_execution_time = float(motion_execution_time)
 
         attempts = int(timeout * 10) if timeout != 0 else float('inf')
 
@@ -410,7 +426,13 @@ class NavModule:
         self.get_logger().info(f'NavModule.->use_point_cloud set to {value}')
 
     def nav_goal(
-        self, goal, timeout, motion_synth_pose=None, goal_distance=None, use_point_cloud=True
+        self,
+        goal,
+        timeout,
+        motion_synth_pose=None,
+        goal_distance=None,
+        use_point_cloud=True,
+        motion_execution_time=None,
     ):
 
         self.initialize_before_new_goal(send_stop=True)
@@ -428,7 +450,13 @@ class NavModule:
             self.get_logger().info('NavModule.->Standard Nav Goal')
             self.set_use_point_cloud(use_point_cloud)
 
-        return self.go_abs(goal, timeout, goal_distance, keep_motion_synth=True)
+        return self.go_abs(
+            goal,
+            timeout,
+            goal_distance,
+            motion_synth=True,
+            motion_execution_time=motion_execution_time,
+        )
 
 
 if __name__ == '__main__':
@@ -462,8 +490,9 @@ if __name__ == '__main__':
 
     # goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     goal = Pose2D(x=0.0, y=0.0, theta=0.0)
-    success = nav.nav_goal(goal, motion_synth_pose=ms_config,
-                           timeout=0, goal_distance=None)
+    success = nav.nav_goal(
+        goal, motion_synth_pose=ms_config, timeout=0, goal_distance=None, motion_execution_time=1.5
+    )
 
     # goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     # success = nav.nav_goal(

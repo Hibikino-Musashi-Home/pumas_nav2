@@ -10,6 +10,7 @@ import tf2_ros
 from actionlib_msgs.msg import GoalStatus
 from nav_msgs.msg import Path
 from pumas_interfaces.action import MotionSynthesis
+from pumas_interfaces.msg import MotionPose
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.duration import Duration
@@ -42,12 +43,16 @@ class MotionSynth(Node):
             callback_group=self._action_cb_group,
         )
 
-        self.arm_pub = self.create_publisher(
-            Float32MultiArray, '/hardware/arm/goal_pose', 10)
-        self.lift_pub = self.create_publisher(
-            Float32, '/hardware/torso/goal_pose', 10)
-        self.head_pub = self.create_publisher(
-            Float32MultiArray, '/hardware/head/goal_pose', 10)
+        # Single atomic message carrying Joints + motion_execution_time on a
+        # dedicated topic. arm_controller and head_controller both subscribe
+        # and pick up their respective fields. simple_move continues to use
+        # the legacy Float32(MultiArray) topics unchanged.
+        self.motion_pose_pub = self.create_publisher(
+            MotionPose, '/hardware/motion_pose', 10)
+
+        # Per-goal motion execution time. Set in execute_callback before any
+        # send_pose call.
+        self._motion_execution_time = 0.5
 
         self.current_pose = None
         self.global_nav_goal_reached = False
@@ -124,24 +129,10 @@ class MotionSynth(Node):
             self.global_nav_goal_reached = True
 
     def send_pose(self, joints):
-        lift_msg = Float32(data=joints.arm_lift_joint)
-        arm_msg = Float32MultiArray(
-            data=[
-                joints.arm_flex_joint,
-                joints.arm_roll_joint,
-                joints.wrist_flex_joint,
-                joints.wrist_roll_joint,
-            ]
-        )
-        head_msg = Float32MultiArray(
-            data=[
-                joints.head_pan_joint,
-                joints.head_tilt_joint,
-            ]
-        )
-        self.lift_pub.publish(lift_msg)
-        self.arm_pub.publish(arm_msg)
-        self.head_pub.publish(head_msg)
+        msg = MotionPose()
+        msg.joints = joints
+        msg.motion_execution_time = float(self._motion_execution_time)
+        self.motion_pose_pub.publish(msg)
 
     # Risk classification tags returned by _classify_goal_pose_risk.
     RISK_LARGE_FORWARD_FLEX = 'large_forward_flex'
@@ -205,6 +196,47 @@ class MotionSynth(Node):
     TRIGGER_WAYPOINT_RADIUS = 1.0  # m, distance to frozen waypoint to fire
     TRIGGER_GOAL_SAFETY_RADIUS = 0.6  # m, fallback when detour skipped waypoint
     MIN_SETTLE_SEC = 1.5  # min seconds after start_pose before trigger
+    # If the robot is already this close to the goal at execute time, the path
+    # planner will return no/short path and the path-based trigger never fires.
+    # Take the trivial-nav fast path instead.
+    TRIVIAL_NAV_DISTANCE = 0.15  # m
+
+    def _execute_trivial(self, goal, goal_handle, start_pose_dispatch_time):
+        risk = self._classify_goal_pose_risk(goal.goal_pose)
+        needs_staging = risk is not None
+
+        # Let start_pose play out before we layer the next command on top.
+        elapsed_sec = (self.get_clock().now() -
+                       start_pose_dispatch_time).nanoseconds * 1e-9
+        settle_remaining = max(0.0, self.MIN_SETTLE_SEC - elapsed_sec)
+        if settle_remaining > 0:
+            time.sleep(settle_remaining)
+
+        if goal_handle.is_cancel_requested:
+            goal_handle.canceled()
+            return MotionSynthesis.Result(result=False)
+
+        if needs_staging:
+            self.get_logger().info(
+                'motion_synth -> trivial nav: sending staging pose'
+            )
+            self.send_pose(self.create_temporary_pose(goal.goal_pose))
+            time.sleep(self.MIN_SETTLE_SEC)
+
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return MotionSynthesis.Result(result=False)
+
+        self.get_logger().info(
+            'motion_synth -> trivial nav: sending final goal pose'
+        )
+        self.send_pose(goal.goal_pose)
+        # joint_goal_reached is a TODO stub that just returns True, so wait a
+        # fixed settle period to give the hardware time to reach the pose.
+        time.sleep(self.MIN_SETTLE_SEC)
+
+        goal_handle.succeed()
+        return MotionSynthesis.Result(result=True)
 
     def execute_callback(self, goal_handle):
         # NOTE: declared as a regular function (not `async`) on purpose. rclpy's
@@ -216,6 +248,16 @@ class MotionSynth(Node):
         goal = goal_handle.request
         feedback = MotionSynthesis.Feedback()
 
+        # motion_execution_time == 0.0 means "unset"; fall back to 0.5 s.
+        self._motion_execution_time = (
+            float(goal.motion_execution_time)
+            if goal.motion_execution_time > 0.0 else 0.5
+        )
+        self.get_logger().info(
+            f'motion_synth -> motion_execution_time = '
+            f'{self._motion_execution_time:.3f} s'
+        )
+
         # Reset only the per-goal latching flag. Do NOT reset path_points,
         # because mvn_pln publishes the goal_path only once per replan and the
         # message may have arrived either before or after this callback starts.
@@ -226,6 +268,23 @@ class MotionSynth(Node):
         if goal.apply_start_pose:
             self.send_pose(goal.start_pose)
             start_pose_dispatch_time = self.get_clock().now()
+
+        # Trivial-nav fast path: when the robot is already at the goal, the
+        # planner returns no/short path and the path-based trigger never fires,
+        # so the goal_pose would be skipped. Detect this case and execute the
+        # arm motion directly.
+        if self.current_pose is not None:
+            cur_xy = (self.current_pose[0], self.current_pose[1])
+            goal_xy = (goal.goal_location.x, goal.goal_location.y)
+            d_goal = self._distance_xy(cur_xy, goal_xy)
+            if d_goal < self.TRIVIAL_NAV_DISTANCE:
+                self.get_logger().info(
+                    f'motion_synth -> trivial nav (d_goal={d_goal:.3f} m '
+                    f'< {self.TRIVIAL_NAV_DISTANCE:.2f} m); '
+                    'executing arm motion directly'
+                )
+                return self._execute_trivial(goal, goal_handle,
+                                             start_pose_dispatch_time)
 
         # Wait until a path whose tail matches this goal_location arrives.
         # 15 s is longer than mvn_pln's 10 s potential-fields timeout so a slow
