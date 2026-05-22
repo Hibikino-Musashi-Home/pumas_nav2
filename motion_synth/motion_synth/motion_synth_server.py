@@ -196,6 +196,13 @@ class MotionSynth(Node):
     TRIGGER_WAYPOINT_RADIUS = 1.0  # m, distance to frozen waypoint to fire
     TRIGGER_GOAL_SAFETY_RADIUS = 0.6  # m, fallback when detour skipped waypoint
     MIN_SETTLE_SEC = 1.5  # min seconds after start_pose before trigger
+    # Final goal pose is sent only after mvn_pln has finished the path and is
+    # in its final-yaw correction phase. We detect that phase by requiring the
+    # robot to be inside this radius around the goal location — during normal
+    # navigation the yaw may transiently match goal_theta and we must NOT fire
+    # on that false positive.
+    FINAL_POSE_GOAL_RADIUS = 0.3  # m
+    FINAL_POSE_YAW_TOLERANCE = 0.3  # rad
     # If the robot is already this close to the goal at execute time, the path
     # planner will return no/short path and the path-based trigger never fires.
     # Take the trivial-nav fast path instead.
@@ -417,19 +424,32 @@ class MotionSynth(Node):
                         self.current_pose[2] - goal.goal_location.theta)
                     if yaw_error > np.pi:
                         yaw_error = 2 * np.pi - yaw_error
+                    cur_xy = (self.current_pose[0], self.current_pose[1])
+                    dist_to_goal = self._distance_xy(cur_xy, goal_xy)
+                    yaw_aligned_at_goal = (
+                        yaw_error < self.FINAL_POSE_YAW_TOLERANCE and
+                        dist_to_goal < self.FINAL_POSE_GOAL_RADIUS
+                    )
                     if loop_iter % LOG_PERIOD == 0:
                         self.get_logger().info(
                             f'motion_synth -> waiting final: '
-                            f'yaw={self.current_pose[2]:.2f} rad, '
-                            f'goal_theta={goal.goal_location.theta:.2f} rad, '
-                            f'yaw_error={yaw_error:.2f} rad (<0.30 fires), '
+                            f'd_goal={dist_to_goal:.2f}/'
+                            f'{self.FINAL_POSE_GOAL_RADIUS:.2f} m, '
+                            f'yaw_error={yaw_error:.2f}/'
+                            f'{self.FINAL_POSE_YAW_TOLERANCE:.2f} rad '
+                            f'(both required), '
                             f'nav_goal_reached={self.global_nav_goal_reached}'
                         )
-                    if yaw_error < 0.3 or self.global_nav_goal_reached:
-                        fire_reason = 'yaw aligned' if yaw_error < 0.3 else 'nav SUCCEEDED'
+                    if yaw_aligned_at_goal or self.global_nav_goal_reached:
+                        fire_reason = (
+                            'yaw aligned at goal' if yaw_aligned_at_goal
+                            else 'nav SUCCEEDED'
+                        )
                         self.get_logger().info(
                             f'motion_synth -> sending final goal pose '
-                            f'({fire_reason}, yaw_error={yaw_error:.2f}, '
+                            f'({fire_reason}, '
+                            f'd_goal={dist_to_goal:.2f} m, '
+                            f'yaw_error={yaw_error:.2f} rad, '
                             f'nav_goal_reached={self.global_nav_goal_reached})'
                         )
                         self.send_pose(goal.goal_pose)
