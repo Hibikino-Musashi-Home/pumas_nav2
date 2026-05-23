@@ -35,6 +35,7 @@ public:
     this->declare_parameter("furniture_pkg", "");
     this->declare_parameter("furniture_path", "");
     this->declare_parameter("furniture_yaml_file", "");
+    this->declare_parameter("map_name", std::string(""));
 
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("obstacle_radius", obstacle_radius_);

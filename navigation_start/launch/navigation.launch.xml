@@ -80,6 +80,7 @@
     <param name="obstacle_radius" value="0.05"/>
     <param name="debug" value="True"/>
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
+    <param name="map_name" value="$(var map_name)"/>
     <!-- Static furniture obstacles. The node skips the loader entirely when
          add_static_obstacles is false, so the env_furniture_pkg package only
          needs to exist at runtime when add_static_obstacles is true. -->
