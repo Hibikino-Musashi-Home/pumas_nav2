@@ -213,6 +213,7 @@ class NavModule:
         return pose2d
 
     def create_arm_joint_goal(self, joint_poses):
+        joint_poses = {**default_arm_pose, **(joint_poses or {})}
         joints = Joints()
         joints.arm_lift_joint = joint_poses['arm_lift_joint']
         joints.arm_flex_joint = joint_poses['arm_flex_joint']
