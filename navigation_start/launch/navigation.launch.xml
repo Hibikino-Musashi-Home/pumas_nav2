@@ -57,7 +57,7 @@
   <arg name="add_static_obstacles" default="True"/>
   <arg name="env_furniture_pkg" default="hma_env_manage2"/>
   <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
-
+  <arg name="move_head" default="True"/>
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
@@ -155,7 +155,7 @@
     <param name="max_angular_speed" value="1.25"/>
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
-    <param name="move_head" value="True"/>
+    <param name="move_head" value="$(var move_head)"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
