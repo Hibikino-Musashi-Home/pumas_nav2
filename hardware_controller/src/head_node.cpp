@@ -33,6 +33,7 @@ public:
     this->declare_parameter<double>("pan_max", 1.74);
     this->declare_parameter<double>("tilt_min", -0.9);
     this->declare_parameter<double>("tilt_max", 0.47);
+    this->declare_parameter<bool>("move_head", true);
 
 
     // Initialize internal variables from declared parameters
@@ -46,6 +47,7 @@ public:
     this->get_parameter("pan_max", pan_max_);
     this->get_parameter("tilt_min", tilt_min_);
     this->get_parameter("tilt_max", tilt_max_);
+    this->get_parameter("move_head", move_head_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -102,6 +104,7 @@ private:
   std::string head_goal_reached_topic_;
 
   double pan_min_, pan_max_, tilt_min_, tilt_max_;
+  bool   move_head_ = true;
 
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr  pub_head_goal_traj_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr       pub_head_current_pose_;
@@ -145,6 +148,14 @@ private:
       else if (param.get_name() == "head_goal_topic")         head_goal_topic_          = param.as_string();
       else if (param.get_name() == "head_current_topic")      head_current_topic_       = param.as_string();
       else if (param.get_name() == "head_goal_reached_topic") head_goal_reached_topic_  = param.as_string();
+
+      else if (param.get_name() == "move_head") {
+        move_head_ = param.as_bool();
+        RCLCPP_INFO(this->get_logger(),
+          "HeadController.-> move_head set to %s",
+          move_head_ ? "true (motion_synth head enabled)"
+                     : "false (gaze controller owns head)");
+      }
 
       else {
         result.successful = false;
@@ -238,6 +249,12 @@ private:
 
   void motionPoseCallback(const pumas_interfaces::msg::MotionPose::SharedPtr msg)
   {
+    if (!move_head_) {
+      RCLCPP_DEBUG(this->get_logger(),
+        "head_node.-> move_head=false: ignoring motion_pose head command (gaze active)");
+      return;
+    }
+
     head_time_from_start_ = (msg->motion_execution_time > 0.0f)
         ? static_cast<double>(msg->motion_execution_time)
         : kDefaultHeadTimeFromStart;
