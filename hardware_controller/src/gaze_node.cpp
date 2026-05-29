@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/executors/multi_threaded_executor.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 
 #include <std_msgs/msg/float32_multi_array.hpp>
 
@@ -10,12 +11,20 @@
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
+#include <pumas_interfaces/action/gaze_head.hpp>
+
 #include <string>
 #include <cmath>
+#include <thread>
+#include <chrono>
+
 
 class GazeController : public rclcpp::Node
 {
 public:
+  using GazeHead       = pumas_interfaces::action::GazeHead;
+  using GoalHandleGaze = rclcpp_action::ServerGoalHandle<GazeHead>;
+
   GazeController()
   : Node("gaze_controller"),
     tf_buffer_(this->get_clock()),
@@ -33,13 +42,21 @@ public:
 
     pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       make_name("/hardware/head/goal_pose"),
-      rclcpp::QoS(10).transient_local());
+      rclcpp::QoS(10).reliable());
 
-    timer_ = this->create_wall_timer(
-      std::chrono::milliseconds(100),
-      std::bind(&GazeController::timerCallback, this));
+    // Action server on /gaze_head.
+    // execute() runs in a detached thread so it can block without starving
+    // the TF listener subscription that the MultiThreadedExecutor serves.
+    action_server_ = rclcpp_action::create_server<GazeHead>(
+      this,
+      "gaze_head",
+      std::bind(&GazeController::handle_goal,     this,
+                std::placeholders::_1, std::placeholders::_2),
+      std::bind(&GazeController::handle_cancel,   this, std::placeholders::_1),
+      std::bind(&GazeController::handle_accepted, this, std::placeholders::_1));
 
-    RCLCPP_INFO(this->get_logger(), "GazeController.-> Node has been started.");
+    RCLCPP_INFO(this->get_logger(),
+      "GazeController.-> Action server ready on /gaze_head");
   }
 
 private:
@@ -52,7 +69,7 @@ private:
   tf2_ros::TransformListener tf_listener_;
 
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_head_goal_pose_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp_action::Server<GazeHead>::SharedPtr action_server_;
 
   std::string make_name(const std::string &suffix) const
   {
@@ -71,14 +88,13 @@ private:
     return name;
   }
 
-  // Look up gaze_tf_name in the map frame and compute [pan, tilt] head angles.
-  // Returns false and leaves msg unchanged when any TF lookup fails.
-  bool gaze_point_to_goal_head_angles(
+  // Compute [pan, tilt] toward gaze_tf_name in the map frame.
+  // Returns false (and leaves msg unchanged) when any TF lookup fails.
+  bool gaze_point_to_head_angles(
     std_msgs::msg::Float32MultiArray &msg,
-    const std::string &gaze_tf_name = "gaze_point")
+    const std::string &gaze_tf_name)
   {
     try {
-      // Robot pose in map frame
       geometry_msgs::msg::TransformStamped robot_tf =
         tf_buffer_.lookupTransform("map", base_link_name_, tf2::TimePointZero);
 
@@ -94,7 +110,6 @@ private:
       tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
       float robot_t = static_cast<float>(yaw);
 
-      // Gaze point in map frame
       geometry_msgs::msg::TransformStamped gaze_tf =
         tf_buffer_.lookupTransform("map", gaze_tf_name, tf2::TimePointZero);
 
@@ -102,16 +117,14 @@ private:
       float gaze_y = static_cast<float>(gaze_tf.transform.translation.y);
       float gaze_z = static_cast<float>(gaze_tf.transform.translation.z);
 
-      // Pan: horizontal angle from robot heading toward gaze point
       float pan = atan2(gaze_y - robot_y, gaze_x - robot_x) - robot_t;
       if (pan >  M_PI) pan -= 2.0f * M_PI;
       if (pan <= -M_PI) pan += 2.0f * M_PI;
 
-      // Tilt: vertical angle from head height toward gaze point
-      float dx = gaze_x - robot_x;
-      float dy = gaze_y - robot_y;
+      float dx     = gaze_x - robot_x;
+      float dy     = gaze_y - robot_y;
       float h_dist = std::sqrt(dx * dx + dy * dy);
-      float tilt = std::atan2(gaze_z - static_cast<float>(head_height_), h_dist);
+      float tilt   = std::atan2(gaze_z - static_cast<float>(head_height_), h_dist);
 
       msg.data = {pan, tilt};
       return true;
@@ -123,11 +136,65 @@ private:
     }
   }
 
-  void timerCallback()
+  // ---------- Action server callbacks ----------
+  rclcpp_action::GoalResponse handle_goal(
+    const rclcpp_action::GoalUUID &,
+    std::shared_ptr<const GazeHead::Goal> goal)
   {
-    std_msgs::msg::Float32MultiArray msg;
-    if (gaze_point_to_goal_head_angles(msg, gaze_tf_name_))
-      pub_head_goal_pose_->publish(msg);
+    const std::string tf_name =
+      goal->gaze_tf_name.empty() ? gaze_tf_name_ : goal->gaze_tf_name;
+    RCLCPP_INFO(this->get_logger(),
+      "GazeController.-> Goal received. TF target: '%s'", tf_name.c_str());
+    return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+  }
+
+  rclcpp_action::CancelResponse handle_cancel(
+    const std::shared_ptr<GoalHandleGaze>)
+  {
+    RCLCPP_INFO(this->get_logger(), "GazeController.-> Cancel requested.");
+    return rclcpp_action::CancelResponse::ACCEPT;
+  }
+
+  void handle_accepted(const std::shared_ptr<GoalHandleGaze> goal_handle)
+  {
+    std::thread([this, goal_handle]() { execute(goal_handle); }).detach();
+  }
+
+  // Main gaze loop. Runs in a detached thread; publishes head angle commands
+  // at 100 ms intervals until canceled or the node shuts down.
+  void execute(const std::shared_ptr<GoalHandleGaze> goal_handle)
+  {
+    const auto goal = goal_handle->get_goal();
+    const std::string tf_name =
+      goal->gaze_tf_name.empty() ? gaze_tf_name_ : goal->gaze_tf_name;
+
+    RCLCPP_INFO(this->get_logger(),
+      "GazeController.-> Gaze started. Target TF: '%s'", tf_name.c_str());
+
+    auto feedback = std::make_shared<GazeHead::Feedback>();
+    auto result   = std::make_shared<GazeHead::Result>();
+
+    while (rclcpp::ok()) {
+      if (goal_handle->is_canceling()) {
+        result->success = false;
+        goal_handle->canceled(result);
+        RCLCPP_INFO(this->get_logger(), "GazeController.-> Gaze canceled.");
+        return;
+      }
+
+      std_msgs::msg::Float32MultiArray msg;
+      if (gaze_point_to_head_angles(msg, tf_name)) {
+        pub_head_goal_pose_->publish(msg);
+        feedback->pan  = msg.data[0];
+        feedback->tilt = msg.data[1];
+        goal_handle->publish_feedback(feedback);
+      }
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    result->success = false;
+    goal_handle->abort(result);
   }
 };
 

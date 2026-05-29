@@ -29,6 +29,7 @@ set(srv_files
 set(action_files
   "action/MotionSynthesis.action"
   "action/PumasNav.action"
+  "action/GazeHead.action"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

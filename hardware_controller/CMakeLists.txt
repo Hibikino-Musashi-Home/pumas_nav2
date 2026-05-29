@@ -23,6 +23,7 @@ find_package(tf2_ros REQUIRED)
 
 find_package(rcl_interfaces REQUIRED)
 find_package(pumas_interfaces REQUIRED)
+find_package(rclcpp_action REQUIRED)
 
 # C++ section
 add_executable(arm_node
@@ -71,12 +72,15 @@ ament_target_dependencies(head_node
 
 ament_target_dependencies(gaze_node
     rclcpp
+    rclcpp_action
 
     std_msgs
     geometry_msgs
 
     tf2
     tf2_ros
+
+    pumas_interfaces
 )
 
 

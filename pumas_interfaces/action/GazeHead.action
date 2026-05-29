@@ -1,0 +1,9 @@
+# Goal
+string gaze_tf_name   # target TF frame name; empty string → use node param gaze_tf_name
+---
+# Result
+bool success
+---
+# Feedback
+float32 pan
+float32 tilt
