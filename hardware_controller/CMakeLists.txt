@@ -23,6 +23,7 @@ find_package(tf2_ros REQUIRED)
 
 find_package(rcl_interfaces REQUIRED)
 find_package(pumas_interfaces REQUIRED)
+find_package(rclcpp_action REQUIRED)
 
 # C++ section
 add_executable(arm_node
@@ -30,6 +31,9 @@ add_executable(arm_node
 )
 add_executable(head_node
     src/head_node.cpp
+)
+add_executable(gaze_node
+    src/gaze_node.cpp
 )
 
 ament_target_dependencies(arm_node
@@ -66,6 +70,19 @@ ament_target_dependencies(head_node
     pumas_interfaces
 )
 
+ament_target_dependencies(gaze_node
+    rclcpp
+    rclcpp_action
+
+    std_msgs
+    geometry_msgs
+
+    tf2
+    tf2_ros
+
+    pumas_interfaces
+)
+
 
 # Python section
 ament_python_install_package(${PROJECT_NAME})
@@ -82,6 +99,10 @@ arm_node
 )
 install(TARGETS
 head_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+install(TARGETS
+gaze_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
