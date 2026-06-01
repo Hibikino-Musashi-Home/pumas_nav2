@@ -62,10 +62,7 @@ class NavModule:
 
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
-        # Forwarded to StartAndEndJoints.motion_execution_time →
-        # MotionSynthesis.motion_execution_time → arm/head goal_pose_time.
-        # 0.0 means "use server default (0.5 s)".
-        self.motion_execution_time = 0.0
+        self.motion_execution_time = 0.0  # for motion_synth arm/head reached time
 
         # Publishers
         self.pub_marker = self.create_publisher(Marker, '/nav_goal_marker', 10)
@@ -109,7 +106,14 @@ class NavModule:
     def __getattr__(self, name):
         return getattr(self._node, name)
 
-    def call_param_rw(self, node_name, param_name, param_value: str = '', write: bool = False):
+    def call_param_rw(
+        self,
+        node_name,
+        param_name,
+        param_value: str = '',
+        write: bool = False,
+        timeout_sec: float = 3.0,
+    ):
         req = ParamReadWrite.Request()
         req.node_name = node_name
         req.param_name = param_name
@@ -119,16 +123,17 @@ class NavModule:
         future = self.param_rw_client.call_async(req)
 
         if self._external_node:
-            # External executor is spinning this node; do not spin again
-            # (spin_until_future_complete would deadlock). Wait for the
-            # done-callback to fire from the external spinner's thread.
             done = threading.Event()
             future.add_done_callback(lambda _f: done.set())
-            if not done.wait(timeout=10.0):
+            if not done.wait(timeout=timeout_sec):
                 self.get_logger().error('NavModule.->param_read_write call timed out')
                 return None
         else:
-            rclpy.spin_until_future_complete(self._node, future)
+            rclpy.spin_until_future_complete(
+                self._node, future, timeout_sec=timeout_sec)
+            if not future.done():
+                self.get_logger().error('NavModule.->param_read_write call timed out')
+                return None
 
         if future.result() is not None:
             return future.result().param_value
@@ -149,8 +154,7 @@ class NavModule:
     def nav_feedback_callback(self, feedback_msg):
         feedback = feedback_msg.feedback
         self._action_feedback = feedback
-        # Latch near_goal flag from feedback so go_abs() can cancel gaze
-        # mid-navigation before the result arrives.
+
         if feedback.near_goal_reached:
             self._action_near_goal = True
         self.get_logger().info(
@@ -186,7 +190,6 @@ class NavModule:
             self.get_logger().warn('NavModule.->Canceling PumasNav goal')
             self._goal_handle.cancel_goal_async()
 
-    # ---------- Gaze management ----------
     def _gaze_goal_response_callback(self, future):
         goal_handle = future.result()
         if goal_handle is None or not goal_handle.accepted:
@@ -198,11 +201,8 @@ class NavModule:
         self.get_logger().info('NavModule.->GazeHead goal accepted, gaze active')
 
     def start_gaze(self, gaze_tf_name: str = '') -> bool:
-        """Send a GazeHead goal (fire-and-forget). Returns False when the
-        action server is unreachable within 3 s."""
         if not self.gaze_action_client.wait_for_server(timeout_sec=3.0):
-            self.get_logger().warn(
-                'NavModule.->GazeHead action server not available')
+            self.get_logger().warn('NavModule.->GazeHead action server not available')
             return False
 
         goal_msg = GazeHead.Goal()
@@ -218,7 +218,6 @@ class NavModule:
         return True
 
     def cancel_gaze(self):
-        """Cancel the active GazeHead goal (no-op if none)."""
         if self._gaze_goal_handle is not None:
             self.get_logger().info('NavModule.->Canceling GazeHead goal')
             self._gaze_goal_handle.cancel_goal_async()
@@ -226,30 +225,43 @@ class NavModule:
         self._gaze_active = False
 
     def _set_move_head(self, enabled: bool, sync: bool = True):
-        """Enable or disable head commands from motion_synth via param_rw.
-
-        sync=False: fire-and-forget via call_async (safe to call inside
-                    go_abs() loop where spin_until_future_complete would
-                    conflict with the loop's local executor).
-        """
         value = 'true' if enabled else 'false'
-        if sync:
-            self.call_param_rw(
-                node_name='head_controller',
-                param_name='move_head',
-                param_value=value,
-                write=True,
-            )
-        else:
-            req = ParamReadWrite.Request()
-            req.node_name = 'head_controller'
-            req.param_name = 'move_head'
-            req.write = True
-            req.value = value
-            self.param_rw_client.call_async(req)
+        for node_name in ('head_controller', 'simple_move'):
+            if sync:
+                self.call_param_rw(
+                    node_name=node_name,
+                    param_name='move_head',
+                    param_value=value,
+                    write=True,
+                )
+            else:
+                req = ParamReadWrite.Request()
+                req.node_name = node_name
+                req.param_name = 'move_head'
+                req.write = True
+                req.value = value
+                self.param_rw_client.call_async(req)
         self.get_logger().info(
-            f'NavModule.->head_controller move_head set to {value}')
-    # ----------------------------------
+            f'NavModule.->move_head set to {value} (head_controller, simple_move)'
+        )
+
+    def _set_use_point_cloud(self, enabled: bool):
+        value = 'true' if enabled else 'false'
+
+        self.call_param_rw(
+            node_name='potential_fields',
+            param_name='use_point_cloud',
+            param_value=value,
+            write=True,
+        )
+        self.call_param_rw(
+            node_name='map_augmenter',
+            param_name='use_point_cloud',
+            param_value=value,
+            write=True,
+        )
+
+        self.get_logger().info(f'NavModule.->use_point_cloud set to {value}')
 
     def callback_stop(self, msg):
         self.robot_stop = True
@@ -298,19 +310,6 @@ class NavModule:
         joints.head_pan_joint = joint_poses['head_pan_joint']
         joints.head_tilt_joint = joint_poses['head_tilt_joint']
         return joints
-
-    # def create_goal_pose(self, x, y, yaw, frame_id):
-    #    goal = PoseStamped()
-    #    goal.header.frame_id = frame_id
-    #    goal.pose.position.x = x
-    #    goal.pose.position.y = y
-    #    goal.pose.position.z = 0.0
-    #    q = quaternion_from_euler(0, 0, yaw)
-    #    goal.pose.orientation.x = q[0]
-    #    goal.pose.orientation.y = q[1]
-    #    goal.pose.orientation.z = q[2]
-    #    goal.pose.orientation.w = q[3]
-    #    return goal
 
     def send_nav_action_goal(self, goal: Pose2D):
         if not self.nav_action_client.wait_for_server(timeout_sec=3.0):
@@ -443,13 +442,10 @@ class NavModule:
             if executor is not None:
                 executor.spin_once(timeout_sec=0.1)
 
-            # Cancel gaze when near_goal_reached fires in feedback so that
-            # motion_synth's end_pose can control the head without conflict.
-            # Checked before action_done so it fires even if both flags are
-            # set in the same spin cycle.
             if self._gaze_active and self._action_near_goal:
                 self.get_logger().info(
-                    'NavModule.->near_goal_reached: canceling gaze, restoring move_head')
+                    'NavModule.->near_goal_reached: canceling gaze, restoring move_head'
+                )
                 self.cancel_gaze()
                 self._set_move_head(True, sync=False)
 
@@ -498,24 +494,6 @@ class NavModule:
 
         return result
 
-    def set_use_point_cloud(self, enabled: bool):
-        value = 'true' if enabled else 'false'
-
-        self.call_param_rw(
-            node_name='potential_fields',
-            param_name='use_point_cloud',
-            param_value=value,
-            write=True,
-        )
-        self.call_param_rw(
-            node_name='map_augmenter',
-            param_name='use_point_cloud',
-            param_value=value,
-            write=True,
-        )
-
-        self.get_logger().info(f'NavModule.->use_point_cloud set to {value}')
-
     def nav_goal(
         self,
         goal,
@@ -526,20 +504,11 @@ class NavModule:
         motion_execution_time=None,
         gaze_point=False,
     ):
-        """Navigate to goal.
-
-        Args:
-            gaze_point: False → no gaze.  True → gaze using node's default
-                        gaze_tf_name param.  str → gaze using that TF name.
-                        When active, move_head on head_controller is set to
-                        False so motion_synth cannot override the head until
-                        gaze is cancelled near the goal.
-        """
         self.initialize_before_new_goal(send_stop=True)
 
         if motion_synth_pose is not None:
             self.get_logger().info('NavModule.->Motion Synth Nav Goal with Pose Config')
-            self.set_use_point_cloud(False)
+            self._set_use_point_cloud(False)
 
             if 'start' in motion_synth_pose:
                 self.motion_synth_start_pose = motion_synth_pose['start']
@@ -548,9 +517,11 @@ class NavModule:
 
         else:
             self.get_logger().info('NavModule.->Standard Nav Goal')
-            self.set_use_point_cloud(use_point_cloud)
+            if gaze_point is not False:
+                self._set_use_point_cloud(False)
+            else:
+                self._set_use_point_cloud(use_point_cloud)
 
-        # Start gaze if requested
         if gaze_point is not False:
             tf_name = gaze_point if isinstance(gaze_point, str) else ''
             if self.start_gaze(tf_name):
@@ -567,7 +538,8 @@ class NavModule:
         # Ensure gaze is cancelled and move_head restored after nav ends
         if self._gaze_active:
             self.get_logger().info(
-                'NavModule.->Nav ended: canceling gaze (fallback), restoring move_head')
+                'NavModule.->Nav ended: canceling gaze (fallback), restoring move_head'
+            )
             self.cancel_gaze()
             self._set_move_head(True)
 
@@ -603,10 +575,19 @@ if __name__ == '__main__':
         'goal': goal_pose,
     }
 
+    # for gaze node test
+    gaze_tf = 'gaze_point'
+    gaze_tf = False
+
     # goal = Pose2D(x=2.58, y=2.0, theta=0.0)
-    goal = Pose2D(x=5.7, y=0.4, theta=0.0)
+    goal = Pose2D(x=1.4, y=3.6, theta=0.0)
+    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     success = nav.nav_goal(
-        goal, motion_synth_pose=ms_config, timeout=0, goal_distance=None, motion_execution_time=0.2
+        goal,
+        motion_synth_pose=None,
+        timeout=0,
+        goal_distance=None,
+        motion_execution_time=0.2,
     )
 
     # goal = Pose2D(x=0.0, y=0.0, theta=0.0)
