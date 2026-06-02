@@ -764,7 +764,7 @@ if __name__ == '__main__':
         'wrist_flex_joint': np.deg2rad(-90.0),
         'wrist_roll_joint': 0.0,
         'head_pan_joint': 0.0,
-        'head_tilt_joint': np.deg2rad(0.0),
+        'head_tilt_joint': np.deg2rad(60.0),
     }
     ms_config = {
         'start': start_pose,
@@ -782,9 +782,9 @@ if __name__ == '__main__':
     ]
     via_points = None
 
-    goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     goal = Pose2D(x=0.5, y=3.6, theta=0.0)
+    goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     success = nav.nav_goal(
         goal,
         motion_synth_pose=ms_config,

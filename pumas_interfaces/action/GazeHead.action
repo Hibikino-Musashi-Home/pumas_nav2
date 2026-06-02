@@ -1,5 +1,6 @@
 # Goal (motion_synth_end pose)
-bool restore_head 
+string gaze_tf_name
+bool restore_head
 float32 restore_pan
 float32 restore_tilt
 ---
