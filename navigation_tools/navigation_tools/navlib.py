@@ -8,7 +8,8 @@ from typing import Optional, Union
 import numpy as np
 import rclpy
 import tf2_ros
-from geometry_msgs.msg import Pose2D, PoseStamped
+from actionlib_msgs.msg import GoalStatus
+from geometry_msgs.msg import Pose, Pose2D, PoseArray, PoseStamped
 from pumas_interfaces.action import GazeHead, PumasNav
 from pumas_interfaces.msg import Joints, StartAndEndJoints
 from pumas_interfaces.srv import ParamReadWrite
@@ -17,7 +18,7 @@ from rclpy.clock import Clock
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import Empty, Float32MultiArray
+from std_msgs.msg import Empty, Float32, Float32MultiArray
 from tf2_ros import TransformException
 from tf_transformations import euler_from_quaternion, quaternion_from_euler
 from visualization_msgs.msg import Marker
@@ -63,14 +64,26 @@ class NavModule:
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
         self.motion_execution_time = 0.0  # for motion_synth arm/head reached time
+        self.via_points = None  # list of Pose2D the path should pass through
 
         # Publishers
         self.pub_marker = self.create_publisher(Marker, '/nav_goal_marker', 10)
-        self.pub_dist_angle = self.create_publisher(
-            Float32MultiArray, '/simple_move/goal_dist_angle', 10
+
+        # Relative holonomic move (go_rel): base-frame [x, y, yaw].
+        self.pub_goal_rel_pose = self.create_publisher(
+            Float32MultiArray, '/simple_move/goal_rel_pose', 10
         )
         self.pub_robot_stop = self.create_publisher(
             Empty, '/navigation/stop', 10)
+
+        # Recovery-pose publishers: when motion_synth is NOT used, the body is
+        self.pub_arm_goal = self.create_publisher(
+            Float32MultiArray, '/hardware/arm/goal_pose', 10)
+        self.pub_torso_goal = self.create_publisher(
+            Float32, '/hardware/torso/goal_pose', 10)
+        self.pub_head_goal_pose = self.create_publisher(
+            Float32MultiArray, '/hardware/head/goal_pose', 10
+        )
 
         self.create_subscription(Empty, '/stop', self.callback_stop, 10)
 
@@ -96,6 +109,13 @@ class NavModule:
             self._node, GazeHead, '/gaze_head')
         self._gaze_goal_handle = None
         self._gaze_active = False
+
+        # Relative move (go_rel): command goes out on pub_goal_rel_pose, and
+        self.create_subscription(
+            GoalStatus, '/simple_move/goal_reached', self._move_goal_reached_callback, 10
+        )
+        self._move_done = False
+        self._move_success = False
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(
@@ -189,6 +209,12 @@ class NavModule:
         if self._goal_handle is not None:
             self.get_logger().warn('NavModule.->Canceling PumasNav goal')
             self._goal_handle.cancel_goal_async()
+
+    def _move_goal_reached_callback(self, msg):
+        if msg.goal_id.id != '-1':  # for go_rel
+            return
+        self._move_done = True
+        self._move_success = msg.status == GoalStatus.SUCCEEDED
 
     def _gaze_goal_response_callback(self, future):
         goal_handle = future.result()
@@ -311,6 +337,31 @@ class NavModule:
         joints.head_tilt_joint = joint_poses['head_tilt_joint']
         return joints
 
+    def _send_default_arm_pose(self, include_head: bool = True):
+        """Move the body to default_arm_pose (used when motion_synth is off)."""
+        lift = Float32()
+        lift.data = float(default_arm_pose['arm_lift_joint'])
+        self.pub_torso_goal.publish(lift)
+
+        arm = Float32MultiArray()
+        arm.data = [
+            float(default_arm_pose['arm_flex_joint']),
+            float(default_arm_pose['arm_roll_joint']),
+            float(default_arm_pose['wrist_flex_joint']),
+            float(default_arm_pose['wrist_roll_joint']),
+        ]
+        self.pub_arm_goal.publish(arm)
+
+        if include_head:
+            head = Float32MultiArray()
+            head.data = [
+                float(default_arm_pose['head_pan_joint']),
+                float(default_arm_pose['head_tilt_joint']),
+            ]
+            self.pub_head_goal_pose.publish(head)
+
+        self.get_logger().info('NavModule.->No motion_synth: moving body to default_arm_pose')
+
     def send_nav_action_goal(self, goal: Pose2D):
         if not self.nav_action_client.wait_for_server(timeout_sec=3.0):
             self.get_logger().error('NavModule.->PumasNav action server not available')
@@ -358,6 +409,24 @@ class NavModule:
         goal_msg.arm_joints = arm_goal
         goal_msg.use_arm = arm_goal.has_arm_start_pose or arm_goal.has_arm_end_pose
 
+        # Via points (empty -> mvn_pln plans a plain start->goal path).
+        via_array = PoseArray()
+        via_array.header.frame_id = 'map'
+        via_array.header.stamp = Clock().now().to_msg()
+        if self.via_points is not None:
+            for vp in self.via_points:
+                pose = Pose()
+                pose.position.x = float(vp.x)
+                pose.position.y = float(vp.y)
+                pose.position.z = 0.0
+                q = quaternion_from_euler(0.0, 0.0, float(vp.theta))
+                pose.orientation.x = q[0]
+                pose.orientation.y = q[1]
+                pose.orientation.z = q[2]
+                pose.orientation.w = q[3]
+                via_array.poses.append(pose)
+        goal_msg.via_points = via_array
+
         self.reset_action_state()
         self.marker_plot(goal_pose)
 
@@ -397,6 +466,7 @@ class NavModule:
         self.motion_synth_start_pose = None
         self.motion_synth_end_pose = None
         self.motion_execution_time = 0.0
+        self.via_points = None
 
         # Cancel any leftover gaze from a previous goal
         if self._gaze_active:
@@ -409,7 +479,6 @@ class NavModule:
         timeout,
         goal_distance=None,
         motion_synth=False,
-        motion_execution_time=None,
     ) -> bool:
         self.get_logger().info(
             f'NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}'
@@ -420,9 +489,6 @@ class NavModule:
         if not motion_synth:
             self.motion_synth_start_pose = None
             self.motion_synth_end_pose = None
-
-        if motion_execution_time is not None:
-            self.motion_execution_time = float(motion_execution_time)
 
         attempts = int(timeout * 10) if timeout != 0 else float('inf')
 
@@ -494,6 +560,53 @@ class NavModule:
 
         return result
 
+    def go_rel(self, x: float = 0.0, y: float = 0.0, yaw: float = 0.0, timeout: float = 0) -> bool:
+        """Relative holonomic move in the robot (base) frame.
+
+        x: forward(+)/back(-) [m], y: left(+)/right(-) [m], yaw: rotate [rad].
+        navlib only publishes [x, y, yaw] on /simple_move/goal_rel_pose; the
+        motion is controlled by simple_move. Waits for /simple_move/goal_reached
+        and returns True on SUCCEEDED (False on ABORTED/timeout/stop).
+        """
+        self.robot_stop = False
+        self._move_done = False
+        self._move_success = False
+
+        msg = Float32MultiArray()
+        msg.data = [float(x), float(y), float(yaw)]
+        self.pub_goal_rel_pose.publish(msg)
+        self.get_logger().info(
+            f'NavModule.->go_rel: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad')
+
+        attempts = int(timeout * 10) if timeout != 0 else float('inf')
+
+        if not self._external_node:
+            executor = SingleThreadedExecutor()
+            executor.add_node(self._node)
+        else:
+            executor = None
+
+        result = False
+        while rclpy.ok() and not self.robot_stop and attempts >= 0:
+            if executor is not None:
+                executor.spin_once(timeout_sec=0.1)
+
+            if self._move_done:
+                result = self._move_success
+                break
+
+            attempts -= 1
+
+        if attempts < 0 and not self._move_done:
+            self.get_logger().warn('NavModule.->go_rel: timeout waiting for goal_reached')
+
+        if self.robot_stop:
+            # Stop simple_move via /navigation/stop (it subscribes there).
+            self.handle_robot_stop()
+            result = False
+
+        return result
+
     def nav_goal(
         self,
         goal,
@@ -501,10 +614,14 @@ class NavModule:
         motion_synth_pose=None,
         goal_distance=None,
         use_point_cloud=True,
-        motion_execution_time=None,
         gaze_point=False,
+        via_points=None,
     ):
         self.initialize_before_new_goal(send_stop=True)
+
+        # Via points (list of Pose2D) the path should pass through in order.
+        # None/empty -> normal start->goal planning.
+        self.via_points = list(via_points) if via_points else None
 
         if motion_synth_pose is not None:
             self.get_logger().info('NavModule.->Motion Synth Nav Goal with Pose Config')
@@ -514,6 +631,8 @@ class NavModule:
                 self.motion_synth_start_pose = motion_synth_pose['start']
             if 'goal' in motion_synth_pose:
                 self.motion_synth_end_pose = motion_synth_pose['goal']
+            self.motion_execution_time = float(
+                motion_synth_pose.get('execution_time', 0.0))
 
         else:
             self.get_logger().info('NavModule.->Standard Nav Goal')
@@ -521,6 +640,9 @@ class NavModule:
                 self._set_use_point_cloud(False)
             else:
                 self._set_use_point_cloud(use_point_cloud)
+            # No motion_synth: retract the body to default_arm_pose so it is
+            # not seen as an obstacle. Leave the head to gaze when gaze is on.
+            self._send_default_arm_pose(include_head=(gaze_point is False))
 
         if gaze_point is not False:
             tf_name = gaze_point if isinstance(gaze_point, str) else ''
@@ -532,7 +654,6 @@ class NavModule:
             timeout,
             goal_distance,
             motion_synth=True,
-            motion_execution_time=motion_execution_time,
         )
 
         # Ensure gaze is cancelled and move_head restored after nav ends
@@ -550,8 +671,8 @@ if __name__ == '__main__':
     rclpy.init()
     nav = NavModule()
 
-    # goal = Pose2D(x=1.0, y=3.7, theta=0.0)
-    # goal = Pose2D(x=0.8, y=3.44, theta=0.0)
+    goal = Pose2D(x=1.0, y=3.7, theta=0.0)
+    goal = Pose2D(x=0.8, y=3.44, theta=0.0)
     start_pose = {
         'arm_lift_joint': 0.0,
         'arm_flex_joint': np.deg2rad(0.0),
@@ -573,34 +694,40 @@ if __name__ == '__main__':
     ms_config = {
         'start': start_pose,
         'goal': goal_pose,
+        'execution_time': 0.2,
     }
 
     # for gaze node test
     gaze_tf = 'gaze_point'
     gaze_tf = False
 
-    # goal = Pose2D(x=2.58, y=2.0, theta=0.0)
+    via_points = [
+        Pose2D(x=2.6, y=3.9, theta=0.0),
+        Pose2D(x=0.0, y=1.0, theta=0.0),
+    ]
+    # via_points = None
+
     goal = Pose2D(x=1.4, y=3.6, theta=0.0)
+    goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     success = nav.nav_goal(
         goal,
         motion_synth_pose=None,
         timeout=0,
         goal_distance=None,
-        motion_execution_time=0.2,
+        gaze_point=gaze_tf,
+        via_points=via_points,
     )
 
-    # goal = Pose2D(x=0.0, y=0.0, theta=0.0)
-    # success = nav.nav_goal(
-    #    goal, motion_synth_pose=None, timeout=0, goal_distance=None, use_point_cloud=True
-    # )
-
-    if success:
-        nav.get_logger().info('NavStatus.->Nav Goal Reached')
-    else:
-        nav.get_logger().warn('NavStatus.->Failed to Reach Goal')
-
-    nav.get_logger().warn('all complete')
+    # test rel
+    """
+    ok = nav.go_rel(
+        x=0.8,
+        y=0.0,
+        yaw=np.deg2rad(00),
+        timeout=120,
+    )
+    """
 
     # for _ in range(10):
     #    success = nav.nav_goal(goal, motion_synth_pose=None, timeout=0, goal_distance=0)

@@ -1,357 +1,542 @@
-#include "rclcpp/rclcpp.hpp"
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rclcpp/rclcpp.hpp"
 
+#include "PathPlanner.h"
 #include "nav_msgs/srv/get_map.hpp"
 #include "nav_msgs/srv/get_plan.hpp"
-#include "PathPlanner.h"  
+#include "pumas_interfaces/srv/get_plan_with_via.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
-class PathPlannerNode : public rclcpp::Node
-{
+#include <cmath>
+
+class PathPlannerNode : public rclcpp::Node {
 public:
-    PathPlannerNode() : Node("path_planner_node")
-    {
-        // Declare and get parameters
-        this->declare_parameter("use_namespace",        false);
-        this->declare_parameter<float>("smooth_alpha",  0.1f);
-        this->declare_parameter<float>("smooth_beta",   0.9f);
-        this->declare_parameter<bool>("diagonal_paths", false);
-        this->declare_parameter<bool>("use_online",     false);
+  PathPlannerNode() : Node("path_planner_node") {
+    // Declare and get parameters
+    this->declare_parameter("use_namespace", false);
+    this->declare_parameter<float>("smooth_alpha", 0.1f);
+    this->declare_parameter<float>("smooth_beta", 0.9f);
+    this->declare_parameter<bool>("diagonal_paths", false);
 
-        // Initialize internal variables from declared parameters
-        this->get_parameter("use_namespace",    use_namespace_);
-        this->get_parameter("smooth_alpha",     smooth_alpha_);
-        this->get_parameter("smooth_beta",      smooth_beta_);
-        this->get_parameter("diagonal_paths",   diagonal_paths_);
-        this->get_parameter("use_online",       use_online_);
+    // for slam
+    this->declare_parameter<bool>("use_online", false);
+    // When use_online and disable_rear_path_plan are both true, paths are not
+    // planned behind the initial pose (map origin): cells with x < -clearance.
+    this->declare_parameter<bool>("disable_rear_path_plan", false);
+    this->declare_parameter<double>("online_behind_clearance", 1.0);
 
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Smooth Alpha: %.2f, Beta: %.2f, Diagonal: %s, UseOnline: %s",
-                    smooth_alpha_, smooth_beta_,
-                    diagonal_paths_ ? "true" : "false",
-                    use_online_ ? "true" : "false");
+    // Initialize internal variables from declared parameters
+    this->get_parameter("use_namespace", use_namespace_);
+    this->get_parameter("smooth_alpha", smooth_alpha_);
+    this->get_parameter("smooth_beta", smooth_beta_);
+    this->get_parameter("diagonal_paths", diagonal_paths_);
+    this->get_parameter("use_online", use_online_);
+    this->get_parameter("disable_rear_path_plan", disable_rear_path_plan_);
+    this->get_parameter("online_behind_clearance", online_behind_clearance_);
 
-        // Setup parameter change callback
-        param_callback_handle_ = this->add_on_set_parameters_callback(
-            std::bind(&PathPlannerNode::on_parameter_change, this, std::placeholders::_1));
-        
-        // Initialize service clients (non-blocking)
-        init_service_clients();
+    pub_rear_zone_ = this->create_publisher<visualization_msgs::msg::Marker>(
+        make_name("/path_planner/rear_block_zone"),
+        rclcpp::QoS(1).transient_local());
 
-        // Advertise planning services
-        srv_plan_static_ = this->create_service<nav_msgs::srv::GetPlan>(
-            make_name("/path_planner/plan_path_with_static"),
-            std::bind(&PathPlannerNode::callback_a_star_with_static_map, this, std::placeholders::_1, std::placeholders::_2));
+    RCLCPP_INFO(this->get_logger(),
+                "PathPlanner.-> Smooth Alpha: %.2f, Beta: %.2f, Diagonal: %s, "
+                "UseOnline: %s",
+                smooth_alpha_, smooth_beta_, diagonal_paths_ ? "true" : "false",
+                use_online_ ? "true" : "false");
 
-        srv_plan_augmented_ = this->create_service<nav_msgs::srv::GetPlan>(
-            make_name("/path_planner/plan_path_with_augmented"),
-            std::bind(&PathPlannerNode::callback_a_star_with_augmented_map, this, std::placeholders::_1, std::placeholders::_2));
+    // Setup parameter change callback
+    param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
+        &PathPlannerNode::on_parameter_change, this, std::placeholders::_1));
 
-        messages_call_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(1000),
-            std::bind(&PathPlannerNode::messages_caller, this));
+    // Initialize service clients (non-blocking)
+    init_service_clients();
 
-        RCLCPP_INFO(this->get_logger(), "PathPlanner.-> PathPlannerNode is ready.");
-    }
+    // Advertise planning services
+    srv_plan_static_ = this->create_service<nav_msgs::srv::GetPlan>(
+        make_name("/path_planner/plan_path_with_static"),
+        std::bind(&PathPlannerNode::callback_a_star_with_static_map, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
+    srv_plan_augmented_ = this->create_service<nav_msgs::srv::GetPlan>(
+        make_name("/path_planner/plan_path_with_augmented"),
+        std::bind(&PathPlannerNode::callback_a_star_with_augmented_map, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
+    srv_plan_with_via_ =
+        this->create_service<pumas_interfaces::srv::GetPlanWithVia>(
+            make_name("/path_planner/plan_path_with_via"),
+            std::bind(&PathPlannerNode::callback_plan_with_via, this,
+                      std::placeholders::_1, std::placeholders::_2));
+
+    messages_call_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(1000),
+        std::bind(&PathPlannerNode::messages_caller, this));
+
+    RCLCPP_INFO(this->get_logger(), "PathPlanner.-> PathPlannerNode is ready.");
+  }
 
 private:
-    // Parameters
-    bool use_namespace_;
-    float smooth_alpha_;
-    float smooth_beta_;
-    bool diagonal_paths_;
-    bool use_online_;
+  // Parameters
+  bool use_namespace_;
+  float smooth_alpha_;
+  float smooth_beta_;
+  bool diagonal_paths_;
+  bool use_online_;
+  bool disable_rear_path_plan_ = false;
+  double online_behind_clearance_ = 1.0;
 
-    // Service clients
-    rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_static_map_;
-    rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_static_cost_map_;
-    rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_augmented_map_;
-    rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_augmented_cost_map_;
+  // Initial pose is the map origin (0,0,0); cells with x < -clearance (behind)
+  // are masked out of planning when rear blocking is active.
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub_rear_zone_;
 
-    std::vector<std::thread> threads_;
+  // Service clients
+  rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_static_map_;
+  rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_static_cost_map_;
+  rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_augmented_map_;
+  rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_augmented_cost_map_;
 
-    // Service servers
-    rclcpp::Service<nav_msgs::srv::GetPlan>::SharedPtr srv_plan_static_;
-    rclcpp::Service<nav_msgs::srv::GetPlan>::SharedPtr srv_plan_augmented_;
+  std::vector<std::thread> threads_;
 
-    // Parameter callback handle
-    OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+  // Service servers
+  rclcpp::Service<nav_msgs::srv::GetPlan>::SharedPtr srv_plan_static_;
+  rclcpp::Service<nav_msgs::srv::GetPlan>::SharedPtr srv_plan_augmented_;
+  rclcpp::Service<pumas_interfaces::srv::GetPlanWithVia>::SharedPtr
+      srv_plan_with_via_;
 
-    // map services
-    nav_msgs::msg::OccupancyGrid map_;
-    nav_msgs::msg::OccupancyGrid cost_map_;
-    nav_msgs::msg::OccupancyGrid augmented_map_;
-    nav_msgs::msg::OccupancyGrid augmented_cost_map_;
+  // Parameter callback handle
+  OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
 
-    // Timer and readiness flag
-    rclcpp::TimerBase::SharedPtr messages_call_timer_;
-    rclcpp::TimerBase::SharedPtr service_check_timer_;
-    bool services_ready_ = false;
+  // map services
+  nav_msgs::msg::OccupancyGrid map_;
+  nav_msgs::msg::OccupancyGrid cost_map_;
+  nav_msgs::msg::OccupancyGrid augmented_map_;
+  nav_msgs::msg::OccupancyGrid augmented_cost_map_;
 
-    //############
-    // Runtime parameter update callback
-    rcl_interfaces::msg::SetParametersResult on_parameter_change(
-        const std::vector<rclcpp::Parameter> &params)
-    {
-        rcl_interfaces::msg::SetParametersResult result;
-        result.successful = true;
-        result.reason = "PathPlanner.-> Parameters updated successfully.";
+  // Timer and readiness flag
+  rclcpp::TimerBase::SharedPtr messages_call_timer_;
+  rclcpp::TimerBase::SharedPtr service_check_timer_;
+  bool services_ready_ = false;
 
-        for (const auto &param : params)
-        {
-            if (param.get_name()      == "use_namespace")   use_namespace_  = param.as_bool();
-            else if (param.get_name() == "smooth_alpha")    smooth_alpha_   = param.as_double();
-            else if (param.get_name() == "smooth_beta")     smooth_beta_    = param.as_double();
-            else if (param.get_name() == "diagonal_paths")  diagonal_paths_ = param.as_bool();
-            else if (param.get_name() == "use_online")      use_online_     = param.as_bool();
+  // ############
+  //  Runtime parameter update callback
+  rcl_interfaces::msg::SetParametersResult
+  on_parameter_change(const std::vector<rclcpp::Parameter> &params) {
+    rcl_interfaces::msg::SetParametersResult result;
+    result.successful = true;
+    result.reason = "PathPlanner.-> Parameters updated successfully.";
 
-            else
-            {
-                result.successful = false;
-                result.reason = "PathPlanner.-> Unsupported parameter: " + param.get_name();
-                RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Attempted to update unsupported parameter: %s", param.get_name().c_str());
-                break;
-            }
-        }
+    for (const auto &param : params) {
+      if (param.get_name() == "use_namespace")
+        use_namespace_ = param.as_bool();
+      else if (param.get_name() == "smooth_alpha")
+        smooth_alpha_ = param.as_double();
+      else if (param.get_name() == "smooth_beta")
+        smooth_beta_ = param.as_double();
+      else if (param.get_name() == "diagonal_paths")
+        diagonal_paths_ = param.as_bool();
+      else if (param.get_name() == "use_online")
+        use_online_ = param.as_bool();
+      else if (param.get_name() == "disable_rear_path_plan")
+        disable_rear_path_plan_ = param.as_bool();
+      else if (param.get_name() == "online_behind_clearance")
+        online_behind_clearance_ = param.as_double();
 
-        return result;
+      else {
+        result.successful = false;
+        result.reason =
+            "PathPlanner.-> Unsupported parameter: " + param.get_name();
+        RCLCPP_WARN(
+            this->get_logger(),
+            "PathPlanner.-> Attempted to update unsupported parameter: %s",
+            param.get_name().c_str());
+        break;
+      }
     }
 
-    std::string make_name(const std::string &suffix) const
-    {
-        // Ensure suffix starts with "/"
-        std::string sfx = suffix;
-        if (!sfx.empty() && sfx.front() != '/')
-            sfx = "/" + sfx;
+    return result;
+  }
 
-        std::string name;
+  std::string make_name(const std::string &suffix) const {
+    // Ensure suffix starts with "/"
+    std::string sfx = suffix;
+    if (!sfx.empty() && sfx.front() != '/')
+      sfx = "/" + sfx;
 
-        if (use_namespace_) {
-            // Use node namespace prefix
-            name = this->get_namespace() + sfx;
+    std::string name;
 
-            // Avoid accidental double slash (e.g., when namespace is "/")
-            if (name.size() > 1 && name[0] == '/' && name[1] == '/')
-                name.erase(0, 1);
-        } else {
-            // Use global namespace (no node namespace prefix)
-            name = sfx;
-        }
+    if (use_namespace_) {
+      // Use node namespace prefix
+      name = this->get_namespace() + sfx;
 
-        return name;
+      // Avoid accidental double slash (e.g., when namespace is "/")
+      if (name.size() > 1 && name[0] == '/' && name[1] == '/')
+        name.erase(0, 1);
+    } else {
+      // Use global namespace (no node namespace prefix)
+      name = sfx;
     }
 
-    //############
-    // Initialize service clients (non-blocking)
-    void init_service_clients()
-    {
-        clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>(
-            make_name("/map_augmenter/get_static_map"));
-        clt_get_static_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
-            make_name("/map_augmenter/get_static_cost_map"));
-        clt_get_augmented_map_ = this->create_client<nav_msgs::srv::GetMap>(
-            make_name("/map_augmenter/get_augmented_map"));
-        clt_get_augmented_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
-            make_name("/map_augmenter/get_augmented_cost_map"));
+    return name;
+  }
 
-        service_check_timer_ = this->create_wall_timer(
-            std::chrono::seconds(1),
-            [this]()
-            {
-                if (clt_get_static_map_->wait_for_service(std::chrono::seconds(0)) &&
-                    clt_get_static_cost_map_->wait_for_service(std::chrono::seconds(0)) &&
-                    clt_get_augmented_map_->wait_for_service(std::chrono::seconds(0)) &&
-                    clt_get_augmented_cost_map_->wait_for_service(std::chrono::seconds(0)))
-                {
-                    RCLCPP_INFO(this->get_logger(), "PathPlanner.-> All map services are now available.");
-                    services_ready_ = true;
-                    service_check_timer_->cancel();
-                }
-                else
-                {
-                    RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Waiting for map services to become available...");
-                }
-            });
+  // ############
+  //  Initialize service clients (non-blocking)
+  void init_service_clients() {
+    clt_get_static_map_ = this->create_client<nav_msgs::srv::GetMap>(
+        make_name("/map_augmenter/get_static_map"));
+    clt_get_static_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
+        make_name("/map_augmenter/get_static_cost_map"));
+    clt_get_augmented_map_ = this->create_client<nav_msgs::srv::GetMap>(
+        make_name("/map_augmenter/get_augmented_map"));
+    clt_get_augmented_cost_map_ = this->create_client<nav_msgs::srv::GetMap>(
+        make_name("/map_augmenter/get_augmented_cost_map"));
+
+    service_check_timer_ =
+        this->create_wall_timer(std::chrono::seconds(1), [this]() {
+          if (clt_get_static_map_->wait_for_service(std::chrono::seconds(0)) &&
+              clt_get_static_cost_map_->wait_for_service(
+                  std::chrono::seconds(0)) &&
+              clt_get_augmented_map_->wait_for_service(
+                  std::chrono::seconds(0)) &&
+              clt_get_augmented_cost_map_->wait_for_service(
+                  std::chrono::seconds(0))) {
+            RCLCPP_INFO(this->get_logger(),
+                        "PathPlanner.-> All map services are now available.");
+            services_ready_ = true;
+            service_check_timer_->cancel();
+          } else {
+            RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Waiting for map "
+                                            "services to become available...");
+          }
+        });
+  }
+
+  // ############
+  //  Callback to update messages
+  void update_static_maps() {
+    threads_.push_back(std::thread(
+        std::bind(&PathPlannerNode::call_update_static_maps, this)));
+  }
+
+  void call_update_static_maps() {
+    auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
+    auto future_map = clt_get_static_map_->async_send_request(req_map);
+    try {
+      auto result_map = future_map.get();
+      map_ = result_map->map;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "PathPlanner.-> Received null static map respons");
     }
 
-    //############
-    // Callback to update messages
-    void update_static_maps()
-    {
-        threads_.push_back(std::thread(std::bind(&PathPlannerNode::call_update_static_maps, this)));
-    }
-    
-    void call_update_static_maps()
-    {
-        auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        auto future_map = clt_get_static_map_->async_send_request(req_map);
-        try
-        {
-            auto result_map = future_map.get();
-            map_ = result_map->map;
-        }
-        catch (const std::exception &e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static map respons");
-        }
-
-        auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        auto future_cost = clt_get_static_cost_map_->async_send_request(req_cost);
-        try
-        {
-            auto result_cost = future_cost.get();
-            cost_map_ = result_cost->map;
-        }
-        catch (const std::exception &e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null static cost map respons");
-        }
-
-        return;
-    }
-    
-    void update_augmented_maps()
-    {
-        threads_.push_back(std::thread(std::bind(&PathPlannerNode::call_update_augmented_maps, this)));
-    }
-    
-    void call_update_augmented_maps()
-    {
-        auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        auto future_map = clt_get_augmented_map_->async_send_request(req_map);
-        try
-        {
-            auto result_map = future_map.get();
-            augmented_map_ = result_map->map;
-        }
-        catch (const std::exception &e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented map respons");
-        }
-
-        auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
-        auto future_cost = clt_get_augmented_cost_map_->async_send_request(req_cost);
-        try
-        {
-            auto result_cost = future_cost.get();
-            augmented_cost_map_ = result_cost->map;
-        }
-        catch (const std::exception &e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Received null augmented cost map respons");
-        }
-
-        return;
+    auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
+    auto future_cost = clt_get_static_cost_map_->async_send_request(req_cost);
+    try {
+      auto result_cost = future_cost.get();
+      cost_map_ = result_cost->map;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "PathPlanner.-> Received null static cost map respons");
     }
 
-    // Callback for services
-    void callback_a_star_with_static_map(
-        const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
-        std::shared_ptr<nav_msgs::srv::GetPlan::Response> response)
-    {
-        if (!services_ready_) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. Cannot handle augmented map request.");
-            response->plan.poses.clear(); 
-            return;
-        }
+    return;
+  }
 
-       //update_static_maps();
+  void update_augmented_maps() {
+    threads_.push_back(std::thread(
+        std::bind(&PathPlannerNode::call_update_augmented_maps, this)));
+  }
 
-        if (map_.data.empty() || cost_map_.data.empty()) {
-            response->plan.poses.clear();
-            return;
-        }
-
-        nav_msgs::msg::Path path;
-        bool success = PathPlanner::AStar(map_, cost_map_,
-            request->start.pose, request->goal.pose,
-            diagonal_paths_, path, use_online_);
-
-        if (success) {
-            nav_msgs::msg::Path smoothed = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
-            smoothed.header.stamp = this->get_clock()->now();
-            smoothed.header.frame_id = "map";  // or your global frame
-
-            if (!smoothed.poses.empty()){
-                response->plan = smoothed;
-                RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path planned successfully with size: %d", response->plan.poses.size()); 
-            } else {
-                RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
-                response->plan.poses.clear();
-            }
-        }
-        else {
-            RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
-            response->plan.poses.clear();
-        }
+  void call_update_augmented_maps() {
+    auto req_map = std::make_shared<nav_msgs::srv::GetMap::Request>();
+    auto future_map = clt_get_augmented_map_->async_send_request(req_map);
+    try {
+      auto result_map = future_map.get();
+      augmented_map_ = result_map->map;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "PathPlanner.-> Received null augmented map respons");
     }
 
-
-    void callback_a_star_with_augmented_map(
-        const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
-        std::shared_ptr<nav_msgs::srv::GetPlan::Response> response)
-    {
-        if (!services_ready_) {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. Cannot handle augmented map request.");
-            response->plan.poses.clear(); 
-            return;
-        }
-
-        //update_augmented_maps();
-
-        if (augmented_map_.data.empty() || augmented_cost_map_.data.empty()) {
-            response->plan.poses.clear();
-            return;
-        }
-
-        nav_msgs::msg::Path path;
-        bool success = PathPlanner::AStar(augmented_map_, augmented_cost_map_,
-            request->start.pose, request->goal.pose,
-            diagonal_paths_, path, use_online_);
-
-        if (success) {
-            nav_msgs::msg::Path smoothed = PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
-            smoothed.header.stamp = this->get_clock()->now();
-            smoothed.header.frame_id = "map";  // or your global frame
-
-            if (!smoothed.poses.empty()){
-                response->plan = smoothed;
-                RCLCPP_INFO(this->get_logger(), "PathPlanner.-> Path planned successfully with size: %d", response->plan.poses.size()); 
-            } else {
-                RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
-                response->plan.poses.clear();
-            }
-        }
-        else {
-            RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
-            response->plan.poses.clear();
-        }
+    auto req_cost = std::make_shared<nav_msgs::srv::GetMap::Request>();
+    auto future_cost =
+        clt_get_augmented_cost_map_->async_send_request(req_cost);
+    try {
+      auto result_cost = future_cost.get();
+      augmented_cost_map_ = result_cost->map;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "PathPlanner.-> Received null augmented cost map respons");
     }
 
-    void messages_caller() 
-    {
-        try
-        {
-            update_static_maps();
-            update_augmented_maps();
+    return;
+  }
 
-        }
-        catch(const std::exception& e)
-        {
-            RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Messages call failed.");
-        }
+  // Callback for services
+  // ---- Rear masking (online SLAM) ----
+  // The initial pose is taken to be the map origin (0,0,0). "Behind" is the
+  // -x direction, so when active we mark every cell with x < -clearance as
+  // occupied, preventing A* from planning paths behind the start.
+  bool rear_block_active() const {
+    return use_online_ && disable_rear_path_plan_;
+  }
+
+  // Copy `src` and mark cells behind the initial pose (x < -clearance, map
+  // frame) as occupied so A* will not route there.
+  nav_msgs::msg::OccupancyGrid
+  build_rear_masked_map(const nav_msgs::msg::OccupancyGrid &src) const {
+    nav_msgs::msg::OccupancyGrid masked = src;
+    const double res = masked.info.resolution;
+    const double ox = masked.info.origin.position.x;
+    const int w = masked.info.width, h = masked.info.height;
+    for (int gx = 0; gx < w; ++gx) {
+      double wx = gx * res + ox;
+      if (wx < -online_behind_clearance_) {
+        for (int gy = 0; gy < h; ++gy)
+          masked.data[gy * w + gx] = 100;
+      }
+    }
+    return masked;
+  }
+
+  // Plan with optional rear masking; if the masked plan fails, fall back to
+  // planning on the unmasked map so behind-goals stay reachable.
+  bool plan_astar_with_rear(const nav_msgs::msg::OccupancyGrid &map,
+                            const nav_msgs::msg::OccupancyGrid &cost_map,
+                            const geometry_msgs::msg::Pose &start,
+                            const geometry_msgs::msg::Pose &goal,
+                            nav_msgs::msg::Path &path) {
+    publish_rear_zone();
+    if (rear_block_active()) {
+      // Hard block: never plan behind the initial pose. A goal behind the
+      // cut line simply fails (no fall back to the unmasked map).
+      nav_msgs::msg::OccupancyGrid masked = build_rear_masked_map(map);
+      bool ok = PathPlanner::AStar(masked, cost_map, start, goal,
+                                   diagonal_paths_, path, use_online_);
+      if (!ok)
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> No path with rear blocked "
+                    "(goal may be behind the initial pose).");
+      return ok;
+    }
+    return PathPlanner::AStar(map, cost_map, start, goal, diagonal_paths_, path,
+                              use_online_);
+  }
+
+  bool plan_via_with_rear(const nav_msgs::msg::OccupancyGrid &map,
+                          const nav_msgs::msg::OccupancyGrid &cost_map,
+                          const geometry_msgs::msg::Pose &start,
+                          const std::vector<geometry_msgs::msg::Pose> &vias,
+                          const geometry_msgs::msg::Pose &goal,
+                          nav_msgs::msg::Path &path) {
+    publish_rear_zone();
+    if (rear_block_active()) {
+      // Hard block: never plan behind the initial pose (no fall back).
+      nav_msgs::msg::OccupancyGrid masked = build_rear_masked_map(map);
+      bool ok = PathPlanner::AStarWithViaPoints(masked, cost_map, start, vias,
+                                                goal, diagonal_paths_, path,
+                                                use_online_);
+      if (!ok)
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> No via path with rear blocked "
+                    "(a waypoint/goal may be behind the initial pose).");
+      return ok;
+    }
+    return PathPlanner::AStarWithViaPoints(map, cost_map, start, vias, goal,
+                                           diagonal_paths_, path, use_online_);
+  }
+
+  // Visualize the rear cut-off line: x = -clearance (map frame), vertical.
+  void publish_rear_zone() {
+    visualization_msgs::msg::Marker m;
+    m.header.frame_id = "map";
+    m.header.stamp = this->get_clock()->now();
+    m.ns = "rear_block_zone";
+    m.id = 0;
+    m.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    if (!rear_block_active()) {
+      m.action = visualization_msgs::msg::Marker::DELETE;
+      pub_rear_zone_->publish(m);
+      return;
+    }
+    m.action = visualization_msgs::msg::Marker::ADD;
+    m.scale.x = 0.05;
+    m.color.a = 1.0;
+    m.color.r = 1.0;
+    m.color.g = 0.0;
+    m.color.b = 0.0;
+    const double cx = -online_behind_clearance_;
+    const double half = 10.0; // display length [m]
+    geometry_msgs::msg::Point a, b;
+    a.x = cx;
+    a.y = half;
+    a.z = 0.0;
+    b.x = cx;
+    b.y = -half;
+    b.z = 0.0;
+    m.points.push_back(a);
+    m.points.push_back(b);
+    pub_rear_zone_->publish(m);
+  }
+
+  void callback_a_star_with_static_map(
+      const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
+      std::shared_ptr<nav_msgs::srv::GetPlan::Response> response) {
+    if (!services_ready_) {
+      RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. "
+                                       "Cannot handle augmented map request.");
+      response->plan.poses.clear();
+      return;
     }
 
+    // update_static_maps();
+
+    if (map_.data.empty() || cost_map_.data.empty()) {
+      response->plan.poses.clear();
+      return;
+    }
+
+    nav_msgs::msg::Path path;
+    bool success = plan_astar_with_rear(map_, cost_map_, request->start.pose,
+                                        request->goal.pose, path);
+
+    if (success) {
+      nav_msgs::msg::Path smoothed =
+          PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
+      smoothed.header.stamp = this->get_clock()->now();
+      smoothed.header.frame_id = "map"; // or your global frame
+
+      if (!smoothed.poses.empty()) {
+        response->plan = smoothed;
+        RCLCPP_INFO(this->get_logger(),
+                    "PathPlanner.-> Path planned successfully with size: %d",
+                    response->plan.poses.size());
+      } else {
+        RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+        response->plan.poses.clear();
+      }
+    } else {
+      RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+      response->plan.poses.clear();
+    }
+  }
+
+  void callback_a_star_with_augmented_map(
+      const std::shared_ptr<nav_msgs::srv::GetPlan::Request> request,
+      std::shared_ptr<nav_msgs::srv::GetPlan::Response> response) {
+    if (!services_ready_) {
+      RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. "
+                                       "Cannot handle augmented map request.");
+      response->plan.poses.clear();
+      return;
+    }
+
+    // update_augmented_maps();
+
+    if (augmented_map_.data.empty() || augmented_cost_map_.data.empty()) {
+      response->plan.poses.clear();
+      return;
+    }
+
+    nav_msgs::msg::Path path;
+    bool success =
+        plan_astar_with_rear(augmented_map_, augmented_cost_map_,
+                             request->start.pose, request->goal.pose, path);
+
+    if (success) {
+      nav_msgs::msg::Path smoothed =
+          PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
+      smoothed.header.stamp = this->get_clock()->now();
+      smoothed.header.frame_id = "map"; // or your global frame
+
+      if (!smoothed.poses.empty()) {
+        response->plan = smoothed;
+        RCLCPP_INFO(this->get_logger(),
+                    "PathPlanner.-> Path planned successfully with size: %d",
+                    response->plan.poses.size());
+      } else {
+        RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+        response->plan.poses.clear();
+      }
+    } else {
+      RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
+      response->plan.poses.clear();
+    }
+  }
+
+  // Plan a path through ordered via points, then to the goal, on the
+  // augmented map (same map source as callback_a_star_with_augmented_map).
+  void callback_plan_with_via(
+      const std::shared_ptr<pumas_interfaces::srv::GetPlanWithVia::Request>
+          request,
+      std::shared_ptr<pumas_interfaces::srv::GetPlanWithVia::Response>
+          response) {
+    if (!services_ready_) {
+      RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Services not ready. "
+                                       "Cannot handle plan_with_via request.");
+      response->plan.poses.clear();
+      return;
+    }
+
+    if (augmented_map_.data.empty() || augmented_cost_map_.data.empty()) {
+      response->plan.poses.clear();
+      return;
+    }
+
+    std::vector<geometry_msgs::msg::Pose> via_poses;
+    via_poses.reserve(request->via_points.size());
+    for (const auto &p : request->via_points)
+      via_poses.push_back(p.pose);
+
+    nav_msgs::msg::Path path;
+    bool success = plan_via_with_rear(augmented_map_, augmented_cost_map_,
+                                      request->start.pose, via_poses,
+                                      request->goal.pose, path);
+
+    if (success) {
+      nav_msgs::msg::Path smoothed =
+          PathPlanner::SmoothPath(path, smooth_alpha_, smooth_beta_);
+      smoothed.header.stamp = this->get_clock()->now();
+      smoothed.header.frame_id = "map";
+
+      if (!smoothed.poses.empty()) {
+        response->plan = smoothed;
+        RCLCPP_INFO(this->get_logger(),
+                    "PathPlanner.-> Path with %zu via points planned "
+                    "successfully with size: %d",
+                    via_poses.size(), response->plan.poses.size());
+      } else {
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> Failed to plan path with via points.");
+        response->plan.poses.clear();
+      }
+    } else {
+      RCLCPP_WARN(this->get_logger(),
+                  "PathPlanner.-> Failed to plan path with via points.");
+      response->plan.poses.clear();
+    }
+  }
+
+  void messages_caller() {
+    try {
+      update_static_maps();
+      update_augmented_maps();
+
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(), "PathPlanner.-> Messages call failed.");
+    }
+  }
 };
 
-int main(int argc, char **argv)
-{
-    rclcpp::init(argc, argv);
-    auto node = std::make_shared<PathPlannerNode>();
-    //rclcpp::spin(node);
-    rclcpp::executors::MultiThreadedExecutor executor;
-    executor.add_node(node);
-    executor.spin();
+int main(int argc, char **argv) {
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<PathPlannerNode>();
+  // rclcpp::spin(node);
+  rclcpp::executors::MultiThreadedExecutor executor;
+  executor.add_node(node);
+  executor.spin();
 
-    rclcpp::shutdown();
+  rclcpp::shutdown();
 
-    return 0;
+  return 0;
 }

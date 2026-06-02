@@ -3,6 +3,7 @@
 
 // Message types
 #include "actionlib_msgs/msg/goal_status.hpp"
+#include "geometry_msgs/msg/pose_array.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "nav_msgs/srv/get_map.hpp"
@@ -12,6 +13,7 @@
 #include "std_msgs/msg/float32_multi_array.hpp"
 
 #include "nav_msgs/srv/get_plan.hpp"
+#include "pumas_interfaces/srv/get_plan_with_via.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 // TF2 (Transform listener)
@@ -37,6 +39,7 @@
 
 // Standard
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <iomanip> // for std::hex and std::setw
 #include <iostream>
@@ -204,6 +207,9 @@ private:
   int simple_move_status_id_ = 0;
 
   geometry_msgs::msg::Pose global_goal_;
+  // Ordered via points for the current goal (empty -> plain A*). Carried in the
+  // PumasNav goal; progressively popped as the robot passes each one.
+  std::vector<geometry_msgs::msg::Pose> via_points_;
   actionlib_msgs::msg::GoalStatus simple_move_goal_status_;
 
   float robot_x_ = 0.0f;
@@ -312,6 +318,8 @@ private:
   //  Service clients
   rclcpp::Client<nav_msgs::srv::GetPlan>::SharedPtr clt_plan_path_static_;
   rclcpp::Client<nav_msgs::srv::GetPlan>::SharedPtr clt_plan_path_augmented_;
+  rclcpp::Client<pumas_interfaces::srv::GetPlanWithVia>::SharedPtr
+      clt_plan_path_with_via_;
   rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_aug_map_;
   rclcpp::Client<nav_msgs::srv::GetMap>::SharedPtr clt_get_aug_costmap_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_are_there_obs_;
@@ -469,6 +477,9 @@ private:
         make_name("/path_planner/plan_path_with_static"));
     clt_plan_path_augmented_ = this->create_client<nav_msgs::srv::GetPlan>(
         make_name("/path_planner/plan_path_with_augmented"));
+    clt_plan_path_with_via_ =
+        this->create_client<pumas_interfaces::srv::GetPlanWithVia>(
+            make_name("/path_planner/plan_path_with_via"));
     clt_get_aug_map_ = this->create_client<nav_msgs::srv::GetMap>(
         make_name("/map_augmenter/get_augmented_map"));
     clt_get_aug_costmap_ = this->create_client<nav_msgs::srv::GetMap>(
@@ -610,6 +621,11 @@ private:
     request->start.pose.position.x = robot_x;
     request->start.pose.position.y = robot_y;
     request->start.header.frame_id = "map";
+    {
+      tf2::Quaternion q;
+      q.setRPY(0, 0, robot_t_);
+      request->start.pose.orientation = tf2::toMsg(q);
+    }
 
     request->goal.pose.position.x = goal_x;
     request->goal.pose.position.y = goal_y;
@@ -633,6 +649,87 @@ private:
                    "MotionPlanner.-> Failed to get path from "
                    "/path_planner/plan_path_with_augmented: %s",
                    e.what());
+    }
+  }
+
+  void get_plan_path_with_via(float robot_x, float robot_y, float goal_x,
+                              float goal_y) {
+    threads_.push_back(
+        std::thread(std::bind(&MotionPlannerNode::plan_path_with_via, this,
+                              robot_x, robot_y, goal_x, goal_y)));
+  }
+
+  void plan_path_with_via(float robot_x, float robot_y, float goal_x,
+                          float goal_y) {
+    is_path_ = false;
+    is_path_response_ = false;
+    if (!clt_plan_path_with_via_->wait_for_service(std::chrono::seconds(1))) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "MotionPlanner.-> plan_path_with_via service not available.");
+      is_path_ = false;
+      is_path_response_ = true;
+      return;
+    }
+
+    auto request =
+        std::make_shared<pumas_interfaces::srv::GetPlanWithVia::Request>();
+    request->start.pose.position.x = robot_x;
+    request->start.pose.position.y = robot_y;
+    request->start.header.frame_id = "map";
+    {
+      tf2::Quaternion q;
+      q.setRPY(0, 0, robot_t_);
+      request->start.pose.orientation = tf2::toMsg(q);
+    }
+
+    request->goal.pose.position.x = goal_x;
+    request->goal.pose.position.y = goal_y;
+    request->goal.header.frame_id = "map";
+
+    for (const auto &p : via_points_) {
+      geometry_msgs::msg::PoseStamped ps;
+      ps.header.frame_id = "map";
+      ps.pose = p;
+      request->via_points.push_back(ps);
+    }
+
+    auto result_future = clt_plan_path_with_via_->async_send_request(request);
+
+    try {
+      this->path_ = result_future.get()->plan;
+      if (path_.poses.size() > 0)
+        this->is_path_ = true;
+
+      this->is_path_response_ = true;
+
+      RCLCPP_INFO(
+          this->get_logger(),
+          "MotionPlanner.-> Path (via %zu) received successfully with size: %zu",
+          request->via_points.size(), path_.poses.size());
+    } catch (const std::exception &e) {
+      this->is_path_response_ = true;
+      RCLCPP_ERROR(this->get_logger(),
+                   "MotionPlanner.-> Failed to get path from "
+                   "/path_planner/plan_path_with_via: %s",
+                   e.what());
+    }
+  }
+
+  // Pop via points the robot has already reached (within threshold) so a
+  // replan does not route back to them.
+  void update_via_points() {
+    const double thr = 0.5; // [m]
+    while (!via_points_.empty()) {
+      double dx = via_points_.front().position.x - robot_x_;
+      double dy = via_points_.front().position.y - robot_y_;
+      if (std::sqrt(dx * dx + dy * dy) <= thr) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MotionPlanner.-> Reached via point, %zu remaining",
+                    via_points_.size() - 1);
+        via_points_.erase(via_points_.begin());
+      } else {
+        break;
+      }
     }
   }
 
@@ -766,6 +863,11 @@ private:
     global_goal_ = goal->goal.pose;
     new_global_goal_ = true;
 
+    // Via points for this goal (empty -> plain A* in SM_CALCULATE_PATH).
+    via_points_ = goal->via_points.poses;
+    RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Goal with %zu via points",
+                via_points_.size());
+
     if (goal->use_arm) {
       target_arm_pose = goal->arm_joints;
       arm_goal_received = true;
@@ -812,6 +914,7 @@ private:
     active_goal_handle_.reset();
     action_active_ = false;
     cancel_requested_ = false;
+    via_points_.clear();
   }
 
   void finish_action_abort(const std::string &message) {
@@ -828,6 +931,7 @@ private:
     active_goal_handle_.reset();
     action_active_ = false;
     cancel_requested_ = false;
+    via_points_.clear();
   }
 
   void finish_action_cancel(const std::string &message) {
@@ -844,6 +948,7 @@ private:
     active_goal_handle_.reset();
     action_active_ = false;
     cancel_requested_ = false;
+    via_points_.clear();
   }
 
   // ############
@@ -914,9 +1019,15 @@ private:
       case SM_CALCULATE_PATH: {
         publish_nav_feedback("CALCULATE_PATH", "Calculating path");
         get_robot_position();
-        get_plan_path_from_augmented_map(robot_x_, robot_y_,
-                                         global_goal_.position.x,
-                                         global_goal_.position.y);
+        update_via_points();
+        if (!via_points_.empty()) {
+          get_plan_path_with_via(robot_x_, robot_y_, global_goal_.position.x,
+                                 global_goal_.position.y);
+        } else {
+          get_plan_path_from_augmented_map(robot_x_, robot_y_,
+                                           global_goal_.position.x,
+                                           global_goal_.position.y);
+        }
 
         state = SM_WAIT_FOR_PATH_RESPONSE;
 
@@ -1253,6 +1364,7 @@ private:
 
         publish_nav_feedback("WAIT_FOR_MOVE_FINISHED", "Following path");
         get_robot_position();
+        update_via_points();
         error = sqrt(pow(global_goal_.position.x - robot_x_, 2) +
                      pow(global_goal_.position.y - robot_y_, 2));
 

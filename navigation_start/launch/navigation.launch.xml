@@ -27,6 +27,12 @@
   <arg name="use_online" default="False"/>
   <arg name="memory_all_obstacles" default="False"/>
 
+  <!-- online SLAM: do not plan paths behind the initial pose (map origin).
+       Active only when use_online and disable_rear_path_plan are both true.
+       Cuts cells with x < -online_behind_clearance (m) in the map frame. -->
+  <arg name="disable_rear_path_plan" default="False"/>
+  <arg name="online_behind_clearance" default="1.0"/>
+
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.5"/>
@@ -149,6 +155,8 @@
   <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="screen" respawn="true">
     <param name="diagonal_paths" value="True"/>
     <param name="use_online" value="$(var use_online)"/>
+    <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
+    <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="0.8"/>

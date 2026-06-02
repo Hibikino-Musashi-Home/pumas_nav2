@@ -2,6 +2,7 @@
 geometry_msgs/PoseStamped goal
 pumas_interfaces/StartAndEndJoints arm_joints
 bool use_arm
+geometry_msgs/PoseArray via_points
 
 ---
 # Result
