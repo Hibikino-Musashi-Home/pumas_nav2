@@ -1,21 +1,5 @@
 <?xml version="1.0"?>
-<!--
-  Pumas navigation pipeline for RTAB-Map based localization.
 
-  Same structure as navigation.launch.xml (static_map_server + prohibition_map_server
-  + map_enhancer + map_augmenter), but:
-    - Localization (map -> odom TF) is provided by RTAB-Map (started in the
-      wrapping .py launch), NOT by EMCL2.
-    - The static navigation map is a pgm/yaml EXPORTED from the RTAB-Map .db
-      (static_map_file). RTAB-Map is a DB, so export it once, e.g.:
-        ros2 run nav2_map_server map_saver_cli -t /map -f <maps>/static/<map_name>/map
-      then map_augmenter reads it via the static_map_server GetMap service
-      (/static_map_server/map), which is always available.
-
-  This file is wrapped by
-  hma_hsr_navigation2 -> pumas_nav2_rtabmap_localization.launch.py, which starts
-  RTAB-Map and the Nav2 servers.
--->
 <launch>
   <!-- Arguments -->
   <arg name="use_sim_time" default="false"/>
@@ -75,25 +59,22 @@
   <arg name="move_head" default="True"/>
 
   <!-- Map servers -->
-  <!-- Static map: pgm/yaml exported from the RTAB-Map .db. map_augmenter reads it
-       through the /static_map_server/map GetMap service. The topic is remapped to
-       /rtabmap/map (RViz / visualization); map_augmenter uses the service. -->
-  <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
+  <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="log" respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
     <remap from="/map" to="/rtabmap/map"/>
   </node>
-  <node name="prohibition_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
+  <node name="prohibition_map_server" pkg="nav2_map_server" exec="map_server" output="log" respawn="true">
     <param name="yaml_filename" value="$(var prohibition_map_file)"/>
     <remap from="/map" to="/fixed_prohibition_layer_map"/>
   </node>
-  <node name="lifecycle_manager_map" pkg="nav2_lifecycle_manager" exec="lifecycle_manager" output="screen" respawn="true">
+  <node name="lifecycle_manager_map" pkg="nav2_lifecycle_manager" exec="lifecycle_manager" output="log" respawn="true">
     <param name="use_sim_time" value="$(var use_sim_time)"/>
     <param name="autostart" value="true"/>
     <param name="node_names" value="['static_map_server', 'prohibition_map_server']"/>
   </node>
 
   <!-- Map Enhancer -->
-  <node name="map_enhancer" pkg="augment_gridmap_online" exec="augment_gridmap_online_node" output="screen" respawn="true">
+  <node name="map_enhancer" pkg="augment_gridmap_online" exec="augment_gridmap_online_node" output="log" respawn="true">
     <remap from="point_obstacle" to="/clicked_point"/>
     <param name="obstacle_radius" value="0.05"/>
     <param name="debug" value="True"/>
@@ -107,12 +88,8 @@
     <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
   </node>
 
-  <!-- Localization -->
-  <!-- Localization (map -> odom) is provided by RTAB-Map in the wrapping .py
-       launch. No EMCL2 here. -->
-
   <!-- Map Augmenters -->
-  <node name="map_augmenter" pkg="map_augmenter" exec="map_augmenter_node" output="screen" respawn="true">
+  <node name="map_augmenter" pkg="map_augmenter" exec="map_augmenter_node" output="log" respawn="true">
     <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
     <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
     <!-- GetMap SERVICE names provided by the map servers above. -->
@@ -143,13 +120,13 @@
   </node>
 
   <!-- Path Planner -->
-  <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="screen" respawn="true">
+  <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="log" respawn="true">
     <param name="diagonal_paths" value="True"/>
     <param name="use_online" value="$(var use_online)"/>
     <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
   </node>
-  <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
+  <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="log" respawn="true">
     <param name="max_linear_speed" value="0.8"/>
     <param name="max_angular_speed" value="1.25"/>
     <param name="control_alpha" value="0.2"/>
@@ -160,7 +137,7 @@
   </node>
 
   <!-- Potential Fields -->
-  <node name="potential_fields" pkg="potential_fields" exec="potential_fields_node" output="screen" respawn="true">
+  <node name="potential_fields" pkg="potential_fields" exec="potential_fields_node" output="log" respawn="true">
     <param name="debug" value="False"/>
     <param name="show_image" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
@@ -190,46 +167,46 @@
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
 
-  <node name="publish_enable" pkg="potential_fields" exec="publish_enable.py" output="screen" respawn="true"/>
+  <node name="publish_enable" pkg="potential_fields" exec="publish_enable.py" output="log" respawn="true"/>
 
   <!-- Motion Planner -->
-  <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
+  <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="log" respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
   </node>
 
-  <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
+  <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="log">
   </node>
 
-  <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
+  <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="log">
   </node>
 
-  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen" emulate_tty="true">
+  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="log" emulate_tty="true">
   </node>
 
-  <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
+  <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="log">
   </node>
 
   <!-- Hardware Controller -->
-  <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
+  <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="log" respawn="true">
     <param name="torso_default_pose" value="0.1"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
     <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
   </node>
-  <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
+  <node name="head_controller" pkg="hardware_controller" exec="head_node" output="log" respawn="true">
     <param name="pan_min" value="-3.14"/>
     <param name="pan_max" value="1.74"/>
     <param name="tilt_min" value="-0.7"/>
     <param name="tilt_max" value="0.47"/>
   </node>
-  <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="screen" respawn="true">
+  <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="log" respawn="true">
     <param name="gaze_tf_name"   value="gaze_point"/>
     <param name="base_link_name" value="base_footprint"/>
     <param name="head_height"    value="1.1"/>
   </node>
 
   <!-- RVIZ2 -->
-  <node name="rviz2" pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share navigation_start)/rviz/config.rviz               --ros-args --log-level rviz2:=warn" output="screen"/>
+  <node name="rviz2" pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share navigation_start)/rviz/config.rviz               --ros-args --log-level rviz2:=warn" output="log"/>
 </launch>
