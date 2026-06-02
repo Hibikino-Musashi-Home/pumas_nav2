@@ -179,6 +179,9 @@ private:
         result->success = false;
         goal_handle->canceled(result);
         RCLCPP_INFO(this->get_logger(), "GazeController.-> Gaze canceled.");
+        // Final head command (after the gaze loop has stopped publishing), so
+        // the head settles at the requested restore pose, not the gaze target.
+        publish_restore_head(goal);
         return;
       }
 
@@ -195,6 +198,20 @@ private:
 
     result->success = false;
     goal_handle->abort(result);
+    publish_restore_head(goal);
+  }
+
+  // Publish the restore head once as the final head command when gaze ends.
+  void publish_restore_head(const std::shared_ptr<const GazeHead::Goal> &goal)
+  {
+    if (!goal->restore_head)
+      return;
+    std_msgs::msg::Float32MultiArray msg;
+    msg.data = {goal->restore_pan, goal->restore_tilt};
+    pub_head_goal_pose_->publish(msg);
+    RCLCPP_INFO(this->get_logger(),
+      "GazeController.-> Restored head to [%.3f, %.3f] on gaze end.",
+      goal->restore_pan, goal->restore_tilt);
   }
 };
 

@@ -1,9 +1,11 @@
-# Goal
-string gaze_tf_name   # target TF frame name; empty string → use node param gaze_tf_name
+# Goal (motion_synth_end pose)
+bool restore_head 
+float32 restore_pan
+float32 restore_tilt
 ---
 # Result
 bool success
 ---
-# Feedback
+# Feedback (gaze_node realtime ctrl)
 float32 pan
 float32 tilt
