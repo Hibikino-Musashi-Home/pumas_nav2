@@ -13,6 +13,7 @@ from geometry_msgs.msg import Pose, Pose2D, PoseArray, PoseStamped
 from pumas_interfaces.action import GazeHead, PumasNav
 from pumas_interfaces.msg import Joints, StartAndEndJoints
 from pumas_interfaces.srv import ParamReadWrite
+from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
 from rclpy.clock import Clock
 from rclpy.duration import Duration
@@ -121,6 +122,8 @@ class NavModule:
         self.tf_listener = tf2_ros.TransformListener(
             self.tf_buffer, self._node)
 
+        self._load_default_arm_pose()  # call once here -> arm moves default pose
+
         self.get_logger().info('NavModule.->initialized')
 
     def __getattr__(self, name):
@@ -226,13 +229,17 @@ class NavModule:
         self._gaze_active = True
         self.get_logger().info('NavModule.->GazeHead goal accepted, gaze active')
 
-    def start_gaze(self, gaze_tf_name: str = '') -> bool:
+    def start_gaze(self, gaze_tf_name: str = '', restore_head=None) -> bool:
         if not self.gaze_action_client.wait_for_server(timeout_sec=3.0):
             self.get_logger().warn('NavModule.->GazeHead action server not available')
             return False
 
         goal_msg = GazeHead.Goal()
         goal_msg.gaze_tf_name = gaze_tf_name
+        if restore_head is not None:
+            goal_msg.restore_head = True
+            goal_msg.restore_pan = float(restore_head[0])
+            goal_msg.restore_tilt = float(restore_head[1])
 
         self._gaze_goal_handle = None
         self._gaze_active = False
@@ -325,8 +332,67 @@ class NavModule:
         pose2d.theta = euler[2]
         return pose2d
 
+    def _load_default_arm_pose(self, arm_node='/arm_controller', timeout_sec=3.0):
+        """Load the default/recovery arm pose from the arm_controller node's
+        params (set via <param> in its launch <node> block):
+
+            torso_default_pose : double      -> arm_lift_joint
+            arm_default_pose   : double[4]   -> arm_flex/arm_roll/wrist_flex/wrist_roll
+
+        Head is reset to 0 (as in ROS1). If the params cannot be read (node not
+        up / service timeout), fall back to the module-level default_arm_pose.
+        Stored in self.default_arm_pose and used for the recovery pose and as
+        the base for motion_synth start/end poses.
+        """
+        pose = dict(default_arm_pose)  # fallback
+
+        cli = self._node.create_client(
+            GetParameters, f'{arm_node}/get_parameters')
+        if cli.wait_for_service(timeout_sec=timeout_sec):
+            req = GetParameters.Request()
+            req.names = ['torso_default_pose', 'arm_default_pose']
+            future = cli.call_async(req)
+
+            if self._external_node:
+                done = threading.Event()
+                future.add_done_callback(lambda _f: done.set())
+                ok = done.wait(timeout=timeout_sec)
+            else:
+                rclpy.spin_until_future_complete(
+                    self._node, future, timeout_sec=timeout_sec)
+                ok = future.done()
+
+            res = future.result() if ok else None
+            if res is not None and len(res.values) >= 2:
+                torso = res.values[0].double_value
+                arm = list(res.values[1].double_array_value)
+                if len(arm) >= 4:
+                    pose['arm_lift_joint'] = float(torso)
+                    pose['arm_flex_joint'] = float(arm[0])
+                    pose['arm_roll_joint'] = float(arm[1])
+                    pose['wrist_flex_joint'] = float(arm[2])
+                    pose['wrist_roll_joint'] = float(arm[3])
+                    pose['head_pan_joint'] = 0.0
+                    pose['head_tilt_joint'] = 0.0
+                    self.get_logger().info(
+                        f'NavModule.->default_arm_pose from {arm_node}: {pose}')
+                else:
+                    self.get_logger().warn(
+                        'NavModule.->arm_default_pose has <4 values; using module default'
+                    )
+            else:
+                self.get_logger().warn(
+                    f'NavModule.->failed to read {arm_node} params; using module default'
+                )
+        else:
+            self.get_logger().warn(
+                f'NavModule.->{arm_node}/get_parameters not available; using module default'
+            )
+
+        self.default_arm_pose = pose
+
     def create_arm_joint_goal(self, joint_poses):
-        joint_poses = {**default_arm_pose, **(joint_poses or {})}
+        joint_poses = {**self.default_arm_pose, **(joint_poses or {})}
         joints = Joints()
         joints.arm_lift_joint = joint_poses['arm_lift_joint']
         joints.arm_flex_joint = joint_poses['arm_flex_joint']
@@ -338,25 +404,30 @@ class NavModule:
         return joints
 
     def _send_default_arm_pose(self, include_head: bool = True):
-        """Move the body to default_arm_pose (used when motion_synth is off)."""
+        """Move the body to default_arm_pose (used when motion_synth is off).
+
+        Uses self.default_arm_pose (loaded from ROS params at launch, falling
+        back to the module-level default_arm_pose).
+        """
+        pose = self.default_arm_pose
         lift = Float32()
-        lift.data = float(default_arm_pose['arm_lift_joint'])
+        lift.data = float(pose['arm_lift_joint'])
         self.pub_torso_goal.publish(lift)
 
         arm = Float32MultiArray()
         arm.data = [
-            float(default_arm_pose['arm_flex_joint']),
-            float(default_arm_pose['arm_roll_joint']),
-            float(default_arm_pose['wrist_flex_joint']),
-            float(default_arm_pose['wrist_roll_joint']),
+            float(pose['arm_flex_joint']),
+            float(pose['arm_roll_joint']),
+            float(pose['wrist_flex_joint']),
+            float(pose['wrist_roll_joint']),
         ]
         self.pub_arm_goal.publish(arm)
 
         if include_head:
             head = Float32MultiArray()
             head.data = [
-                float(default_arm_pose['head_pan_joint']),
-                float(default_arm_pose['head_tilt_joint']),
+                float(pose['head_pan_joint']),
+                float(pose['head_tilt_joint']),
             ]
             self.pub_head_goal_pose.publish(head)
 
@@ -640,13 +711,17 @@ class NavModule:
                 self._set_use_point_cloud(False)
             else:
                 self._set_use_point_cloud(use_point_cloud)
-            # No motion_synth: retract the body to default_arm_pose so it is
-            # not seen as an obstacle. Leave the head to gaze when gaze is on.
             self._send_default_arm_pose(include_head=(gaze_point is False))
 
         if gaze_point is not False:
             tf_name = gaze_point if isinstance(gaze_point, str) else ''
-            if self.start_gaze(tf_name):
+            restore_head = None
+            if self.motion_synth_end_pose is not None:
+                restore_head = (
+                    self.motion_synth_end_pose.get('head_pan_joint', 0.0),
+                    self.motion_synth_end_pose.get('head_tilt_joint', 0.0),
+                )
+            if self.start_gaze(tf_name, restore_head=restore_head):
                 self._set_move_head(False)
 
         result = self.go_abs(
@@ -694,25 +769,25 @@ if __name__ == '__main__':
     ms_config = {
         'start': start_pose,
         'goal': goal_pose,
-        'execution_time': 0.2,
+        'execution_time': 0.5,
     }
 
     # for gaze node test
-    gaze_tf = 'gaze_point'
     gaze_tf = False
+    gaze_tf = 'gaze_point'
 
     via_points = [
         Pose2D(x=2.6, y=3.9, theta=0.0),
         Pose2D(x=0.0, y=1.0, theta=0.0),
     ]
-    # via_points = None
+    via_points = None
 
-    goal = Pose2D(x=1.4, y=3.6, theta=0.0)
     goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     goal = Pose2D(x=0.0, y=0.0, theta=0.0)
+    goal = Pose2D(x=0.5, y=3.6, theta=0.0)
     success = nav.nav_goal(
         goal,
-        motion_synth_pose=None,
+        motion_synth_pose=ms_config,
         timeout=0,
         goal_distance=None,
         gaze_point=gaze_tf,

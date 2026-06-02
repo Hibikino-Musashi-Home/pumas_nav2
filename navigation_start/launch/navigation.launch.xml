@@ -27,9 +27,6 @@
   <arg name="use_online" default="False"/>
   <arg name="memory_all_obstacles" default="False"/>
 
-  <!-- online SLAM: do not plan paths behind the initial pose (map origin).
-       Active only when use_online and disable_rear_path_plan are both true.
-       Cuts cells with x < -online_behind_clearance (m) in the map frame. -->
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
 
@@ -56,14 +53,11 @@
   <arg name="proximity_criterion" default="0.2"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
-  <!-- When add_static_obstacles is True, map_enhancer loads
-       <share(hma_env_manage2)>/io/config/<env_furniture_file>.yaml
-       (resolved at runtime via ament_index_cpp) and stamps each entry's
-       `plane` polygon as obstacle cells. -->
   <arg name="add_static_obstacles" default="True"/>
   <arg name="env_furniture_pkg" default="hma_env_manage2"/>
   <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
   <arg name="move_head" default="True"/>
+
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
     <param name="yaml_filename" value="$(var static_map_file)"/>
@@ -87,9 +81,7 @@
     <param name="debug" value="True"/>
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
     <param name="map_name" value="$(var map_name)"/>
-    <!-- Static furniture obstacles. The node skips the loader entirely when
-         add_static_obstacles is false, so the env_furniture_pkg package only
-         needs to exist at runtime when add_static_obstacles is true. -->
+
     <param name="add_static_obstacles" value="$(var add_static_obstacles)"/>
     <param name="furniture_pkg" value="$(var env_furniture_pkg)"/>
     <param name="furniture_path" value="$(var env_furniture_file)"/>
@@ -200,8 +192,8 @@
   </node>
 
   <node name="publish_enable" pkg="potential_fields" exec="publish_enable.py" output="screen" respawn="true"/>
-  <!-- Motion Planner -->
 
+  <!-- Motion Planner -->
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
@@ -223,7 +215,7 @@
 
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
-    <param name="torso_default_pose" value="0.0"/>
+    <param name="torso_default_pose" value="0.1"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
     <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
   </node>
