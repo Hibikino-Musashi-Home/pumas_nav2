@@ -101,8 +101,8 @@
     <param name="use_point_cloud" value="$(var use_point_cloud)"/>
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="decay_factor" value="5"/>
-    <param name="inflation_radius" value="0.12"/>
-    <param name="cost_radius" value="0.17"/>
+    <param name="inflation_radius" value="0.18"/> <!--[m]通行不可，黒領域の膨張，環境依存なので基本的にはこれを調整する．-->
+    <param name="cost_radius" value="0.45"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>

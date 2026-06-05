@@ -677,16 +677,47 @@ private:
 
     nav_msgs::msg::OccupancyGrid cost_map = map;
     int steps = static_cast<int>(cost_radius / map.info.resolution);
+
+    if (steps < 1)
+      return cost_map; // cost radius (black inflation) smaller than one cell;
+                       // no inflation cost
+
+    const int NearnessToObstacle = 6;
+    // add by ry0hei-kobayashi 2026/6/5, original impl made by Marco Negrete.
+    // This function calculates the "nearness to obstacles", e.g., for the
+    // following grid:
+    /*
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0
+      0 0 x x x 0 0 0 0 0 0 0 0 0
+      0 0 x x 0 0 0 0 0 0 0 0 0 0
+      0 0 x x 0 0 0 0 0 0 0 0 x x
+      0 0 0 0 0 0 0 0 0 0 0 0 x x
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+      // the resulting nearness values would be:
+
+      2 3 3 3 3 3 2 1 0 1 1 1 1 1
+      2 3 x x x 3 2 1 0 1 2 2 2 2
+      2 3 x x 3 3 2 1 0 1 2 3 3 3
+      2 3 x x 3 2 2 1 0 1 2 3 x x
+      2 3 3 3 3 2 1 1 0 1 2 3 x x
+      2 2 2 2 2 2 1 0 0 1 2 3 3 3
+
+      Max nearness value will depend on the distance of influence.
+     */
+
     int box_size = (steps * 2 + 1) * (steps * 2 + 1);
     std::vector<int> cell_costs(box_size);
     std::vector<int> neighbors(box_size);
-
     int counter = 0;
     for (int i = -steps; i <= steps; ++i) {
       for (int j = -steps; j <= steps; ++j) {
         neighbors[counter] = i * map.info.width + j;
-        cell_costs[counter] =
-            (steps - std::max(std::abs(i), std::abs(j)) + 1) * 2;
+
+        int d = std::max(std::abs(i), std::abs(j)); // Chebyshev distance [cell]
+        cell_costs[counter] = NearnessToObstacle * (steps - d) / steps;
+        // cell_costs[counter] =
+        //     (steps - std::max(std::abs(i), std::abs(j)) + 1) * 2; // old impl
         ++counter;
       }
     }
