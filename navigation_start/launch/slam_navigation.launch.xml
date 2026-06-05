@@ -100,7 +100,7 @@
     
     <param name="decay_factor" value="20"/>    
     <param name="inflation_radius" value="0.18"/>
-    <param name="cost_radius" value="0.20"/> 
+    <param name="cost_radius" value="0.45"/> 
 
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
