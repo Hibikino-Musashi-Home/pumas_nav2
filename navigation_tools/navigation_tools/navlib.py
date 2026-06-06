@@ -104,6 +104,7 @@ class NavModule:
         self._action_success = False
         self._action_near_goal = False
         self._action_message = ''
+        self._near_goal_callback = None
 
         # Gaze action client
         self.gaze_action_client = ActionClient(
@@ -178,8 +179,15 @@ class NavModule:
         feedback = feedback_msg.feedback
         self._action_feedback = feedback
 
-        if feedback.near_goal_reached:
+        if feedback.near_goal_reached and not self._action_near_goal:
             self._action_near_goal = True
+            if self._near_goal_callback is not None:
+                try:
+                    self._near_goal_callback(feedback)
+                except Exception as e:
+                    self.get_logger().error(
+                        f'NavModule.->near_goal_callback failed: {e}'
+                    )
         self.get_logger().info(
             f'Nav feedback: state={feedback.state_name}, '
             f'dist={feedback.remaining_distance:.3f}, '
@@ -550,12 +558,14 @@ class NavModule:
         timeout,
         goal_distance=None,
         motion_synth=False,
+        near_goal_callback=None,
     ) -> bool:
         self.get_logger().info(
             f'NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}'
         )
 
         self.robot_stop = False
+        self._near_goal_callback = near_goal_callback
 
         if not motion_synth:
             self.motion_synth_start_pose = None
@@ -578,13 +588,6 @@ class NavModule:
         while rclpy.ok() and not self.robot_stop and attempts >= 0:
             if executor is not None:
                 executor.spin_once(timeout_sec=0.1)
-
-            if self._gaze_active and self._action_near_goal:
-                self.get_logger().info(
-                    'NavModule.->near_goal_reached: canceling gaze, restoring move_head'
-                )
-                self.cancel_gaze()
-                self._set_move_head(True, sync=False)
 
             if self._action_done:
                 result = self._action_success
@@ -687,6 +690,7 @@ class NavModule:
         use_point_cloud=True,
         gaze_point=False,
         via_points=None,
+        near_goal_callback=None,
     ):
         self.initialize_before_new_goal(send_stop=True)
 
@@ -729,6 +733,7 @@ class NavModule:
             timeout,
             goal_distance,
             motion_synth=True,
+            near_goal_callback=near_goal_callback,
         )
 
         # Ensure gaze is cancelled and move_head restored after nav ends
