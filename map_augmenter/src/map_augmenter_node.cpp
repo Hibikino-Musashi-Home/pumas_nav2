@@ -235,9 +235,6 @@ private:
   std::string base_link_name_;
 
   // Persistent "memory" of every cell ever observed as obstacle.
-  // When memory_all_obstacles_ is true, sensor hits are also recorded in
-  // memory_cells_, and the periodic publisher re-stamps those cells after
-  // decay so they never disappear until
   // /map_augmenter/clear_memory_all_obstacles.
   bool memory_all_obstacles_ = false;
   std::set<int> memory_cells_;
@@ -631,9 +628,15 @@ private:
 
     nav_msgs::msg::OccupancyGrid c = a;
     for (size_t i = 0; i < c.data.size(); ++i) {
-      // c.data[i] = static_cast<int8_t>(std::max(
-      //     static_cast<uint8_t>(a.data[i]), static_cast<uint8_t>(b.data[i])));
-      c.data[i] = std::max(a.data[i], b.data[i]);
+      // Overlay semantics: the overlay map `b` (prohibition / sensor obstacles)
+      // contributes ONLY obstacle (positive) cells; everywhere else keep the
+      // base map `a`. This preserves unknown (-1) in the base map instead of
+      // turning -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path
+      // planner decide via use_online whether unknown space is navigable
+      // (use_online=true: -1 reachable for SLAM; use_online=false: -1 blocked
+      // because entering unknown space is dangerous in a known environment).
+      if (b.data[i] > 0)
+        c.data[i] = std::max(a.data[i], b.data[i]);
     }
 
     return c;
