@@ -664,8 +664,9 @@ private:
     is_path_ = false;
     is_path_response_ = false;
     if (!clt_plan_path_with_via_->wait_for_service(std::chrono::seconds(1))) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "MotionPlanner.-> plan_path_with_via service not available.");
+      RCLCPP_ERROR(
+          this->get_logger(),
+          "MotionPlanner.-> plan_path_with_via service not available.");
       is_path_ = false;
       is_path_response_ = true;
       return;
@@ -702,10 +703,10 @@ private:
 
       this->is_path_response_ = true;
 
-      RCLCPP_INFO(
-          this->get_logger(),
-          "MotionPlanner.-> Path (via %zu) received successfully with size: %zu",
-          request->via_points.size(), path_.poses.size());
+      RCLCPP_INFO(this->get_logger(),
+                  "MotionPlanner.-> Path (via %zu) received successfully with "
+                  "size: %zu",
+                  request->via_points.size(), path_.poses.size());
     } catch (const std::exception &e) {
       this->is_path_response_ = true;
       RCLCPP_ERROR(this->get_logger(),
@@ -755,7 +756,7 @@ private:
     } catch (const tf2::TransformException &ex) {
       // RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s",
       // ex.what());
-      robot_x_ = robot_y_ = robot_t_ = 0.0f;
+      // robot_x_ = robot_y_ = robot_t_ = 0.0f;
       return;
     }
   }

@@ -34,17 +34,17 @@
 
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>
-  <arg name="laser_min_y" default="-0.25"/>
-  <arg name="laser_max_y" default="0.25"/>
+  <arg name="laser_min_y" default="-0.2"/>
+  <arg name="laser_max_y" default="0.2"/>
   <arg name="laser_min_z" default="0.025"/> <!-- hsrc -->
   <!--arg name="laser_min_z" default="0.022"/--> <!-- hsrc ex-->
   <arg name="laser_max_z" default="1.00"/>
-  <arg name="cloud_min_x" default="0.35"/>
-  <arg name="cloud_max_x" default="0.65"/>
-  <arg name="cloud_min_y" default="-0.30"/>
-  <arg name="cloud_max_y" default="0.30"/>
-  <arg name="cloud_min_z" default="0.05"/>
-  <arg name="cloud_max_z" default="1.20"/>
+  <arg name="cloud_min_x" default="0.3"/>
+  <arg name="cloud_max_x" default="0.55"/>
+  <arg name="cloud_min_y" default="-0.25"/>
+  <arg name="cloud_max_y" default="0.25"/>
+  <arg name="cloud_min_z" default="0.1"/>
+  <arg name="cloud_max_z" default="1.0"/>
 
   <!-- Map servers -->
   <node name="prohibition_map_server" 
@@ -99,7 +99,7 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
     <param name="decay_factor" value="20"/>    
-    <param name="inflation_radius" value="0.18"/>
+    <param name="inflation_radius" value="0.23"/>
     <param name="cost_radius" value="0.45"/> 
 
     <param name="use_online" value="$(var use_online)"/>
@@ -147,8 +147,8 @@
         output="screen">
     <param name="max_linear_speed" value="1.0"/>
     <param name="max_angular_speed" value="1.25"/>
-
-    <param name="control_alpha" value="0.2"/>
+    <param name="linear_acceleration" value="0.2"/>
+    <param name="control_alpha" value="0.6"/>
     <param name="control_beta" value="0.8"/>
 
     <param name="move_head" value="True"/>
@@ -183,10 +183,10 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
-    <param name="laser_pot_fields_d0" value="0.50"/>
+    <param name="laser_pot_fields_d0" value="0.60"/>
     <param name="laser_pot_fields_k_rej" value="0.30"/>
 
-    <param name="cloud_pot_fields_d0" value="0.70"/>
+    <param name="cloud_pot_fields_d0" value="0.80"/>
     <param name="cloud_pot_fields_k_rej" value="0.30"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>

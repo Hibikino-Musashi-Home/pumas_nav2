@@ -235,9 +235,6 @@ private:
   std::string base_link_name_;
 
   // Persistent "memory" of every cell ever observed as obstacle.
-  // When memory_all_obstacles_ is true, sensor hits are also recorded in
-  // memory_cells_, and the periodic publisher re-stamps those cells after
-  // decay so they never disappear until
   // /map_augmenter/clear_memory_all_obstacles.
   bool memory_all_obstacles_ = false;
   std::set<int> memory_cells_;
@@ -631,8 +628,15 @@ private:
 
     nav_msgs::msg::OccupancyGrid c = a;
     for (size_t i = 0; i < c.data.size(); ++i) {
-      c.data[i] = static_cast<int8_t>(std::max(
-          static_cast<uint8_t>(a.data[i]), static_cast<uint8_t>(b.data[i])));
+      // Overlay semantics: the overlay map `b` (prohibition / sensor obstacles)
+      // contributes ONLY obstacle (positive) cells; everywhere else keep the
+      // base map `a`. This preserves unknown (-1) in the base map instead of
+      // turning -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path
+      // planner decide via use_online whether unknown space is navigable
+      // (use_online=true: -1 reachable for SLAM; use_online=false: -1 blocked
+      // because entering unknown space is dangerous in a known environment).
+      if (b.data[i] > 0)
+        c.data[i] = std::max(a.data[i], b.data[i]);
     }
 
     return c;
@@ -656,7 +660,10 @@ private:
 
     for (int k = lower_limit; k < upper_limit; ++k) {
       if (map.data[k] > 0) {
+        int col = k % static_cast<int>(map.info.width);
         for (int i = -n; i <= n; ++i) {
+          if (col + i < 0 || col + i >= static_cast<int>(map.info.width))
+            continue; // skip horizontal wrap_around path
           for (int j = -n; j <= n; ++j) {
             int idx = k + j * map.info.width + i;
             if (idx >= 0 && idx < static_cast<int>(new_map.data.size())) {
@@ -730,11 +737,18 @@ private:
       if (map.data[i] > 0) {
         for (int j = 0; j < box_size; ++j) {
           int neighbor_idx = i + neighbors[j];
-          if (neighbor_idx >= 0 &&
-              neighbor_idx < static_cast<int>(cost_map.data.size())) {
-            if (cost_map.data[neighbor_idx] < cell_costs[j]) {
-              cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
-            }
+          if (neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue; // skip horizontal wrap_around path, fix by r.k
+          // if (neighbor_idx >= 0 &&
+          //     neighbor_idx < static_cast<int>(cost_map.data.size())) {
+          if (neighbor_idx < 0 ||
+              neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue;
+          if (std::abs((neighbor_idx % static_cast<int>(map.info.width)) -
+                       (i % static_cast<int>(map.info.width))) > steps)
+            continue;
+          if (cost_map.data[neighbor_idx] < cell_costs[j]) {
+            cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
           }
         }
       }

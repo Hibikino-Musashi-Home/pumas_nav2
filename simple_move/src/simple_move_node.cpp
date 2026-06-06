@@ -752,9 +752,15 @@ private:
   std_msgs::msg::Float32MultiArray
   get_next_goal_head_angles(int next_pose_idx) {
     std_msgs::msg::Float32MultiArray msg;
-    int idx = next_pose_idx + 5 >= goal_path_.poses.size() - 1
-                  ? goal_path_.poses.size() - 1
-                  : next_pose_idx + 5;
+
+    int last = static_cast<int>(goal_path_.poses.size()) - 1;
+    if (last < 0)
+      return msg; // empty path guard
+
+    int idx = std::min(next_pose_idx + 5, last);
+    // int idx = next_pose_idx + 5 >= goal_path_.poses.size() - 1
+    //               ? goal_path_.poses.size() - 1
+    //               : next_pose_idx + 5;
     float goal_x = goal_path_.poses[idx].pose.position.x;
     float goal_y = goal_path_.poses[idx].pose.position.y;
     float angle = atan2(goal_y - robot_y_, goal_x - robot_x_) - robot_t_;
@@ -855,6 +861,7 @@ private:
         if (dist < fine_dist_tolerance_ && fabs(yaw_err) < angle_tolerance_) {
           std::cout << "SimpleMove.-> Relative move finished." << std::endl;
           state = SM_INIT;
+          current_linear_speed = 0;
           msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::SUCCEEDED;
           pub_goal_reached_->publish(msg_goal_reached);
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
@@ -863,6 +870,7 @@ private:
         if (--attempts <= 0) {
           std::cout << "SimpleMove.-> Timeout on relative move." << std::endl;
           state = SM_INIT;
+          current_linear_speed = 0;
           msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
           pub_goal_reached_->publish(msg_goal_reached);
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
@@ -909,10 +917,15 @@ private:
                        "goal position. Current state: GOAL_POSE_ACCEL."
                     << std::endl;
         }
+        // pub_cmd_vel_->publish(calculate_speeds(
+        //     robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
+        //     min_linear_speed_, current_linear_speed, max_angular_speed_,
+        //     alpha_ * 2, beta_ / 4, goal_distance_ < 0, move_lat_));
         pub_cmd_vel_->publish(calculate_speeds(
             robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
             current_linear_speed, max_angular_speed_, alpha_ * 2, beta_ / 4,
-            goal_distance_ < 0, move_lat_));
+            goal_distance_ < 0, move_lat_, use_pot_fields_,
+            rejection_force_.y)); // use pot field
         current_linear_speed += (linear_acceleration_ * 5) / RATE;
         break;
 
@@ -933,10 +946,15 @@ private:
                        "goal position. Current state: GOAL_POSE_CRUISE."
                     << std::endl;
         }
+        // pub_cmd_vel_->publish(calculate_speeds(
+        //     robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
+        //     min_linear_speed_, current_linear_speed, max_angular_speed_,
+        //     alpha_ * 2, beta_ / 4, goal_distance_ < 0, move_lat_));
         pub_cmd_vel_->publish(calculate_speeds(
             robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
             current_linear_speed, max_angular_speed_, alpha_ * 2, beta_ / 4,
-            goal_distance_ < 0, move_lat_));
+            goal_distance_ < 0, move_lat_, use_pot_fields_,
+            rejection_force_.y)); // use pot field
         break;
 
       case SM_GOAL_POSE_DECCEL:
