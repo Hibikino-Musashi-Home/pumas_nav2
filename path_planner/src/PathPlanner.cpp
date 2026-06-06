@@ -104,6 +104,14 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
       idx_goal_x = idx_goal % map.info.width;
       std::cout << "PathPlanner.-> Goal updated to nearest free cell: "
                 << idx_goal_x << ", " << idx_goal_y << std::endl;
+    } else {
+      // reloaction faile: restore the original goal so the checks below, fix
+      // bug by r.k
+      idx_goal_x = _idx_goal_x;
+      idx_goal_y = _idx_goal_y;
+      idx_goal = idx_goal_y * map.info.width + idx_goal_x;
+      std::cout << "PathPlanner.-> Could not relocate to a free cell."
+                << std::endl;
     }
   }
 
@@ -186,6 +194,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
       int ni = node_neighbors[i];
       if (ni < 0 ||
           ni >= static_cast<int>(map.data.size())) // check out of range
+        continue;
+
+      int w = static_cast<int>(map.info.width);
+      if (std::abs((ni % w) - (current_node->index % w)) >
+          1) // reject horizontal wrap-around to the opposite side map edge, fix
+             // bug r.k
         continue;
 
       if (!allow_unknown_space_to_navigate(map.data[node_neighbors[i]]) ||

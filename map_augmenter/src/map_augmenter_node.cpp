@@ -631,8 +631,9 @@ private:
 
     nav_msgs::msg::OccupancyGrid c = a;
     for (size_t i = 0; i < c.data.size(); ++i) {
-      c.data[i] = static_cast<int8_t>(std::max(
-          static_cast<uint8_t>(a.data[i]), static_cast<uint8_t>(b.data[i])));
+      // c.data[i] = static_cast<int8_t>(std::max(
+      //     static_cast<uint8_t>(a.data[i]), static_cast<uint8_t>(b.data[i])));
+      c.data[i] = std::max(a.data[i], b.data[i]);
     }
 
     return c;
@@ -656,7 +657,10 @@ private:
 
     for (int k = lower_limit; k < upper_limit; ++k) {
       if (map.data[k] > 0) {
+        int col = k % static_cast<int>(map.info.width);
         for (int i = -n; i <= n; ++i) {
+          if (col + i < 0 || col + i >= static_cast<int>(map.info.width))
+            continue; // skip horizontal wrap_around path
           for (int j = -n; j <= n; ++j) {
             int idx = k + j * map.info.width + i;
             if (idx >= 0 && idx < static_cast<int>(new_map.data.size())) {
@@ -730,11 +734,18 @@ private:
       if (map.data[i] > 0) {
         for (int j = 0; j < box_size; ++j) {
           int neighbor_idx = i + neighbors[j];
-          if (neighbor_idx >= 0 &&
-              neighbor_idx < static_cast<int>(cost_map.data.size())) {
-            if (cost_map.data[neighbor_idx] < cell_costs[j]) {
-              cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
-            }
+          if (neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue; // skip horizontal wrap_around path, fix by r.k
+          // if (neighbor_idx >= 0 &&
+          //     neighbor_idx < static_cast<int>(cost_map.data.size())) {
+          if (neighbor_idx < 0 ||
+              neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue;
+          if (std::abs((neighbor_idx % static_cast<int>(map.info.width)) -
+                       (i % static_cast<int>(map.info.width))) > steps)
+            continue;
+          if (cost_map.data[neighbor_idx] < cell_costs[j]) {
+            cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
           }
         }
       }
