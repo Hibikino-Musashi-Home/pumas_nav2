@@ -152,8 +152,13 @@ class NavModule:
                 self.get_logger().error('NavModule.->param_read_write call timed out')
                 return None
         else:
-            rclpy.spin_until_future_complete(
-                self._node, future, timeout_sec=timeout_sec)
+            executor = SingleThreadedExecutor()
+            executor.add_node(self._node)
+            try:
+                executor.spin_until_future_complete(future, timeout_sec=timeout_sec)
+            finally:
+                executor.remove_node(self._node)
+                executor.shutdown()
             if not future.done():
                 self.get_logger().error('NavModule.->param_read_write call timed out')
                 return None
