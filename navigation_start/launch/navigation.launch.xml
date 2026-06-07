@@ -211,6 +211,7 @@
   </node>
 
   <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
+    <param from="$(find-pkg-share navigation_tools)/config/$(env ROBOT_NAME hsrb)_pot_fields_updator.yaml"/>
   </node>
 
   <!-- Hardware Controller -->
