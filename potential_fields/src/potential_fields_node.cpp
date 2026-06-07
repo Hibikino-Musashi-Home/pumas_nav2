@@ -167,10 +167,19 @@ public:
     //  Wait for transforms
     wait_for_transforms("map", base_link_name_);
 
+    lidar_cb_group_ = this->create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
+
+    cloud_cb_group_ = this->create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
+
     // Simple Move main processing
+    timer_cb_group_ = this->create_callback_group(
+        rclcpp::CallbackGroupType::MutuallyExclusive);
     processing_timer_ = this->create_wall_timer(
         std::chrono::milliseconds(30),
-        std::bind(&PotentialFieldsNode::potential_fields_processing, this));
+        std::bind(&PotentialFieldsNode::potential_fields_processing, this),
+        timer_cb_group_);
 
     RCLCPP_INFO(this->get_logger(),
                 "PotentialFields.-> PotentialFieldsNode is ready.");
@@ -245,6 +254,21 @@ private:
   // ############
   //  Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
+
+  // Callback group for the processing timer, kept separate so that
+  // set_parameters / get_parameters services can execute concurrently.
+  rclcpp::CallbackGroup::SharedPtr timer_cb_group_;
+
+  // Callback group for lidar subscription, kept separate from the timer so
+  // callback_lidar can execute concurrently with potential_fields_processing.
+  rclcpp::CallbackGroup::SharedPtr lidar_cb_group_;
+
+  // Callback group for the point cloud subscription, kept separate from the
+  // default group so that callback_point_cloud (which can block on OpenCV
+  // imshow/waitKey when show_image is enabled) does not starve the parameter
+  // services (get_parameters / set_parameters) living on the default group.
+  rclcpp::CallbackGroup::SharedPtr cloud_cb_group_;
+
 
   // Main processing loop
   rclcpp::TimerBase::SharedPtr processing_timer_;
@@ -447,17 +471,23 @@ private:
         RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
 
         if (use_cloud_ && !sub_cloud_) {
+          rclcpp::SubscriptionOptions cloud_opts;
+          cloud_opts.callback_group = cloud_cb_group_;
           sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
               point_cloud_topic_, rclcpp::SensorDataQoS(),
               std::bind(&PotentialFieldsNode::callback_point_cloud, this,
-                        std::placeholders::_1));
+                        std::placeholders::_1),
+              cloud_opts);
         }
 
         if (use_lidar_ && !sub_lidar_) {
+          rclcpp::SubscriptionOptions lidar_opts;
+          lidar_opts.callback_group = lidar_cb_group_;
           sub_lidar_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-              laser_scan_topic_, rclcpp::SensorDataQoS(),
+              laser_scan_topic_, rclcpp::QoS(10).reliable(),
               std::bind(&PotentialFieldsNode::callback_lidar, this,
-                        std::placeholders::_1));
+                        std::placeholders::_1),
+              lidar_opts);
         }
       } else {
         RCLCPP_INFO(this->get_logger(),
@@ -489,10 +519,13 @@ private:
         RCLCPP_INFO(this->get_logger(), "%s", ss.str().c_str());
 
         if (!sub_cloud_) {
+          rclcpp::SubscriptionOptions cloud_opts;
+          cloud_opts.callback_group = cloud_cb_group_;
           sub_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
               point_cloud_topic_, rclcpp::SensorDataQoS(),
               std::bind(&PotentialFieldsNode::callback_point_cloud, this,
-                        std::placeholders::_1));
+                        std::placeholders::_1),
+              cloud_opts);
         }
       } else if (use_cloud_) {
         RCLCPP_INFO(this->get_logger(), "PotentialFields.->Stopping obstacle "
