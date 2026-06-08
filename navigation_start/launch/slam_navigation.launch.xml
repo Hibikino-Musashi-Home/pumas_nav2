@@ -139,6 +139,7 @@
     <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="diagonal_paths" value="True"/>
+    <param name="escape_clear_radius" value="0.6"/> <!--[m]計画失敗時に自機周辺をこの半径だけ自由(0)化して1回だけ再計画．障害物に囲まれた際の脱出用．0以下で無効-->
   </node>
 
   <node name="simple_move"  

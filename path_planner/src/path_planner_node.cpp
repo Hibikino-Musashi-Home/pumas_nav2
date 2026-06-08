@@ -25,6 +25,14 @@ public:
     this->declare_parameter<bool>("disable_rear_path_plan", false);
     this->declare_parameter<double>("online_behind_clearance", 1.0);
 
+    // Escape-when-stuck: if a plan fails, retry it ONCE after carving a free
+    // (0) disk of this radius [m] around the robot (the start pose). <=0
+    // disables the behavior. The robot is physically at the start cell, so any
+    // occupancy right around it is a sensor/inflation artifact; treating that
+    // small disk as free lets A* route out when the robot is boxed in by its
+    // own inflation.
+    this->declare_parameter<double>("escape_clear_radius", 0.6);
+
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("smooth_alpha", smooth_alpha_);
@@ -33,6 +41,7 @@ public:
     this->get_parameter("use_online", use_online_);
     this->get_parameter("disable_rear_path_plan", disable_rear_path_plan_);
     this->get_parameter("online_behind_clearance", online_behind_clearance_);
+    this->get_parameter("escape_clear_radius", escape_clear_radius_);
 
     pub_rear_zone_ = this->create_publisher<visualization_msgs::msg::Marker>(
         make_name("/path_planner/rear_block_zone"),
@@ -84,6 +93,7 @@ private:
   bool use_online_;
   bool disable_rear_path_plan_ = false;
   double online_behind_clearance_ = 1.0;
+  double escape_clear_radius_ = 0.6;
 
   // Initial pose is the map origin (0,0,0); cells with x < -clearance (behind)
   // are masked out of planning when rear blocking is active.
@@ -140,6 +150,8 @@ private:
         disable_rear_path_plan_ = param.as_bool();
       else if (param.get_name() == "online_behind_clearance")
         online_behind_clearance_ = param.as_double();
+      else if (param.get_name() == "escape_clear_radius")
+        escape_clear_radius_ = param.as_double();
 
       else {
         result.successful = false;
@@ -299,28 +311,89 @@ private:
     return masked;
   }
 
-  // Plan with optional rear masking; if the masked plan fails, fall back to
-  // planning on the unmasked map so behind-goals stay reachable.
+  // Copy `src` and force a free (0) disk of `radius` [m] around `center` (map
+  // frame). Used as an escape hatch when planning fails: the robot is
+  // physically at the start pose, so occupancy right around it is a
+  // sensor/inflation artifact that is safe to treat as free so A* can route
+  // out of a self-inflated trap. Only the occupancy grid is cleared; the cost
+  // map is left untouched, so the escape path still respects the cost gradient
+  // toward real openings. If the disk is the only free space (truly walled in
+  // beyond it), A* still fails, so this cannot conjure a path through a solid
+  // wall.
+  nav_msgs::msg::OccupancyGrid
+  build_start_cleared_map(const nav_msgs::msg::OccupancyGrid &src,
+                          const geometry_msgs::msg::Pose &center,
+                          double radius) const {
+    nav_msgs::msg::OccupancyGrid cleared = src;
+    const double res = cleared.info.resolution;
+    if (res <= 0.0 || radius <= 0.0)
+      return cleared;
+    const double ox = cleared.info.origin.position.x;
+    const double oy = cleared.info.origin.position.y;
+    const int w = static_cast<int>(cleared.info.width);
+    const int h = static_cast<int>(cleared.info.height);
+    const int cx = static_cast<int>((center.position.x - ox) / res);
+    const int cy = static_cast<int>((center.position.y - oy) / res);
+    const int r = static_cast<int>(radius / res);
+    for (int dy = -r; dy <= r; ++dy) {
+      const int y = cy + dy;
+      if (y < 0 || y >= h)
+        continue;
+      for (int dx = -r; dx <= r; ++dx) {
+        const int x = cx + dx;
+        if (x < 0 || x >= w)
+          continue;
+        if (dx * dx + dy * dy > r * r)
+          continue; // keep it a disk, not a square
+        cleared.data[y * w + x] = 0; // free
+      }
+    }
+    return cleared;
+  }
+
+  // Plan with optional rear masking. If planning fails and escape_clear_radius
+  // > 0, retry ONCE after carving a free disk around the robot (start) so it
+  // can escape a self-inflated trap. Rear masking is re-applied on top of the
+  // cleared map, so the hard "never plan behind the initial pose" block holds.
   bool plan_astar_with_rear(const nav_msgs::msg::OccupancyGrid &map,
                             const nav_msgs::msg::OccupancyGrid &cost_map,
                             const geometry_msgs::msg::Pose &start,
                             const geometry_msgs::msg::Pose &goal,
                             nav_msgs::msg::Path &path) {
     publish_rear_zone();
-    if (rear_block_active()) {
-      // Hard block: never plan behind the initial pose. A goal behind the
-      // cut line simply fails (no fall back to the unmasked map).
-      nav_msgs::msg::OccupancyGrid masked = build_rear_masked_map(map);
-      bool ok = PathPlanner::AStar(masked, cost_map, start, goal,
-                                   diagonal_paths_, path, use_online_);
-      if (!ok)
+    const bool rear = rear_block_active();
+
+    // First attempt: normal map (rear-masked when the hard rear block is on; a
+    // goal behind the cut line simply fails, with no fall back to unmasked).
+    nav_msgs::msg::OccupancyGrid base = rear ? build_rear_masked_map(map) : map;
+    if (PathPlanner::AStar(base, cost_map, start, goal, diagonal_paths_, path,
+                           use_online_))
+      return true;
+
+    // Escape fallback: carve a free disk around the robot and retry once.
+    if (escape_clear_radius_ > 0.0) {
+      nav_msgs::msg::OccupancyGrid cleared =
+          build_start_cleared_map(map, start, escape_clear_radius_);
+      if (rear) // rear block still wins over the escape disk
+        cleared = build_rear_masked_map(cleared);
+      RCLCPP_WARN(this->get_logger(),
+                  "PathPlanner.-> No path; retrying with a %.2f m free disk "
+                  "around the robot (escape-when-stuck).",
+                  escape_clear_radius_);
+      if (PathPlanner::AStar(cleared, cost_map, start, goal, diagonal_paths_,
+                             path, use_online_)) {
         RCLCPP_WARN(this->get_logger(),
-                    "PathPlanner.-> No path with rear blocked "
-                    "(goal may be behind the initial pose).");
-      return ok;
+                    "PathPlanner.-> Escape succeeded: path found after clearing "
+                    "around the robot.");
+        return true;
+      }
     }
-    return PathPlanner::AStar(map, cost_map, start, goal, diagonal_paths_, path,
-                              use_online_);
+
+    RCLCPP_WARN(this->get_logger(),
+                rear ? "PathPlanner.-> No path with rear blocked (goal may be "
+                       "behind the initial pose)."
+                     : "PathPlanner.-> No path found from start to goal.");
+    return false;
   }
 
   bool plan_via_with_rear(const nav_msgs::msg::OccupancyGrid &map,
@@ -330,20 +403,37 @@ private:
                           const geometry_msgs::msg::Pose &goal,
                           nav_msgs::msg::Path &path) {
     publish_rear_zone();
-    if (rear_block_active()) {
-      // Hard block: never plan behind the initial pose (no fall back).
-      nav_msgs::msg::OccupancyGrid masked = build_rear_masked_map(map);
-      bool ok = PathPlanner::AStarWithViaPoints(masked, cost_map, start, vias,
-                                                goal, diagonal_paths_, path,
-                                                use_online_);
-      if (!ok)
+    const bool rear = rear_block_active();
+
+    nav_msgs::msg::OccupancyGrid base = rear ? build_rear_masked_map(map) : map;
+    if (PathPlanner::AStarWithViaPoints(base, cost_map, start, vias, goal,
+                                        diagonal_paths_, path, use_online_))
+      return true;
+
+    // Escape fallback: carve a free disk around the robot and retry once.
+    if (escape_clear_radius_ > 0.0) {
+      nav_msgs::msg::OccupancyGrid cleared =
+          build_start_cleared_map(map, start, escape_clear_radius_);
+      if (rear) // rear block still wins over the escape disk
+        cleared = build_rear_masked_map(cleared);
+      RCLCPP_WARN(this->get_logger(),
+                  "PathPlanner.-> No via path; retrying with a %.2f m free disk "
+                  "around the robot (escape-when-stuck).",
+                  escape_clear_radius_);
+      if (PathPlanner::AStarWithViaPoints(cleared, cost_map, start, vias, goal,
+                                          diagonal_paths_, path, use_online_)) {
         RCLCPP_WARN(this->get_logger(),
-                    "PathPlanner.-> No via path with rear blocked "
-                    "(a waypoint/goal may be behind the initial pose).");
-      return ok;
+                    "PathPlanner.-> Escape succeeded: via path found after "
+                    "clearing around the robot.");
+        return true;
+      }
     }
-    return PathPlanner::AStarWithViaPoints(map, cost_map, start, vias, goal,
-                                           diagonal_paths_, path, use_online_);
+
+    RCLCPP_WARN(this->get_logger(),
+                rear ? "PathPlanner.-> No via path with rear blocked (a "
+                       "waypoint/goal may be behind the initial pose)."
+                     : "PathPlanner.-> No via path found.");
+    return false;
   }
 
   // Visualize the rear cut-off line: x = -clearance (map frame), vertical.
