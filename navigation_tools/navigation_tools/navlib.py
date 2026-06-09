@@ -156,7 +156,8 @@ class NavModule:
             executor = SingleThreadedExecutor()
             executor.add_node(self._node)
             try:
-                executor.spin_until_future_complete(future, timeout_sec=timeout_sec)
+                executor.spin_until_future_complete(
+                    future, timeout_sec=timeout_sec)
             finally:
                 executor.remove_node(self._node)
                 executor.shutdown()
@@ -191,8 +192,7 @@ class NavModule:
                     self._near_goal_callback(feedback)
                 except Exception as e:
                     self.get_logger().error(
-                        f'NavModule.->near_goal_callback failed: {e}'
-                    )
+                        f'NavModule.->near_goal_callback failed: {e}')
         self.get_logger().info(
             f'Nav feedback: state={feedback.state_name}, '
             f'dist={feedback.remaining_distance:.3f}, '
@@ -781,10 +781,11 @@ if __name__ == '__main__':
         'goal': goal_pose,
         'execution_time': 0.5,
     }
+    ms_config = None
 
     # for gaze node test
-    gaze_tf = False
     gaze_tf = 'gaze_point'
+    gaze_tf = False
 
     via_points = [
         Pose2D(x=2.6, y=3.9, theta=0.0),
@@ -792,8 +793,8 @@ if __name__ == '__main__':
     ]
     via_points = None
 
-    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     goal = Pose2D(x=0.5, y=3.6, theta=0.0)
+    goal = Pose2D(x=0.0, y=0.0, theta=0.0)
     goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     success = nav.nav_goal(
         goal,

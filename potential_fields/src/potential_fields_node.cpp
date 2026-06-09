@@ -294,8 +294,18 @@ private:
 
       else if (name == "use_lidar")
         use_lidar_ = param.as_bool();
-      else if (name == "use_point_cloud")
+      else if (name == "use_point_cloud") {
         use_cloud_ = param.as_bool();
+        if (!use_cloud_) {
+          // Drop any latched cloud contribution immediately. callback_point_cloud
+          // keeps it cleared while the (possibly still-alive) subscription keeps
+          // delivering; this also covers the case where the cloud stops arriving
+          // right as the param flips, leaving a stale non-zero value behind.
+          collision_risk_cloud_ = false;
+          rejection_force_cloud_.x = 0.0;
+          rejection_force_cloud_.y = 0.0;
+        }
+      }
 
       else if (name == "laser_min_x")
         laser_min_x_ = param.as_double();
@@ -434,6 +444,19 @@ private:
   callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     try {
       no_data_cloud_counter_ = 0;
+      // sub_cloud_ is torn down only on the enable=false transition (which
+      // mvn_pln publishes solely on a SUCCEEDED path-follow), so it can stay
+      // alive across abort/cancel/preempt and into the next goal. Setting
+      // use_point_cloud=false at runtime (e.g. navlib during motion_synth, when
+      // the arm/head may occlude the head camera) must still stop the camera
+      // from contributing. Gate consumption on use_cloud_ here so the parameter
+      // is the single source of truth regardless of subscription state.
+      if (!use_cloud_) {
+        collision_risk_cloud_ = false;
+        rejection_force_cloud_.x = 0.0;
+        rejection_force_cloud_.y = 0.0;
+        return;
+      }
       collision_risk_cloud_ = check_collision_risk_with_cloud(
           msg, rejection_force_cloud_.x, rejection_force_cloud_.y);
     } catch (const std::exception &e) {
