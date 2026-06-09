@@ -1,8 +1,12 @@
 <?xml version="1.0"?>
 
 <launch>
+
+
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
+
   <arg name="map_name" default="rc26_3330"/>
   <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/$(var map_name)/map.yaml"/>
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/$(var map_name)/map.yaml"/>
@@ -39,10 +43,11 @@
   <arg name="laser_min_y" default="-0.2"/>
   <arg name="laser_max_y" default="0.2"/>
   <!--height-->
-  <arg name="laser_min_z" default="0.025"/> <!--hsrc-->
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.30"/>
+  <arg name="cloud_min_x" default="0.35"/>
   <arg name="cloud_max_x" default="0.60"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.25"/>
@@ -197,16 +202,21 @@
   <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
   </node>
 
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
     <param name="torso_default_pose" value="0.0"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-    <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
+    <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
     <param name="pan_min" value="-3.14"/>
     <param name="pan_max" value="1.74"/>
-    <param name="tilt_min" value="-0.7"/>
+    <param name="tilt_min" value="-0.6"/>
     <param name="tilt_max" value="0.47"/>
   </node>
   <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="screen" respawn="true">
