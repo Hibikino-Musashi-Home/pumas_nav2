@@ -5,6 +5,7 @@
 #include "actionlib_msgs/msg/goal_status.hpp"
 #include "geometry_msgs/msg/pose_array.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "nav_msgs/msg/occupancy_grid.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "nav_msgs/srv/get_map.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -38,6 +39,8 @@
 #include "rclcpp_action/rclcpp_action.hpp"
 
 // Standard
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <exception>
@@ -66,6 +69,11 @@
 #define SM_WAIT_FOR_ANGLE_CORRECTED 7
 #define SM_FINAL 17
 
+// Collision-risk recovery states
+#define SM_COLLISION_RECOVERY 40
+#define SM_RECOVERY_WAIT_MAP 41
+#define SM_RECOVERY_WAIT_BACKUP 42
+
 // Flags for clients WAIT casers
 #define SM_WAIT_FOR_PATH_RESPONSE 102
 #define SM_WAIT_FOR_INSIDE_OBSTACLES_RESPONSE 119
@@ -92,12 +100,16 @@ public:
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
     this->declare_parameter<bool>("memory_all_obstacles", false);
 
+    this->declare_parameter<int>("collision_recovery_trigger_count", 3);
+
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("patience", patience_);
     this->get_parameter("proximity_criterion", proximity_criterion_);
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
+    this->get_parameter("collision_recovery_trigger_count",
+                        collision_recovery_trigger_count_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
@@ -120,10 +132,18 @@ public:
         this->create_publisher<std_msgs::msg::Float32MultiArray>(
             make_name("/simple_move/goal_dist_angle"),
             rclcpp::QoS(10).transient_local());
+    // Holonomic relative move [x, y, yaw] (base frame) for the recovery escape.
+    pub_goal_rel_pose_ =
+        this->create_publisher<std_msgs::msg::Float32MultiArray>(
+            make_name("/simple_move/goal_rel_pose"),
+            rclcpp::QoS(10).reliable());
     pub_status_ = this->create_publisher<actionlib_msgs::msg::GoalStatus>(
         make_name("/navigation/status"), rclcpp::QoS(10).transient_local());
     pub_simple_move_stop_ = this->create_publisher<std_msgs::msg::Empty>(
         make_name("/simple_move/stop"), rclcpp::QoS(10).transient_local());
+    pub_detection_scale_ = this->create_publisher<std_msgs::msg::Float32>(
+        make_name("/navigation/potential_fields/detection_scale"),
+        rclcpp::QoS(10).transient_local());
 
     // ############
     //  Subscribers
@@ -262,6 +282,42 @@ private:
   rclcpp::Duration no_cloud_pot_fields_duration_{2, 0}; // 2 seconds
   bool is_temporary_no_cloud_pot_fields_ = false;
 
+  // ############
+  //  Collision-risk recovery
+  //  Trigger: count collision-risk path aborts; once >= trigger_count_, run
+  //  active recovery. Tier 0 = risk-aware escape move: a 15 cm holonomic move
+  //  AWAY from the obstacle (back / left / right / diagonal, chosen from the
+  //  obstacle's lateral offset on the augmented map, clearance-checked); tier
+  //  >= 1 = progressively shrink the cloud detection box (lidar box is left
+  //  full as the reliable collision_risk trigger). Counters reset on recovery
+  //  escape (forward progress past the stuck spot), NOT at the start->goal
+  //  boundary. Never gives up: at the scale floor the level wraps back to 0 to
+  //  re-attempt an escape move.
+  int collision_recovery_trigger_count_ = 3; // ROS param
+  int collision_event_count_ = 0;
+  int recovery_level_ = 0;
+  bool collision_risk_latched_ =
+      false; // a collision-risk True seen while moving
+  bool recovery_stuck_recorded_ = false;
+  // Distance-to-goal captured when first stuck. Escape = the robot has closed
+  // this by recovery_progress_dist_. Measured toward the goal (not Euclidean
+  // from the stuck spot) so a back-up, which moves away from the goal, never
+  // counts as escaping.
+  float stuck_goal_dist_ = 0.0f;
+  float detection_scale_ = 1.0f;
+  // Async augmented-map fetch used for the rear-clearance check.
+  nav_msgs::msg::OccupancyGrid recovery_map_;
+  bool recovery_map_ready_ = false;
+  bool recovery_map_response_ = false;
+  // Fixed tuning (edit in code; kept out of ROS params on purpose).
+  const float recovery_back_dist_ = 0.15f; // back-up distance [m]
+  const float recovery_progress_dist_ =
+      0.50f;                                  // advance to count as escaped [m]
+  const float recovery_shrink_factor_ = 0.8f; // detection scale mult / step
+  const float recovery_min_detection_scale_ = 0.5f; // detection scale floor
+  const float recovery_rear_lateral_ = 0.15f; // rear-check lateral offset [m]
+  const int recovery_max_shrink_steps_ = 3;   // shrink steps before wrapping
+
   // Memory obstacle clear flow (used when memory_all_obstacles is enabled and
   // path planning has just failed — we wipe accumulated memory then retry)
   bool memory_all_obstacles_ = false;
@@ -280,9 +336,12 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_goal_path_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr
       pub_goal_dist_angle_;
+  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr
+      pub_goal_rel_pose_;
   rclcpp::Publisher<actionlib_msgs::msg::GoalStatus>::SharedPtr pub_status_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_simple_move_stop_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr pub_update_maps_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_detection_scale_;
 
   // ############
   //  Subscribers
@@ -302,10 +361,6 @@ private:
   rclcpp::Subscription<pumas_interfaces::msg::StartAndEndJoints>::SharedPtr
       sub_arm_goal_;
   rclcpp_action::Client<MotionSynthesis>::SharedPtr motion_synth_client_;
-  // Strong ref to the in-flight motion_synth goal. rclcpp_action stores only
-  // weak_ptr internally, so without this the handle gets GC'd and the result
-  // is dropped with "unknown result response, ignoring" — leaving end_pose
-  // unexecuted.
   std::shared_ptr<GoalHandleMotionSynthesis> motion_synth_goal_handle_;
 
   // nav action
@@ -390,6 +445,8 @@ private:
         base_link_name_ = param.as_string();
       else if (param.get_name() == "memory_all_obstacles")
         memory_all_obstacles_ = param.as_bool();
+      else if (param.get_name() == "collision_recovery_trigger_count")
+        collision_recovery_trigger_count_ = param.as_int();
 
       else {
         result.successful = false;
@@ -579,6 +636,11 @@ private:
       is_pot_fields_response_ = true;
 
       collision_risk_ = msg->data;
+      // Latch a True so the collision-risk abort can be distinguished from a
+      // generic (timeout) abort even after the robot stops and potential_fields
+      // (speed-gated) goes back to False. Cleared at each path-follow start.
+      if (msg->data)
+        collision_risk_latched_ = true;
     } catch (const std::exception &e) {
       pot_fields_received_ = false;
       is_pot_fields_response_ = true;
@@ -759,6 +821,144 @@ private:
       // robot_x_ = robot_y_ = robot_t_ = 0.0f;
       return;
     }
+  }
+
+  // ############
+  //  Collision-recovery helpers
+  void publish_detection_scale(float scale) {
+    std_msgs::msg::Float32 m;
+    m.data = scale;
+    pub_detection_scale_->publish(m);
+  }
+
+  // Clear all recovery state and restore the cloud box. Called on recovery
+  // escape (forward progress) and at goal boundaries.
+  void reset_recovery_state() {
+    collision_event_count_ = 0;
+    recovery_level_ = 0;
+    recovery_stuck_recorded_ = false;
+    if (detection_scale_ != 1.0f) {
+      detection_scale_ = 1.0f;
+      publish_detection_scale(1.0f);
+    }
+  }
+
+  // Step the recovery tier. After the configured number of shrink steps, wrap
+  // back to tier 0 (re-attempt a back-up) while leaving the detection scale at
+  // its floor -> never gives up.
+  void advance_recovery_level() {
+    recovery_level_++;
+    if (recovery_level_ > recovery_max_shrink_steps_)
+      recovery_level_ = 0;
+  }
+
+  // Asynchronously fetch the augmented occupancy map for the rear check.
+  void request_augmented_map() {
+    recovery_map_response_ = false;
+    recovery_map_ready_ = false;
+    if (!clt_get_aug_map_->wait_for_service(std::chrono::milliseconds(200))) {
+      RCLCPP_WARN(this->get_logger(),
+                  "MotionPlanner.-> get_augmented_map service unavailable.");
+      recovery_map_response_ = true; // no map -> rear treated as unknown
+      return;
+    }
+    auto request = std::make_shared<nav_msgs::srv::GetMap::Request>();
+    clt_get_aug_map_->async_send_request(
+        request,
+        [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future) {
+          try {
+            recovery_map_ = future.get()->map;
+            recovery_map_ready_ = true;
+          } catch (const std::exception &e) {
+            RCLCPP_ERROR(this->get_logger(),
+                         "MotionPlanner.-> Failed to get augmented map: %s",
+                         e.what());
+            recovery_map_ready_ = false;
+          }
+          recovery_map_response_ = true;
+        });
+  }
+
+  // Is the augmented-map cell at world (px,py) KNOWN-occupied (>0)? Fail-OPEN:
+  // missing map, off-map and unknown (-1) all return false (not blocked), so a
+  // short escape move is never deadlocked by the map being incomplete.
+  bool map_cell_blocked(float px, float py) const {
+    const auto &info = recovery_map_.info;
+    if (info.resolution <= 0.0f || recovery_map_.data.empty())
+      return false;
+    const int cx =
+        static_cast<int>((px - info.origin.position.x) / info.resolution);
+    const int cy =
+        static_cast<int>((py - info.origin.position.y) / info.resolution);
+    if (cx < 0 || cy < 0 || cx >= static_cast<int>(info.width) ||
+        cy >= static_cast<int>(info.height))
+      return false;
+    const int cell = cy * static_cast<int>(info.width) + cx;
+    if (cell < 0 || cell >= static_cast<int>(recovery_map_.data.size()))
+      return false;
+    return recovery_map_.data[cell] > 0;
+  }
+
+  // Is a relative move (rel_x fwd+, rel_y left+, base frame) clear? Checks the
+  // destination plus ± footprint offsets perpendicular to the motion.
+  bool dir_clear(float rel_x, float rel_y) const {
+    const float ct = cos(robot_t_), st = sin(robot_t_);
+    const float len = std::hypot(rel_x, rel_y);
+    const float ux = (len > 1e-3f) ? rel_x / len : 0.0f;
+    const float uy = (len > 1e-3f) ? rel_y / len : 0.0f;
+    const float perpx = -uy, perpy = ux; // perpendicular to motion
+    const float offs[3] = {-recovery_rear_lateral_, 0.0f,
+                           recovery_rear_lateral_};
+    for (float o : offs) {
+      const float bx = rel_x + perpx * o;
+      const float by = rel_y + perpy * o;
+      const float px = robot_x_ + bx * ct - by * st;
+      const float py = robot_y_ + bx * st + by * ct;
+      if (map_cell_blocked(px, py))
+        return false;
+    }
+    return true;
+  }
+
+  // Choose a 15 cm escape move (base frame [x fwd+, y left+])
+  bool choose_escape_move(float &rel_x, float &rel_y) {
+    const float ct = cos(robot_t_), st = sin(robot_t_);
+    double sum_y = 0.0;
+    int n = 0;
+    for (float bx = 0.15f; bx <= 0.65f; bx += 0.05f) {
+      for (float by = -0.45f; by <= 0.45f; by += 0.05f) {
+        const float px = robot_x_ + bx * ct - by * st;
+        const float py = robot_y_ + bx * st + by * ct;
+        if (map_cell_blocked(px, py)) {
+          sum_y += by;
+          n++;
+        }
+      }
+    }
+    const float avg_y = (n > 0) ? static_cast<float>(sum_y / n) : 0.0f;
+
+    const float D = recovery_back_dist_; // 15 cm
+    const float Dd = D * 0.70710678f;    // diagonal component (|move| = D)
+    const float lat_thresh = 0.10f;
+    std::vector<std::array<float, 2>> cands;
+    if (n > 0 && avg_y > lat_thresh) {
+      // obstacle on the LEFT -> escape RIGHT first
+      cands = {{{0, -D}}, {{-Dd, -Dd}}, {{-D, 0}}, {{-Dd, Dd}}, {{0, D}}};
+    } else if (n > 0 && avg_y < -lat_thresh) {
+      // obstacle on the RIGHT -> escape LEFT first
+      cands = {{{0, D}}, {{-Dd, Dd}}, {{-D, 0}}, {{-Dd, -Dd}}, {{0, -D}}};
+    } else {
+      // centered / no obstacle found -> straight back first
+      cands = {{{-D, 0}}, {{-Dd, Dd}}, {{-Dd, -Dd}}, {{0, D}}, {{0, -D}}};
+    }
+    for (const auto &m : cands) {
+      if (dir_clear(m[0], m[1])) {
+        rel_x = m[0];
+        rel_y = m[1];
+        return true;
+      }
+    }
+    return false;
   }
 
   int publish_status(int status, int id, const std::string &text) {
@@ -1013,6 +1213,7 @@ private:
               publish_status(actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id,
                              "Starting new movement task");
           near_goal_sent = false;
+          reset_recovery_state(); // clean slate per task (hygiene)
         }
         break;
       }
@@ -1345,6 +1546,7 @@ private:
       case SM_START_MOVE_PATH: {
         std::cout << "MotionPlanner.-> Starting path following " << std::endl;
         collision_risk_ = false;
+        collision_risk_latched_ = false;
         simple_move_sequencer++;
 
         path_.header.frame_id = "map";
@@ -1369,16 +1571,19 @@ private:
         error = sqrt(pow(global_goal_.position.x - robot_x_, 2) +
                      pow(global_goal_.position.y - robot_y_, 2));
 
-        if (is_temporary_no_cloud_pot_fields_ &&
-            (this->now() - no_cloud_pot_fields_start_time_) >
-                no_cloud_pot_fields_duration_) {
-          msg_bool.data = true;
-          pub_pot_fields_enable_cloud_->publish(msg_bool);
-          std::cout << "MotionPlanner.-> Potential fields wit point cloud "
-                       "re-enable flag sent."
+        // Recovery escape: once we have been recovering, fully reset the
+        // recovery state (counters + cloud box) as soon as the robot has made
+        // real forward progress, i.e. closed recovery_progress_dist_ of the
+        // distance to the goal it had when it first got stuck. Tied to escaping
+        // recovery, NOT to the start->goal span. (A back-up increases `error`,
+        // so it can never trigger this.)
+        if (recovery_stuck_recorded_ &&
+            error <= stuck_goal_dist_ - recovery_progress_dist_) {
+          std::cout << "MotionPlanner.-> Escaped collision recovery (closed "
+                    << (stuck_goal_dist_ - error)
+                    << " m toward goal). Resetting recovery state."
                     << std::endl;
-
-          is_temporary_no_cloud_pot_fields_ = false;
+          reset_recovery_state();
         }
 
         if (error < proximity_criterion_ && !near_goal_sent) {
@@ -1398,33 +1603,112 @@ private:
                     << std::endl;
           msg_bool.data = false;
           pub_pot_fields_enable_->publish(msg_bool);
+          reset_recovery_state();
           state = SM_CORRECT_FINAL_ANGLE;
-        } else if (!is_temporary_no_cloud_pot_fields_ &&
-                   simple_move_goal_status_.status ==
-                       actionlib_msgs::msg::GoalStatus::ABORTED) {
-          collision_risk_ = false;
-          std::cout << "MotionPlanner.-> COLLISION RISK DETECTED before goal "
-                       "is reached."
-                    << std::endl;
-
-          msg_bool.data = false;
-          pub_pot_fields_enable_cloud_->publish(msg_bool);
-          std::cout << "MotionPlanner.-> Temporary Point Cloud Potential "
-                       "fields disable flag sent."
-                    << std::endl;
-
-          is_temporary_no_cloud_pot_fields_ = true;
-
-          state = SM_CALCULATE_PATH;
-          // state = SM_WAIT_FOR_NOT_POT_FIELDS; // default impl
         } else if (simple_move_goal_status_.status ==
                    actionlib_msgs::msg::GoalStatus::ABORTED) {
           simple_move_goal_status_.status = 0;
-          is_temporary_no_cloud_pot_fields_ = false;
-          std::cout << "MotionPlanner.-> Simple move reported path aborted. "
-                       "Trying again..."
+          if (collision_risk_latched_) {
+            // Collision-risk abort: count it. Below the trigger, just replan
+            // (the obstacle may be transient). At/above it, escalate to active
+            // recovery.
+            if (!recovery_stuck_recorded_) {
+              stuck_goal_dist_ = error;
+              recovery_stuck_recorded_ = true;
+            }
+            collision_event_count_++;
+            std::cout << "MotionPlanner.-> COLLISION RISK abort #"
+                      << collision_event_count_ << " (recovery triggers at "
+                      << collision_recovery_trigger_count_ << ")." << std::endl;
+            if (collision_event_count_ < collision_recovery_trigger_count_) {
+              state = SM_CALCULATE_PATH;
+            } else {
+              state = SM_COLLISION_RECOVERY;
+            }
+          } else {
+            // Generic (timeout) abort: unchanged behaviour.
+            std::cout << "MotionPlanner.-> Simple move reported path aborted. "
+                         "Trying again..."
+                      << std::endl;
+            state = SM_CALCULATE_PATH;
+          }
+        }
+        break;
+      }
+
+      case SM_COLLISION_RECOVERY: {
+        get_robot_position();
+        if (recovery_level_ == 0) {
+          // Tier 0: risk-aware escape move. Fetch the augmented map first so
+          // the escape direction (away from the obstacle) can be chosen +
+          // clearance checked.
+          std::cout << "MotionPlanner.-> Collision recovery tier0: escape move "
+                       "(choosing direction away from obstacle)."
                     << std::endl;
+          request_augmented_map();
+          state = SM_RECOVERY_WAIT_MAP;
+        } else {
+          // Tier >= 1: shrink the cloud detection box one notch, replan.
+          detection_scale_ =
+              std::max(recovery_min_detection_scale_,
+                       detection_scale_ * recovery_shrink_factor_);
+          publish_detection_scale(detection_scale_);
+          std::cout << "MotionPlanner.-> Collision recovery tier"
+                    << recovery_level_
+                    << ": shrink cloud box, scale=" << detection_scale_
+                    << std::endl;
+          advance_recovery_level();
           state = SM_CALCULATE_PATH;
+        }
+        break;
+      }
+
+      case SM_RECOVERY_WAIT_MAP: {
+        if (!recovery_map_response_)
+          break; // waiting for augmented map
+
+        float rel_x = 0.0f, rel_y = 0.0f;
+        if (choose_escape_move(rel_x, rel_y)) {
+          std::cout << "MotionPlanner.-> Recovery escape move (away from "
+                       "obstacle): x="
+                    << rel_x << " y=" << rel_y << " m." << std::endl;
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+          std_msgs::msg::Float32MultiArray rp;
+          rp.data = {rel_x, rel_y, 0.0f}; // [x fwd+, y left+, yaw] base frame
+          pub_goal_rel_pose_->publish(rp);
+          state = SM_RECOVERY_WAIT_BACKUP;
+        } else {
+          std::cout << "MotionPlanner.-> No clear escape direction; shrinking "
+                       "cloud box instead."
+                    << std::endl;
+          recovery_level_ = 1; // jump straight to the shrink tier
+          state = SM_COLLISION_RECOVERY;
+        }
+        break;
+      }
+
+      case SM_RECOVERY_WAIT_BACKUP: {
+        if (simple_move_goal_status_.status ==
+                actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
+            simple_move_status_id_ == -1) {
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Recovery escape move finished."
+                    << std::endl;
+          advance_recovery_level();
+          state = SM_CALCULATE_PATH;
+        } else if (simple_move_goal_status_.status ==
+                   actionlib_msgs::msg::GoalStatus::ABORTED) {
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+          std::cout
+              << "MotionPlanner.-> Recovery escape move aborted; continuing."
+              << std::endl;
+          advance_recovery_level();
+          state = SM_CALCULATE_PATH;
+        } else {
+          break; // still backing up
         }
         break;
       }

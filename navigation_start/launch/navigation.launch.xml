@@ -29,6 +29,8 @@
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
+  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <arg name="escape_clear_radius" default="0.6"/>
 
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
@@ -51,6 +53,9 @@
 
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
+
+  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <arg name="collision_recovery_trigger_count" default="3"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
   <arg name="add_static_obstacles" default="True"/>
@@ -149,6 +154,7 @@
     <param name="use_online" value="$(var use_online)"/>
     <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="0.8"/>
@@ -199,6 +205,7 @@
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
   </node>
 
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">

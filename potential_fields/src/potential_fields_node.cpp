@@ -9,6 +9,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
@@ -26,6 +27,7 @@
 #include "opencv2/highgui.hpp"
 
 // Standard
+#include <algorithm>
 #include <exception>
 #include <iostream>
 #include <vector>
@@ -163,6 +165,13 @@ public:
         std::bind(&PotentialFieldsNode::callback_goal_path, this,
                   std::placeholders::_1));
 
+    // detect sensor area
+    sub_detection_scale_ = this->create_subscription<std_msgs::msg::Float32>(
+        make_name("/navigation/potential_fields/detection_scale"),
+        rclcpp::SensorDataQoS(),
+        std::bind(&PotentialFieldsNode::callback_detection_scale, this,
+                  std::placeholders::_1));
+
     // ############
     //  Wait for transforms
     wait_for_transforms("map", base_link_name_);
@@ -217,6 +226,16 @@ private:
   int cloud_threshold_, cloud_downsampling_;
   int lidar_threshold_, lidar_downsampling_;
 
+  // Collision-recovery: runtime multiplier shrinking the CLOUD collision-risk
+  // box only (1.0 = launch-configured box). Floored laterally so the footprint
+  // is never blinded. Driven by mvn_pln via /detection_scale. The lidar box is
+  // deliberately left full — it is the reliable trigger for collision_risk.
+  float detection_scale_ = 1.0f;
+  const float detect_lateral_floor_ = 0.20f; // robot footprint half-width
+
+  // Head-follw
+  double cloud_cam_yaw_ = 0.0;
+
   std::string point_cloud_topic_;
   std::string laser_scan_topic_;
   std::string base_link_name_;
@@ -237,6 +256,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_cloud_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_goal_path_;
+  rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_detection_scale_;
 
   // Dynamic subscribers
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_cloud_;
@@ -534,6 +554,23 @@ private:
     }
   }
 
+  void callback_detection_scale(const std_msgs::msg::Float32::SharedPtr msg) {
+    try {
+      // Clamp to (0, 1]: 1.0 restores the launch box, smaller shrinks it.
+      float s = msg->data;
+      if (s > 1.0f)
+        s = 1.0f;
+      if (s < 0.05f)
+        s = 0.05f;
+      detection_scale_ = s;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "PotentialFields.-> Error processing "
+                   "callback_detection_scale: %s",
+                   e.what());
+    }
+  }
+
   // ############
   // Potential Fields additional functions
   bool check_collision_risk_with_lidar(
@@ -625,6 +662,14 @@ private:
     rejection_force_x = 0;
     rejection_force_y = 0;
 
+    // shrink detect area from sensors by ry0hei-koba
+    const float scale = detection_scale_;
+    const float far_eff = cloud_min_x_ + scale * (optimal_x - cloud_min_x_);
+    const float ymax_eff =
+        std::max(scale * cloud_max_y_, detect_lateral_floor_);
+    const float ymin_eff =
+        std::min(scale * cloud_min_y_, -detect_lateral_floor_);
+
     // Setup OpenCV mask
     int w = msg->width;
     int h = msg->height;
@@ -644,6 +689,14 @@ private:
     }
     Eigen::Affine3d tf = tf2::transformToEigen(transform_stamped.transform);
 
+    // head follow
+    Eigen::Vector3d view = tf.linear() * Eigen::Vector3d::UnitZ();
+    cloud_cam_yaw_ = (std::hypot(view.x(), view.y()) > 0.1)
+                         ? std::atan2(view.y(), view.x())
+                         : 0.0;
+    const double cyaw = std::cos(cloud_cam_yaw_);
+    const double syaw = std::sin(cloud_cam_yaw_);
+
     // Iterate through point cloud data
     const unsigned char *p = msg->data.data();
     for (size_t i = 0; i < msg->width * msg->height;
@@ -655,9 +708,13 @@ private:
       Eigen::Vector3d v(x, y, z);
       v = tf * v;
 
-      if (v.x() > cloud_min_x_ && v.x() < optimal_x && v.y() > cloud_min_y_ &&
-          v.y() < cloud_max_y_ && v.z() > cloud_min_z_ &&
-          v.z() < cloud_max_z_) {
+      // Rotate the base_link point into the camera-yaw-aligned frame so the box
+      // follows the head pan (z/height stays in base_link to keep floor/ceiling
+      // filtering correct).
+      const double xr = cyaw * v.x() + syaw * v.y();
+      const double yr = -syaw * v.x() + cyaw * v.y();
+      if (xr > cloud_min_x_ && xr < far_eff && yr > ymin_eff && yr < ymax_eff &&
+          v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
         obstacle_count++;
       }
 
@@ -742,7 +799,7 @@ private:
   createDetectAreaMarker(const std::string &frame_name, const std::string &ns,
                          int id, double min_x, double max_x, double min_y,
                          double max_y, double min_z, double max_z, float r,
-                         float g, float b, float a) {
+                         float g, float b, float a, double yaw = 0.0) {
     visualization_msgs::msg::Marker marker;
     marker.header.frame_id = frame_name;
     marker.header.stamp = rclcpp::Time(0);
@@ -751,13 +808,17 @@ private:
     marker.id = id;
     marker.type = visualization_msgs::msg::Marker::CUBE;
     marker.action = visualization_msgs::msg::Marker::ADD;
-    marker.pose.position.x = (max_x + min_x) / 2.0;
-    marker.pose.position.y = (max_y + min_y) / 2.0;
+    // Box center is defined in the (possibly yaw-rotated) detection frame;
+    // rotate it into base_link so the cube can follow the head's pan.
+    const double cxa = (max_x + min_x) / 2.0;
+    const double cya = (max_y + min_y) / 2.0;
+    marker.pose.position.x = cos(yaw) * cxa - sin(yaw) * cya;
+    marker.pose.position.y = sin(yaw) * cxa + cos(yaw) * cya;
     marker.pose.position.z = (max_z + min_z) / 2.0;
     marker.pose.orientation.x = 0.0;
     marker.pose.orientation.y = 0.0;
-    marker.pose.orientation.z = 0.0;
-    marker.pose.orientation.w = 1.0;
+    marker.pose.orientation.z = sin(yaw / 2.0);
+    marker.pose.orientation.w = cos(yaw / 2.0);
     marker.scale.x = max_x - min_x;
     marker.scale.y = max_y - min_y;
     marker.scale.z = max_z - min_z;
@@ -864,26 +925,26 @@ private:
         pub_pot_fields_markers_->publish(get_force_arrow_markers(
             rejection_force_lidar_, rejection_force_cloud_));
 
-        // pub detect area visualizer
         visualization_msgs::msg::MarkerArray detect_markers;
         auto laser_marker = createDetectAreaMarker(
             base_link_name_, "detect_area_laser", 0, laser_min_x_, laser_max_x_,
             laser_min_y_, laser_max_y_, laser_min_z_, laser_max_z_, 1.0, 0.0,
             0.0, 0.5);
+        const float m_scale = detection_scale_;
+        const float mc_far =
+            cloud_min_x_ + m_scale * (cloud_max_x_ - cloud_min_x_);
+        const float mc_ymax =
+            std::max(m_scale * cloud_max_y_, detect_lateral_floor_);
+        const float mc_ymin =
+            std::min(m_scale * cloud_min_y_, -detect_lateral_floor_);
         auto cloud_marker = createDetectAreaMarker(
-            base_link_name_, "detect_area_cloud", 1, cloud_min_x_, cloud_max_x_,
-            cloud_min_y_, cloud_max_y_, cloud_min_z_, cloud_max_z_, 0.0, 1.0,
-            0.0, 0.5);
+            base_link_name_, "detect_area_cloud", 1, cloud_min_x_, mc_far,
+            mc_ymin, mc_ymax, cloud_min_z_, cloud_max_z_, 0.0, 1.0, 0.0, 0.5,
+            cloud_cam_yaw_);
         detect_markers.markers.push_back(laser_marker);
         detect_markers.markers.push_back(cloud_marker);
         pub_detect_area_markers_->publish(detect_markers);
       }
-
-      // Publish collision risk status
-      // std_msgs::msg::Bool msg_collision_risk;
-      // msg_collision_risk.data = collision_risk_lidar_ ||
-      // collision_risk_cloud_;
-      // pub_collision_risk_->publish(msg_collision_risk);
 
       // fix loop hz by r.k
       int timeout_ticks = static_cast<int>(no_sensor_data_timeout_ / 0.03);
@@ -908,7 +969,6 @@ private:
       pub_collision_risk_->publish(msg_collision_risk);
 
       // collision_risk_lidar_ = false; //old logic
-      // collision_risk_cloud_ = false;
 
     } catch (const std::exception &e) {
       RCLCPP_ERROR(this->get_logger(),
