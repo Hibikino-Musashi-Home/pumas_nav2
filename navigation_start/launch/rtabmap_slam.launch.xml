@@ -35,7 +35,7 @@
   <arg name="mvn_pln_patience" default="False"/>
   <arg name="memory_all_obstacles" default="True"/>
   <arg name="disable_rear_path_plan" default="True"/>
-  <arg name="online_behind_clearance" default="0.3"/>
+  <arg name="online_behind_clearance" default="0.6"/>
 
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>

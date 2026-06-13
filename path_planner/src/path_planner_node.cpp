@@ -374,6 +374,23 @@ private:
           return true;
         }
       }
+      // Goal relocation fallback (last resort): goal unreachable even with the
+      // rear block. Relocate to the nearest reachable cell on the rear-masked
+      // map, so the relocated goal still lies in front (the block holds).
+      if (goal_relocation_radius_ > 0.0) {
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> No path with rear blocked; retrying with "
+                    "goal relocation to the nearest reachable cell (within "
+                    "%.2f m, rear still blocked).",
+                    goal_relocation_radius_);
+        if (PathPlanner::AStar(masked, cost_map, start, goal, diagonal_paths_,
+                               path, use_online_, goal_relocation_radius_)) {
+          RCLCPP_WARN(this->get_logger(),
+                      "PathPlanner.-> Goal relocation succeeded (rear blocked): "
+                      "path found to the nearest reachable cell.");
+          return true;
+        }
+      }
       RCLCPP_WARN(this->get_logger(),
                   "PathPlanner.-> No path with rear blocked "
                   "(goal may be behind the initial pose).");
@@ -397,13 +414,13 @@ private:
 
     // Goal relocation fallback (last resort): the goal is unreachable (e.g.
     // enclosed by furniture outlines). Plan to the nearest reachable cell on
-    // the same (rear-masked) base map, so the rear block still holds.
+    // the (non-rear-blocked) map. The rear-blocked case returned earlier.
     if (goal_relocation_radius_ > 0.0) {
       RCLCPP_WARN(this->get_logger(),
                   "PathPlanner.-> No path; retrying with goal relocation to the "
                   "nearest reachable cell (within %.2f m).",
                   goal_relocation_radius_);
-      if (PathPlanner::AStar(base, cost_map, start, goal, diagonal_paths_, path,
+      if (PathPlanner::AStar(map, cost_map, start, goal, diagonal_paths_, path,
                              use_online_, goal_relocation_radius_)) {
         RCLCPP_WARN(this->get_logger(),
                     "PathPlanner.-> Goal relocation succeeded: path found to "
@@ -413,9 +430,7 @@ private:
     }
 
     RCLCPP_WARN(this->get_logger(),
-                rear ? "PathPlanner.-> No path with rear blocked (goal may be "
-                       "behind the initial pose)."
-                     : "PathPlanner.-> No path found from start to goal.");
+                "PathPlanner.-> No path found from start to goal.");
     return false;
   }
 
@@ -445,6 +460,24 @@ private:
           return true;
         }
       }
+      // Goal relocation fallback (last resort): relocate only the final goal
+      // segment to the nearest reachable cell on the rear-masked map, so the
+      // relocated goal still lies in front (the rear block holds).
+      if (goal_relocation_radius_ > 0.0) {
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> No via path with rear blocked; retrying "
+                    "with goal relocation to the nearest reachable cell "
+                    "(within %.2f m, rear still blocked).",
+                    goal_relocation_radius_);
+        if (PathPlanner::AStarWithViaPoints(masked, cost_map, start, vias, goal,
+                                            diagonal_paths_, path, use_online_,
+                                            goal_relocation_radius_)) {
+          RCLCPP_WARN(this->get_logger(),
+                      "PathPlanner.-> Goal relocation succeeded (rear blocked): "
+                      "via path found to the nearest reachable cell.");
+          return true;
+        }
+      }
       RCLCPP_WARN(this->get_logger(),
                   "PathPlanner.-> No via path with rear blocked "
                   "(a waypoint/goal may be behind the initial pose).");
@@ -467,13 +500,14 @@ private:
     }
 
     // Goal relocation fallback (last resort): relocate only the final goal
-    // segment to the nearest reachable cell when the goal is enclosed.
+    // segment to the nearest reachable cell when the goal is enclosed. Runs on
+    // the (non-rear-blocked) map; the rear-blocked case returned earlier.
     if (goal_relocation_radius_ > 0.0) {
       RCLCPP_WARN(this->get_logger(),
                   "PathPlanner.-> No via path; retrying with goal relocation to "
                   "the nearest reachable cell (within %.2f m).",
                   goal_relocation_radius_);
-      if (PathPlanner::AStarWithViaPoints(base, cost_map, start, vias, goal,
+      if (PathPlanner::AStarWithViaPoints(map, cost_map, start, vias, goal,
                                           diagonal_paths_, path, use_online_,
                                           goal_relocation_radius_)) {
         RCLCPP_WARN(this->get_logger(),
@@ -484,9 +518,7 @@ private:
     }
 
     RCLCPP_WARN(this->get_logger(),
-                rear ? "PathPlanner.-> No via path with rear blocked (a "
-                       "waypoint/goal may be behind the initial pose)."
-                     : "PathPlanner.-> No via path found.");
+                "PathPlanner.-> No via path found.");
     return false;
   }
 
@@ -553,7 +585,7 @@ private:
       if (!smoothed.poses.empty()) {
         response->plan = smoothed;
         RCLCPP_INFO(this->get_logger(),
-                    "PathPlanner.-> Path planned successfully with size: %d",
+                    "PathPlanner.-> Path planned successfully with size: %zu",
                     response->plan.poses.size());
       } else {
         RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
@@ -596,7 +628,7 @@ private:
       if (!smoothed.poses.empty()) {
         response->plan = smoothed;
         RCLCPP_INFO(this->get_logger(),
-                    "PathPlanner.-> Path planned successfully with size: %d",
+                    "PathPlanner.-> Path planned successfully with size: %zu",
                     response->plan.poses.size());
       } else {
         RCLCPP_WARN(this->get_logger(), "PathPlanner.-> Failed to plan path.");
@@ -647,7 +679,7 @@ private:
         response->plan = smoothed;
         RCLCPP_INFO(this->get_logger(),
                     "PathPlanner.-> Path with %zu via points planned "
-                    "successfully with size: %d",
+                    "successfully with size: %zu",
                     via_poses.size(), response->plan.poses.size());
       } else {
         RCLCPP_WARN(this->get_logger(),
