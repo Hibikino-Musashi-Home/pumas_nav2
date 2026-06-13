@@ -100,6 +100,10 @@ public:
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
     this->declare_parameter<bool>("memory_all_obstacles", false);
 
+    // If the planned path ends farther than this [m] from the requested goal,
+    // treat it as a goal relocation (the goal was enclosed/unreachable and the
+    // planner returned the nearest reachable point) and report it accordingly.
+    this->declare_parameter<double>("goal_relocation_report_threshold", 0.30);
     this->declare_parameter<int>("collision_recovery_trigger_count", 3);
 
     // Initialize internal variables from declared parameters
@@ -108,6 +112,8 @@ public:
     this->get_parameter("proximity_criterion", proximity_criterion_);
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
+    this->get_parameter("goal_relocation_report_threshold",
+                        goal_relocation_report_threshold_);
     this->get_parameter("collision_recovery_trigger_count",
                         collision_recovery_trigger_count_);
 
@@ -246,6 +252,7 @@ private:
   // Internal parameter values
   bool patience_;
   float proximity_criterion_;
+  double goal_relocation_report_threshold_ = 0.30;
   std::string base_link_name_;
 
   // Motion Planner processing variables
@@ -257,6 +264,11 @@ private:
   int current_status = 0;
 
   bool near_goal_sent = false;
+
+  // Set when the planner returned a path to the nearest reachable cell because
+  // the requested goal was enclosed/unreachable (see SM_FINAL reporting).
+  bool goal_relocated_ = false;
+  double goal_relocated_dist_ = 0.0;
 
   // ROS 2 message types
   std_msgs::msg::Bool msg_bool;
@@ -445,6 +457,8 @@ private:
         base_link_name_ = param.as_string();
       else if (param.get_name() == "memory_all_obstacles")
         memory_all_obstacles_ = param.as_bool();
+      else if (param.get_name() == "goal_relocation_report_threshold")
+        goal_relocation_report_threshold_ = param.as_double();
       else if (param.get_name() == "collision_recovery_trigger_count")
         collision_recovery_trigger_count_ = param.as_int();
 
@@ -659,6 +673,28 @@ private:
 
   // ############
   // Motion Planner additional functions
+
+  // Compare the planned path endpoint with the requested goal. If they differ
+  // by more than goal_relocation_report_threshold_, the planner relocated the
+  // goal to the nearest reachable cell (the requested goal was enclosed /
+  // unreachable). Records the flag + distance for SM_FINAL reporting.
+  void detect_goal_relocation(float goal_x, float goal_y) {
+    goal_relocated_ = false;
+    goal_relocated_dist_ = 0.0;
+    if (path_.poses.empty())
+      return;
+    const auto &end = path_.poses.back().pose.position;
+    double d = std::hypot(end.x - goal_x, end.y - goal_y);
+    if (d > goal_relocation_report_threshold_) {
+      goal_relocated_ = true;
+      goal_relocated_dist_ = d;
+      RCLCPP_WARN(this->get_logger(),
+                  "MotionPlanner.-> Goal appears relocated: path ends %.2f m "
+                  "from the requested goal (enclosed/unreachable goal).",
+                  d);
+    }
+  }
+
   void get_plan_path_from_augmented_map(float robot_x, float robot_y,
                                         float goal_x, float goal_y) {
     threads_.push_back(
@@ -670,6 +706,7 @@ private:
                                     float goal_y) {
     is_path_ = false;
     is_path_response_ = false;
+    goal_relocated_ = false;
     // Wait for service to be available
     if (!clt_plan_path_augmented_->wait_for_service(std::chrono::seconds(1))) {
       RCLCPP_ERROR(this->get_logger(),
@@ -697,8 +734,10 @@ private:
 
     try {
       this->path_ = result_future.get()->plan;
-      if (path_.poses.size() > 0)
+      if (path_.poses.size() > 0) {
         this->is_path_ = true;
+        detect_goal_relocation(goal_x, goal_y);
+      }
 
       this->is_path_response_ = true;
 
@@ -725,6 +764,7 @@ private:
                           float goal_y) {
     is_path_ = false;
     is_path_response_ = false;
+    goal_relocated_ = false;
     if (!clt_plan_path_with_via_->wait_for_service(std::chrono::seconds(1))) {
       RCLCPP_ERROR(
           this->get_logger(),
@@ -760,8 +800,10 @@ private:
 
     try {
       this->path_ = result_future.get()->plan;
-      if (path_.poses.size() > 0)
+      if (path_.poses.size() > 0) {
         this->is_path_ = true;
+        detect_goal_relocation(goal_x, goal_y);
+      }
 
       this->is_path_response_ = true;
 
@@ -1213,6 +1255,7 @@ private:
               publish_status(actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id,
                              "Starting new movement task");
           near_goal_sent = false;
+          goal_relocated_ = false;
           reset_recovery_state(); // clean slate per task (hygiene)
         }
         break;
@@ -1789,10 +1832,22 @@ private:
 
       case SM_FINAL: {
         std::cout << "MotionPlanner.-> TASK FINISHED." << std::endl;
-        current_status =
-            publish_status(actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id,
-                           "Global goal point reached");
-        finish_action_success("Global goal point reached");
+        std::string final_msg = "Global goal point reached";
+        if (goal_relocated_) {
+          // The requested goal was enclosed/unreachable; the planner stopped at
+          // the nearest reachable point. Report it explicitly and make sure
+          // near_goal_reached is set in the action result.
+          near_goal_sent = true;
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(2)
+              << "Goal enclosed/unreachable; stopped at nearest reachable "
+                 "point ("
+              << goal_relocated_dist_ << " m from requested goal)";
+          final_msg = oss.str();
+        }
+        current_status = publish_status(
+            actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id, final_msg);
+        finish_action_success(final_msg);
         state = SM_INIT;
         break;
       }

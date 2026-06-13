@@ -9,7 +9,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
                         const geometry_msgs::msg::Pose &start_pose,
                         const geometry_msgs::msg::Pose &goal_pose,
                         bool diagonal_paths, nav_msgs::msg::Path &result_path,
-                        bool use_online) {
+                        bool use_online, double max_goal_relocation_dist) {
 
   std::cout << "PathCalculator.-> Calculating by A* from "
             << start_pose.position.x << "  ";
@@ -173,11 +173,31 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   current_node->in_open_list = true;
   open_list.push(current_node);
 
+  // Track the reachable (closed) cell nearest the ORIGINALLY requested goal
+  // (_idx_goal_x/_idx_goal_y, before any spiral relocation) so we can fall back
+  // to it when the goal itself is unreachable, e.g. a person inside a furniture
+  // outline. Distances are kept in cells (squared) for the comparison.
+  int closest_idx = idx_start;
+  long long closest_d2 =
+      (long long)(idx_start_x - _idx_goal_x) * (idx_start_x - _idx_goal_x) +
+      (long long)(idx_start_y - _idx_goal_y) * (idx_start_y - _idx_goal_y);
+
   while (!open_list.empty() && current_node->index != idx_goal) {
 
     current_node = open_list.top();
     open_list.pop();
     current_node->in_closed_list = true;
+
+    {
+      int cx = current_node->index % (int)map.info.width;
+      int cy = current_node->index / (int)map.info.width;
+      long long d2 = (long long)(cx - _idx_goal_x) * (cx - _idx_goal_x) +
+                     (long long)(cy - _idx_goal_y) * (cy - _idx_goal_y);
+      if (d2 < closest_d2) {
+        closest_d2 = d2;
+        closest_idx = current_node->index;
+      }
+    }
 
     node_neighbors[0] = current_node->index + map.info.width;
     node_neighbors[1] = current_node->index + 1;
@@ -235,8 +255,35 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
             << std::endl;
 
   if (current_node->index != idx_goal) {
-    std::cout << "PathPlanner.-> current_node->index != idx_goal " << std::endl;
-    return false;
+    // Goal is unreachable (the open list was exhausted without reaching it),
+    // e.g. it sits inside a free pocket enclosed by furniture outlines. If
+    // relocation is enabled, fall back to the nearest reachable cell (the
+    // closed node closest to the requested goal) as long as it is within the
+    // allowed distance; otherwise fail as before.
+    if (max_goal_relocation_dist > 0.0) {
+      int cx = closest_idx % (int)map.info.width;
+      int cy = closest_idx / (int)map.info.width;
+      double dist_m = std::hypot((double)(cx - _idx_goal_x),
+                                 (double)(cy - _idx_goal_y)) *
+                      map.info.resolution;
+      if (dist_m <= max_goal_relocation_dist) {
+        std::cout << "PathPlanner.-> Goal unreachable (enclosed). Relocated to "
+                     "nearest reachable cell "
+                  << dist_m << " m from requested goal." << std::endl;
+        current_node = &nodes[closest_idx];
+        // fall through to path reconstruction below
+      } else {
+        std::cout << "PathPlanner.-> Goal unreachable; nearest reachable cell "
+                     "is "
+                  << dist_m << " m away (> " << max_goal_relocation_dist
+                  << " m). Giving up." << std::endl;
+        return false;
+      }
+    } else {
+      std::cout << "PathPlanner.-> current_node->index != idx_goal "
+                << std::endl;
+      return false;
+    }
   }
 
   result_path.header.frame_id = "map";
@@ -252,6 +299,14 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
         map.info.origin.position.y;
     result_path.poses.insert(result_path.poses.begin(), p);
     current_node = current_node->parent;
+  }
+
+  if (result_path.poses.empty()) {
+    // Degenerate relocation: the robot's own cell is already the nearest
+    // reachable point to the goal. Return a single-point path at the start (as
+    // the start==goal branch does) so callers treat it as a valid trivial plan.
+    p.pose = start_pose;
+    result_path.poses.push_back(p);
   }
 
   std::cout << "PathCalculator.->Resulting path by A* has "
@@ -332,7 +387,8 @@ bool PathPlanner::AStarWithViaPoints(
     const geometry_msgs::msg::Pose &start_pose,
     const std::vector<geometry_msgs::msg::Pose> &via_poses,
     const geometry_msgs::msg::Pose &goal_pose, bool diagonal_paths,
-    nav_msgs::msg::Path &result_path, bool use_online) {
+    nav_msgs::msg::Path &result_path, bool use_online,
+    double max_goal_relocation_dist) {
   result_path.poses.clear();
   nav_msgs::msg::Path partial_path;
   geometry_msgs::msg::Pose current_start = start_pose;
@@ -351,9 +407,12 @@ bool PathPlanner::AStarWithViaPoints(
     current_start = via;
   }
 
+  // Only the final goal segment may relocate to the nearest reachable cell;
+  // via points are still planned strictly (passing 0.0 above).
   partial_path.poses.clear();
   if (!PathPlanner::AStar(map, cost_map, current_start, goal_pose,
-                          diagonal_paths, partial_path, use_online))
+                          diagonal_paths, partial_path, use_online,
+                          max_goal_relocation_dist))
     return false;
   result_path.poses.insert(result_path.poses.end(), partial_path.poses.begin(),
                            partial_path.poses.end());

@@ -26,6 +26,12 @@ public:
     // an obst
     this->declare_parameter<double>("escape_clear_radius", 0.6);
 
+    // Goal relocation: when the goal is unreachable (e.g. a person inside a
+    // furniture outline / "island" enclosed by occupied cells), plan to the
+    // nearest reachable cell instead of failing, provided that cell is within
+    // this many meters [m] of the requested goal. <=0 disables (strict goal).
+    this->declare_parameter<double>("goal_relocation_radius", 1.0);
+
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("smooth_alpha", smooth_alpha_);
@@ -35,6 +41,7 @@ public:
     this->get_parameter("disable_rear_path_plan", disable_rear_path_plan_);
     this->get_parameter("online_behind_clearance", online_behind_clearance_);
     this->get_parameter("escape_clear_radius", escape_clear_radius_);
+    this->get_parameter("goal_relocation_radius", goal_relocation_radius_);
 
     pub_rear_zone_ = this->create_publisher<visualization_msgs::msg::Marker>(
         make_name("/path_planner/rear_block_zone"),
@@ -87,6 +94,7 @@ private:
   bool disable_rear_path_plan_ = false;
   double online_behind_clearance_ = 1.0;
   double escape_clear_radius_ = 0.6;
+  double goal_relocation_radius_ = 1.0;
 
   // Initial pose is the map origin (0,0,0); cells with x < -clearance (behind)
   // are masked out of planning when rear blocking is active.
@@ -145,6 +153,8 @@ private:
         online_behind_clearance_ = param.as_double();
       else if (param.get_name() == "escape_clear_radius")
         escape_clear_radius_ = param.as_double();
+      else if (param.get_name() == "goal_relocation_radius")
+        goal_relocation_radius_ = param.as_double();
 
       else {
         result.successful = false;
@@ -384,6 +394,28 @@ private:
         return true;
       }
     }
+
+    // Goal relocation fallback (last resort): the goal is unreachable (e.g.
+    // enclosed by furniture outlines). Plan to the nearest reachable cell on
+    // the same (rear-masked) base map, so the rear block still holds.
+    if (goal_relocation_radius_ > 0.0) {
+      RCLCPP_WARN(this->get_logger(),
+                  "PathPlanner.-> No path; retrying with goal relocation to the "
+                  "nearest reachable cell (within %.2f m).",
+                  goal_relocation_radius_);
+      if (PathPlanner::AStar(base, cost_map, start, goal, diagonal_paths_, path,
+                             use_online_, goal_relocation_radius_)) {
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> Goal relocation succeeded: path found to "
+                    "the nearest reachable cell.");
+        return true;
+      }
+    }
+
+    RCLCPP_WARN(this->get_logger(),
+                rear ? "PathPlanner.-> No path with rear blocked (goal may be "
+                       "behind the initial pose)."
+                     : "PathPlanner.-> No path found from start to goal.");
     return false;
   }
 
@@ -433,6 +465,28 @@ private:
         return true;
       }
     }
+
+    // Goal relocation fallback (last resort): relocate only the final goal
+    // segment to the nearest reachable cell when the goal is enclosed.
+    if (goal_relocation_radius_ > 0.0) {
+      RCLCPP_WARN(this->get_logger(),
+                  "PathPlanner.-> No via path; retrying with goal relocation to "
+                  "the nearest reachable cell (within %.2f m).",
+                  goal_relocation_radius_);
+      if (PathPlanner::AStarWithViaPoints(base, cost_map, start, vias, goal,
+                                          diagonal_paths_, path, use_online_,
+                                          goal_relocation_radius_)) {
+        RCLCPP_WARN(this->get_logger(),
+                    "PathPlanner.-> Goal relocation succeeded: via path found "
+                    "to the nearest reachable cell.");
+        return true;
+      }
+    }
+
+    RCLCPP_WARN(this->get_logger(),
+                rear ? "PathPlanner.-> No via path with rear blocked (a "
+                       "waypoint/goal may be behind the initial pose)."
+                     : "PathPlanner.-> No via path found.");
     return false;
   }
 
