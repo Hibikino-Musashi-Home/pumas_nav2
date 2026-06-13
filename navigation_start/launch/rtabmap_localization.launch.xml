@@ -1,8 +1,12 @@
 <?xml version="1.0"?>
 
 <launch>
+
+
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
+
   <arg name="map_name" default="rc26_3330"/>
   <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/$(var map_name)/map.yaml"/>
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/$(var map_name)/map.yaml"/>
@@ -29,6 +33,8 @@
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
+  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <arg name="escape_clear_radius" default="0.6"/>
 
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
@@ -37,10 +43,11 @@
   <arg name="laser_min_y" default="-0.2"/>
   <arg name="laser_max_y" default="0.2"/>
   <!--height-->
-  <arg name="laser_min_z" default="0.025"/> <!--hsrc-->
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.30"/>
+  <arg name="cloud_min_x" default="0.35"/>
   <arg name="cloud_max_x" default="0.60"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.25"/>
@@ -51,6 +58,9 @@
 
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
+
+  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <arg name="collision_recovery_trigger_count" default="5"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
   <arg name="add_static_obstacles" default="True"/>
@@ -100,10 +110,9 @@
     <param name="use_sonars" value="$(var use_sonars)"/>
     <param name="use_point_cloud" value="$(var use_point_cloud)"/>
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
-    <param name="decay_factor" value="5"/>
+    <param name="decay_factor" value="3"/>
     <param name="inflation_radius" value="0.22"/> <!--[m]通行不可，黒領域の膨張，環境依存なので基本的にはこれを調整する．すくなくともfootprintの半径分は指定する-->
-    <!--param name="cost_radius" value="0.45"/--> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
-    <param name="cost_radius" value="0.6"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
+    <param name="cost_radius" value="0.55"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
@@ -128,6 +137,7 @@
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="escape_clear_radius" value="0.6"/> <!--[m]計画失敗時に自機周辺をこの半径だけ自由(0)化して1回だけ再計画．障害物に囲まれた際の脱出用．0以下で無効-->
     <param name="goal_relocation_radius" value="1.2"/> <!--[m]ゴールが障害物に囲まれ到達不可のとき，到達可能な最近傍セルへ貼り直して継続．要求ゴールからこの距離以内のみ採用（最終手段）．0以下で無効-->
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="1.0"/>
@@ -180,6 +190,7 @@
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="goal_relocation_report_threshold" value="0.3"/> <!--[m]計画経路の終端が要求ゴールからこの距離以上離れていたら「ゴール貼り直し」とみなし，abortせずnear_goal＋メッセージで報告-->
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
   </node>
 
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
@@ -194,16 +205,21 @@
   <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
   </node>
 
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
     <param name="torso_default_pose" value="0.0"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-    <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
+    <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
     <param name="pan_min" value="-3.14"/>
     <param name="pan_max" value="1.74"/>
-    <param name="tilt_min" value="-0.7"/>
+    <param name="tilt_min" value="-0.6"/>
     <param name="tilt_max" value="0.47"/>
   </node>
   <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="screen" respawn="true">

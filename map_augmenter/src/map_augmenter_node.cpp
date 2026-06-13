@@ -804,6 +804,14 @@ private:
     Eigen::Affine3d robot_to_map =
         get_relative_position("map", base_link_name_);
 
+    // Head-follow: rotated cloud detect
+    const Eigen::Vector3d view =
+        cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
+    const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
+                               ? std::atan2(view.y(), view.x())
+                               : 0.0;
+    const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
+
     for (size_t i = 0;
          i < latest_point_cloud_->width * latest_point_cloud_->height;
          i += cloud_downsampling_) {
@@ -813,9 +821,10 @@ private:
 
       v = cam_to_robot * v;
 
-      if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
-          v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
-          v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
+      const double xr = cyaw * v.x() + syaw * v.y();
+      const double yr = -syaw * v.x() + cyaw * v.y();
+      if (xr > cloud_min_x_ && xr < cloud_max_x_ && yr > cloud_min_y_ &&
+          yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
 
         v = robot_to_map * v;
         if (memory_all_obstacles_)
@@ -863,6 +872,15 @@ private:
     Eigen::Affine3d robot_to_map =
         get_relative_position("map", base_link_name_);
 
+    // Head-follow: rotate the cloud box to the camera's horizontal viewing yaw
+    // (see obstacles_map_with_cloud()).
+    const Eigen::Vector3d view =
+        cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
+    const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
+                               ? std::atan2(view.y(), view.x())
+                               : 0.0;
+    const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
+
     for (size_t i = 0;
          i < latest_point_cloud2_->width * latest_point_cloud2_->height;
          i += cloud_downsampling2_) {
@@ -872,9 +890,10 @@ private:
 
       v = cam_to_robot * v;
 
-      if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
-          v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
-          v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
+      const double xr = cyaw * v.x() + syaw * v.y();
+      const double yr = -syaw * v.x() + cyaw * v.y();
+      if (xr > cloud_min_x_ && xr < cloud_max_x_ && yr > cloud_min_y_ &&
+          yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
 
         v = robot_to_map * v;
         if (memory_all_obstacles_)

@@ -3,6 +3,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <algorithm>
 
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -17,6 +18,8 @@
 #include <cmath>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <mutex>
 
 
 class GazeController : public rclcpp::Node
@@ -34,15 +37,31 @@ public:
     this->declare_parameter<std::string>( "gaze_tf_name",   "gaze_point");
     this->declare_parameter<std::string>( "base_link_name", "base_footprint");
     this->declare_parameter<double>(      "head_height",    1.1);
+    // Slew-rate smoothing: cap how fast the head goal can change per tick so the
+    // head ramps toward a (possibly jumping) gaze target instead of snapping.
+    this->declare_parameter<double>(      "max_pan_vel",    0.7);   // [rad/s]
+    this->declare_parameter<double>(      "max_tilt_vel",   1.0);   // [rad/s]
+    this->declare_parameter<int>(         "gaze_period_ms", 100);   // loop period
 
     this->get_parameter("use_namespace",  use_namespace_);
     this->get_parameter("gaze_tf_name",   gaze_tf_name_);
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("head_height",    head_height_);
+    this->get_parameter("max_pan_vel",    max_pan_vel_);
+    this->get_parameter("max_tilt_vel",   max_tilt_vel_);
+    this->get_parameter("gaze_period_ms", gaze_period_ms_);
 
     pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       make_name("/hardware/head/goal_pose"),
       rclcpp::QoS(10).reliable());
+
+    // Track the actual head pose so the smoother can seed cmd_* at goal start
+    // (prevents an initial snap from a stale 0,0).
+    sub_head_current_pose_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
+      make_name("/hardware/head/current_pose"),
+      rclcpp::QoS(10).reliable(),
+      std::bind(&GazeController::head_current_pose_callback, this,
+                std::placeholders::_1));
 
     // Action server on /gaze_head.
     // execute() runs in a detached thread so it can block without starving
@@ -64,12 +83,43 @@ private:
   std::string gaze_tf_name_;
   std::string base_link_name_;
   double      head_height_;
+  double      max_pan_vel_    = 1.0;
+  double      max_tilt_vel_   = 0.7;
+  int         gaze_period_ms_ = 100;
 
   tf2_ros::Buffer            tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
 
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_head_goal_pose_;
+  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr sub_head_current_pose_;
   rclcpp_action::Server<GazeHead>::SharedPtr action_server_;
+
+  // Latest measured head pose (pan, tilt). Updated by head_current_pose_callback.
+  std::mutex         head_pose_mtx_;
+  float              cur_pan_  = 0.0f;
+  float              cur_tilt_ = 0.0f;
+  bool               head_pose_valid_ = false;
+
+  // Generation counter for goal preemption: a newly accepted goal increments
+  // this, and any older execute() loop exits as soon as it notices the change.
+  std::atomic<uint64_t> active_gen_{0};
+
+  void head_current_pose_callback(
+    const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+  {
+    if (msg->data.size() < 2)
+      return;
+    std::lock_guard<std::mutex> lock(head_pose_mtx_);
+    cur_pan_  = msg->data[0];
+    cur_tilt_ = msg->data[1];
+    head_pose_valid_ = true;
+  }
+
+  // Shortest-path normalization to (-pi, pi].
+  static float normalize_angle(float a)
+  {
+    return std::atan2(std::sin(a), std::cos(a));
+  }
 
   std::string make_name(const std::string &suffix) const
   {
@@ -157,12 +207,16 @@ private:
 
   void handle_accepted(const std::shared_ptr<GoalHandleGaze> goal_handle)
   {
-    std::thread([this, goal_handle]() { execute(goal_handle); }).detach();
+    // Preempt any previous gaze loop: bump the generation so the older
+    // execute() exits and only this goal owns the head publisher.
+    const uint64_t my_gen = ++active_gen_;
+    std::thread([this, goal_handle, my_gen]() { execute(goal_handle, my_gen); }).detach();
   }
 
-  // Main gaze loop. Runs in a detached thread; publishes head angle commands
-  // at 100 ms intervals until canceled or the node shuts down.
-  void execute(const std::shared_ptr<GoalHandleGaze> goal_handle)
+  // Main gaze loop. Runs in a detached thread; publishes slew-limited head
+  // angle commands every gaze_period_ms until canceled, preempted, or shutdown.
+  void execute(const std::shared_ptr<GoalHandleGaze> goal_handle,
+               uint64_t my_gen)
   {
     const auto goal = goal_handle->get_goal();
     const std::string tf_name =
@@ -174,7 +228,31 @@ private:
     auto feedback = std::make_shared<GazeHead::Feedback>();
     auto result   = std::make_shared<GazeHead::Result>();
 
+    const double dt = std::max(1, gaze_period_ms_) / 1000.0;
+    const float  max_pan_step  = static_cast<float>(max_pan_vel_  * dt);
+    const float  max_tilt_step = static_cast<float>(max_tilt_vel_ * dt);
+
+    // Seed the smoothed command from the current head pose so the first tick
+    // does not snap from a stale value. Fall back to 0 if not yet received.
+    float cmd_pan = 0.0f, cmd_tilt = 0.0f;
+    {
+      std::lock_guard<std::mutex> lock(head_pose_mtx_);
+      if (head_pose_valid_) {
+        cmd_pan  = cur_pan_;
+        cmd_tilt = cur_tilt_;
+      }
+    }
+
     while (rclcpp::ok()) {
+      // Preempted by a newer goal: stop quietly so the new loop owns the head.
+      if (my_gen != active_gen_.load()) {
+        RCLCPP_INFO(this->get_logger(),
+          "GazeController.-> Gaze preempted by a newer goal.");
+        result->success = false;
+        goal_handle->abort(result);
+        return;
+      }
+
       if (goal_handle->is_canceling()) {
         result->success = false;
         goal_handle->canceled(result);
@@ -185,15 +263,28 @@ private:
         return;
       }
 
-      std_msgs::msg::Float32MultiArray msg;
-      if (gaze_point_to_head_angles(msg, tf_name)) {
+      std_msgs::msg::Float32MultiArray target;
+      if (gaze_point_to_head_angles(target, tf_name)) {
+        // Slew-rate limit: step cmd_* toward the target by at most max_*_step.
+        // Normalize the pan error to the shortest direction first.
+        const float pan_err  = normalize_angle(target.data[0] - cmd_pan);
+        const float tilt_err = target.data[1] - cmd_tilt;
+
+        cmd_pan  += std::clamp(pan_err,  -max_pan_step,  max_pan_step);
+        cmd_tilt += std::clamp(tilt_err, -max_tilt_step, max_tilt_step);
+        cmd_pan   = normalize_angle(cmd_pan);
+
+        std_msgs::msg::Float32MultiArray msg;
+        msg.data = {cmd_pan, cmd_tilt};
         pub_head_goal_pose_->publish(msg);
-        feedback->pan  = msg.data[0];
-        feedback->tilt = msg.data[1];
+
+        feedback->pan  = cmd_pan;
+        feedback->tilt = cmd_tilt;
         goal_handle->publish_feedback(feedback);
       }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      std::this_thread::sleep_for(
+        std::chrono::milliseconds(std::max(1, gaze_period_ms_)));
     }
 
     result->success = false;
