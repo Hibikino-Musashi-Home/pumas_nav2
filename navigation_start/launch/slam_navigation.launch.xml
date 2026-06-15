@@ -1,6 +1,7 @@
 <launch>
 
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
 
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
@@ -39,8 +40,8 @@
   <arg name="laser_max_x" default="0.50"/>
   <arg name="laser_min_y" default="-0.2"/>
   <arg name="laser_max_y" default="0.2"/>
-  <arg name="laser_min_z" default="0.025"/> <!-- hsrc -->
-  <!--arg name="laser_min_z" default="0.022"/--> <!-- hsrc ex-->
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
   <arg name="cloud_min_x" default="0.3"/>
   <arg name="cloud_max_x" default="0.55"/>
@@ -217,7 +218,12 @@
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="use_online" value="$(var use_online)"/>
   </node>
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller"
@@ -226,7 +232,7 @@
         output="screen">
         <param name="torso_default_pose" value="0.15"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
+        <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
 
   <node name="head_controller"

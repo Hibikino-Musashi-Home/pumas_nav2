@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <launch>
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="map_name" default="rc26_3330"/>
   <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/$(var map_name)/map.yaml"/>
@@ -39,7 +40,8 @@
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
   <!--height-->
-  <arg name="laser_min_z" default="0.022"/>
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
   <arg name="cloud_min_x" default="0.40"/>
@@ -206,6 +208,7 @@
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="use_online" value="$(var use_online)"/>
   </node>
 
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
@@ -221,11 +224,15 @@
     <param from="$(find-pkg-share navigation_tools)/config/$(env ROBOT_NAME hsrb)_pot_fields_updator.yaml"/>
   </node>
 
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
     <param name="torso_default_pose" value="0.1"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-    <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
+    <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
     <param name="pan_min" value="-3.14"/>
