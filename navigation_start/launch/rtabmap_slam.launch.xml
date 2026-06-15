@@ -4,9 +4,6 @@
   <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
 
-  <!-- Live map source. RTAB-Map's GetMap service. Because rtabmap advertises
-       services privately, node "rtabmap" in namespace "rtabmap" serves it at
-       /rtabmap/rtabmap/get_map. Override only if rtabmap runs elsewhere. -->
   <arg name="static_map_server" default="/rtabmap/rtabmap/get_map"/>
 
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
