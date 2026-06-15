@@ -44,7 +44,7 @@
   <arg name="laser_min_z" default="0.025"/> <!-- hsrc -->
   <!--arg name="laser_min_z" default="0.022"/--> <!-- hsrc ex-->
   <arg name="laser_max_z" default="1.00"/>
-  <arg name="cloud_min_x" default="0.3"/>
+  <arg name="cloud_min_x" default="0.35"/>
   <arg name="cloud_max_x" default="0.55"/>
   <arg name="cloud_min_y" default="-0.25"/>
   <arg name="cloud_max_y" default="0.25"/>

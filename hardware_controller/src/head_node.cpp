@@ -77,9 +77,6 @@ public:
         std::bind(&HeadController::headStateCallback, this,
                   std::placeholders::_1));
 
-    // motion_synth publishes a MotionPose (full Joints + motion_execution_time)
-    // on a single topic shared with arm_controller. We pick up the head
-    // pan/tilt fields and ignore the arm/lift fields.
     sub_motion_pose_ =
         this->create_subscription<pumas_interfaces::msg::MotionPose>(
             "/hardware/motion_pose", rclcpp::QoS(10).reliable(),
@@ -123,9 +120,6 @@ private:
   rclcpp::Subscription<control_msgs::msg::JointTrajectoryControllerState>::
       SharedPtr sub_head_state_;
 
-  // Default time_from_start for trajectories. Used when the caller does not
-  // override (legacy simple_move path). motion_synth provides its own value
-  // via HeadGoalPose.motion_execution_time.
   static constexpr double kDefaultHeadTimeFromStart = 0.0;
   double head_time_from_start_{kDefaultHeadTimeFromStart};
 
@@ -133,7 +127,7 @@ private:
   std::vector<float> head_current_pose_;
   bool goal_received_{false};
 
-  bool starup_initialized_ = false;
+  bool startup_initialized_ = false;
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -221,11 +215,21 @@ private:
       pub_head_current_pose_->publish(arr);
     }
 
-    if (!starup_initialized_) {
-      sendHeadGoalTrajectory(0.0f, 0.0f);
-      starup_initialized_ = true;
-      RCLCPP_WARN(this->get_logger(),
-                  "HeadController.-> Head Pose Initialized.");
+    if (!startup_initialized_) {
+      if (goal_received_) {
+        // A real goal already took over; skip the startup centering pose.
+        startup_initialized_ = true;
+      } else if (pub_head_goal_traj_->get_subscription_count() > 0) {
+        // Trajectory controller is connected now: a reliable publish will be
+        // delivered. (Before the match completes the sample would be dropped.)
+        sendHeadGoalTrajectory(0.0f, 0.0f);
+        startup_initialized_ = true;
+        RCLCPP_WARN(
+            this->get_logger(),
+            "HeadController.-> Head Pose Initialized (controller connected).");
+      }
+      // else: controller not connected yet — wait for the next
+      // controller_state.
     }
   }
 
@@ -309,8 +313,6 @@ private:
     traj.points.push_back(p);
     pub_head_goal_traj_->publish(traj);
 
-    // Reset to default after consuming so the override does not bleed into
-    // subsequent commands from other publishers.
     head_time_from_start_ = kDefaultHeadTimeFromStart;
   }
 };

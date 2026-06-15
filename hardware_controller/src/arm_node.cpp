@@ -133,7 +133,15 @@ private:
   double torso_default_pose_{0.0};
   std::vector<double> arm_default_pose_{0.0, -1.57, -1.57, 0.0};
 
-  bool init_sent_once_{false};
+  // Startup default-pose handshake. The default pose must not be published
+  // until the trajectory controller has actually connected to our command
+  // publisher; a trajectory sent before discovery completes is silently
+  // dropped (reliable but volatile QoS), which is why the arm sometimes never
+  // moved to the default pose at startup. Once the subscription is matched a
+  // single reliable publish is delivered (the protocol retransmits on loss),
+  // so one send after connection is enough.
+  bool init_done_{false};
+  bool external_goal_received_{false};
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -208,11 +216,19 @@ private:
     std_msgs::msg::Float32MultiArray arm_msg; arm_msg.data = arm_current_pose_;
     pub_arm_current_pose_->publish(arm_msg);
 
-    if (!init_sent_once_) {
-      publish_default_pose();
-      init_sent_once_ = true;
-      RCLCPP_WARN(this->get_logger(), "arm_node.-> Sent default pose after first controller_state.");
-
+    if (!init_done_) {
+      if (external_goal_received_) {
+        // A real goal already took over; skip the startup default pose.
+        init_done_ = true;
+      } else if (pub_arm_goal_pose_->get_subscription_count() > 0) {
+        // Trajectory controller is connected now: a reliable publish will be
+        // delivered. (Before the match completes the sample would be dropped.)
+        publish_default_pose();
+        init_done_ = true;
+        RCLCPP_WARN(this->get_logger(),
+                    "arm_node.-> Sent default pose (controller connected).");
+      }
+      // else: controller not connected yet — wait for the next controller_state.
     }
   }
 
@@ -228,6 +244,7 @@ private:
     RCLCPP_INFO(this->get_logger(), "arm_node.->Received arm goal pose: [%f, %f, %f, %f]",
                  arm_goal_pose_[0], arm_goal_pose_[1], arm_goal_pose_[2], arm_goal_pose_[3]);
     msg_arm_received_ = true;
+    external_goal_received_ = true;
     sendArmGoalTrajectory();
   }
 
@@ -253,6 +270,7 @@ private:
 
     msg_arm_received_   = true;
     msg_torso_received_ = true;
+    external_goal_received_ = true;
 
     RCLCPP_INFO(this->get_logger(),
                 "arm_node.->Received motion pose: lift=%.3f arm=[%.3f %.3f %.3f %.3f] time=%.3f s",

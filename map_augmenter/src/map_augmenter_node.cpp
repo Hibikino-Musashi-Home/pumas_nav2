@@ -28,6 +28,7 @@
 #include <cmath>
 #include <mutex>
 #include <set>
+#include <utility>
 
 class MapAugmenterNode : public rclcpp::Node {
 public:
@@ -236,8 +237,16 @@ private:
 
   // Persistent "memory" of every cell ever observed as obstacle.
   // /map_augmenter/clear_memory_all_obstacles.
+  //
+  // Stored as map-frame METRIC grid keys (floor(x/res), floor(y/res)) anchored
+  // at the world origin (0,0), NOT as flat array indices. Under online SLAM the
+  // static map grows and its width/origin change over time, so a flat idx
+  // recorded against one geometry points at a different world cell when the
+  // grid is later resized. Metric keys are geometry-independent; the actual
+  // cell is recomputed against the current grid every time the memory is
+  // re-applied.
   bool memory_all_obstacles_ = false;
-  std::set<int> memory_cells_;
+  std::set<std::pair<int, int>> memory_cells_;
   std::mutex memory_mutex_;
 
   // ############
@@ -757,21 +766,20 @@ private:
     return cost_map;
   }
 
-  // Insert one cell into the persistent memory set (map-frame point -> cell
-  // idx). No-op when the point falls outside the static map bounds.
+  // Insert one cell into the persistent memory set. The point is quantized to a
+  // map-frame METRIC grid key anchored at the world origin, so the key is
+  // independent of the current map's width/origin (which drift under online
+  // SLAM). The corresponding array index is recomputed at re-apply time.
   void add_memory_obstacle(const Eigen::Vector3d &point) {
-    int x = static_cast<int>((point.x() - static_map_.info.origin.position.x) /
-                             static_map_.info.resolution);
-    int y = static_cast<int>((point.y() - static_map_.info.origin.position.y) /
-                             static_map_.info.resolution);
-
-    if (x < 0 || y < 0 || x >= static_cast<int>(static_map_.info.width) ||
-        y >= static_cast<int>(static_map_.info.height))
+    const double res = static_map_.info.resolution;
+    if (res <= 0.0)
       return;
 
-    int idx = y * static_map_.info.width + x;
+    int mx = static_cast<int>(std::floor(point.x() / res));
+    int my = static_cast<int>(std::floor(point.y() / res));
+
     std::lock_guard<std::mutex> lock(memory_mutex_);
-    memory_cells_.insert(idx);
+    memory_cells_.insert(std::make_pair(mx, my));
   }
 
   void callback_clear_memory_all_obstacles(
@@ -1182,9 +1190,25 @@ private:
 
       if (memory_all_obstacles_) {
         std::lock_guard<std::mutex> lock(memory_mutex_);
-        for (int idx : memory_cells_) {
-          if (idx >= 0 && idx < static_cast<int>(obstacles_map_.data.size())) {
-            obstacles_map_.data[idx] = 100;
+        const double res = obstacles_map_.info.resolution;
+        if (res > 0.0) {
+          const double ox = obstacles_map_.info.origin.position.x;
+          const double oy = obstacles_map_.info.origin.position.y;
+          const int width = static_cast<int>(obstacles_map_.info.width);
+          const int height = static_cast<int>(obstacles_map_.info.height);
+
+          // Recompute each memory cell against the CURRENT grid geometry so the
+          // obstacle stays at its true map-frame position even after the online
+          // SLAM map has grown / shifted its origin since the cell was
+          // recorded.
+          for (const auto &key : memory_cells_) {
+            double wx = (key.first + 0.5) * res;
+            double wy = (key.second + 0.5) * res;
+            int cx = static_cast<int>((wx - ox) / res);
+            int cy = static_cast<int>((wy - oy) / res);
+            if (cx < 0 || cy < 0 || cx >= width || cy >= height)
+              continue;
+            obstacles_map_.data[cy * width + cx] = 100;
           }
         }
         are_there_obstacles_ = are_there_obstacles_ || !memory_cells_.empty();
