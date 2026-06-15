@@ -39,8 +39,8 @@ public:
     this->declare_parameter<double>(      "head_height",    1.1);
     // Slew-rate smoothing: cap how fast the head goal can change per tick so the
     // head ramps toward a (possibly jumping) gaze target instead of snapping.
-    this->declare_parameter<double>(      "max_pan_vel",    0.7);   // [rad/s]
-    this->declare_parameter<double>(      "max_tilt_vel",   1.0);   // [rad/s]
+    this->declare_parameter<double>(      "max_pan_vel",    1.0);   // [rad/s]
+    this->declare_parameter<double>(      "max_tilt_vel",   0.7);   // [rad/s]
     this->declare_parameter<int>(         "gaze_period_ms", 100);   // loop period
 
     this->get_parameter("use_namespace",  use_namespace_);
