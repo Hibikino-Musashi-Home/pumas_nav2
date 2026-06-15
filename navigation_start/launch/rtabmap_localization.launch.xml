@@ -221,11 +221,17 @@
     <param name="pan_max" value="1.74"/>
     <param name="tilt_min" value="-0.6"/>
     <param name="tilt_max" value="0.47"/>
+    <!-- Distance-proportional trajectory timing for the gaze path (ease-out). -->
+    <param name="head_default_speed" value="1.0"/>
+    <param name="head_min_time" value="0.15"/>
   </node>
   <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="screen" respawn="true">
     <param name="gaze_tf_name"   value="gaze_point"/>
     <param name="base_link_name" value="base_footprint"/>
     <param name="head_height"    value="1.1"/>
+    <param name="max_pan_vel"    value="1.0"/>
+    <param name="max_tilt_vel"   value="0.7"/>
+    <param name="gaze_period_ms" value="100"/>
   </node>
 
   <!-- RVIZ2 -->
