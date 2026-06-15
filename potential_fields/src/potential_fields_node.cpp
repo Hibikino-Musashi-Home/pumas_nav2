@@ -289,7 +289,6 @@ private:
   // services (get_parameters / set_parameters) living on the default group.
   rclcpp::CallbackGroup::SharedPtr cloud_cb_group_;
 
-
   // Main processing loop
   rclcpp::TimerBase::SharedPtr processing_timer_;
 
@@ -317,10 +316,11 @@ private:
       else if (name == "use_point_cloud") {
         use_cloud_ = param.as_bool();
         if (!use_cloud_) {
-          // Drop any latched cloud contribution immediately. callback_point_cloud
-          // keeps it cleared while the (possibly still-alive) subscription keeps
-          // delivering; this also covers the case where the cloud stops arriving
-          // right as the param flips, leaving a stale non-zero value behind.
+          // Drop any latched cloud contribution immediately.
+          // callback_point_cloud keeps it cleared while the (possibly
+          // still-alive) subscription keeps delivering; this also covers the
+          // case where the cloud stops arriving right as the param flips,
+          // leaving a stale non-zero value behind.
           collision_risk_cloud_ = false;
           rejection_force_cloud_.x = 0.0;
           rejection_force_cloud_.y = 0.0;
@@ -706,17 +706,39 @@ private:
   bool check_collision_risk_with_cloud(
       const sensor_msgs::msg::PointCloud2::SharedPtr msg,
       double &rejection_force_x, double &rejection_force_y) {
+    rejection_force_x = 0.0;
+    rejection_force_y = 0.0;
+
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    try {
+      transform_stamped =
+          tf_buffer_.lookupTransform(base_link_name_,      // target frame
+                                     msg->header.frame_id, // source frame
+                                     tf2::TimePointZero);
+    } catch (const tf2::TransformException &ex) {
+      RCLCPP_WARN(this->get_logger(), "PotentialFields.-> TF lookup failed: %s",
+                  ex.what());
+      return false; // keep the previous yaw
+    }
+    Eigen::Affine3d tf = tf2::transformToEigen(transform_stamped.transform);
+
+    // head follow
+    Eigen::Vector3d view = tf.linear() * Eigen::Vector3d::UnitZ();
+    cloud_cam_yaw_ = (std::hypot(view.x(), view.y()) > 0.1)
+                         ? std::atan2(view.y(), view.x())
+                         : 0.0;
+    const double cyaw = std::cos(cloud_cam_yaw_);
+    const double syaw = std::sin(cloud_cam_yaw_);
+
+    // Skip the heavy point scan while stopped (no cloud collision check
+    // needed).
     if (current_speed_linear_ <= 0.0 && !(debug_ || show_img_)) {
-      rejection_force_x = 0.0;
-      rejection_force_y = 0.0;
       return false;
     }
 
     float optimal_x = get_search_distance(cloud_max_x_);
     int obstacle_count = 0;
     int force_count = 0;
-    rejection_force_x = 0;
-    rejection_force_y = 0;
 
     // shrink detect area from sensors by ry0hei-koba
     const float scale = detection_scale_;
@@ -730,28 +752,6 @@ private:
     int w = msg->width;
     int h = msg->height;
     cv::Mat mask = cv::Mat::zeros(h, w, CV_8UC1);
-
-    // Get transform to base_link
-    geometry_msgs::msg::TransformStamped transform_stamped;
-    try {
-      transform_stamped =
-          tf_buffer_.lookupTransform(base_link_name_,      // target frame
-                                     msg->header.frame_id, // source frame
-                                     tf2::TimePointZero);
-    } catch (const tf2::TransformException &ex) {
-      RCLCPP_WARN(this->get_logger(), "PotentialFields.-> TF lookup failed: %s",
-                  ex.what());
-      return false;
-    }
-    Eigen::Affine3d tf = tf2::transformToEigen(transform_stamped.transform);
-
-    // head follow
-    Eigen::Vector3d view = tf.linear() * Eigen::Vector3d::UnitZ();
-    cloud_cam_yaw_ = (std::hypot(view.x(), view.y()) > 0.1)
-                         ? std::atan2(view.y(), view.x())
-                         : 0.0;
-    const double cyaw = std::cos(cloud_cam_yaw_);
-    const double syaw = std::sin(cloud_cam_yaw_);
 
     // Iterate through point cloud data
     const unsigned char *p = msg->data.data();

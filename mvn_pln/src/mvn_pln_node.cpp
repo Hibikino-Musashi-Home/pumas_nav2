@@ -106,6 +106,12 @@ public:
     this->declare_parameter<double>("goal_relocation_report_threshold", 0.30);
     this->declare_parameter<int>("collision_recovery_trigger_count", 3);
 
+    // Online navigation must NEVER drop the point cloud during recovery (an
+    // unknown -1 cell is treated as navigable online, so the cloud is the only
+    // thing keeping the robot off real obstacles). The cloud-off last-resort
+    // recovery tier is therefore enabled only when use_online is false.
+    this->declare_parameter<bool>("use_online", false);
+
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("patience", patience_);
@@ -116,6 +122,7 @@ public:
                         goal_relocation_report_threshold_);
     this->get_parameter("collision_recovery_trigger_count",
                         collision_recovery_trigger_count_);
+    this->get_parameter("use_online", use_online_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
@@ -301,11 +308,15 @@ private:
   //  AWAY from the obstacle (back / left / right / diagonal, chosen from the
   //  obstacle's lateral offset on the augmented map, clearance-checked); tier
   //  >= 1 = progressively shrink the cloud detection box (lidar box is left
-  //  full as the reliable collision_risk trigger). Counters reset on recovery
-  //  escape (forward progress past the stuck spot), NOT at the start->goal
-  //  boundary. Never gives up: at the scale floor the level wraps back to 0 to
-  //  re-attempt an escape move.
+  //  full as the reliable collision_risk trigger); the final tier
+  //  (recovery_max_shrink_steps_ + 1) is the last resort: temporarily disable
+  //  the point cloud entirely (lidar only) when even the floored cloud box
+  //  cannot get through. Counters reset on recovery escape (forward progress
+  //  past the stuck spot), NOT at the start->goal boundary. Never gives up:
+  //  after the cloud-off tier the level wraps back to 0 to re-attempt an escape
+  //  move, with the cloud kept off until reset_recovery_state().
   int collision_recovery_trigger_count_ = 3; // ROS param
+  bool use_online_ = false; // ROS param; gates the cloud-off recovery tier
   int collision_event_count_ = 0;
   int recovery_level_ = 0;
   bool collision_risk_latched_ =
@@ -317,6 +328,11 @@ private:
   // counts as escaping.
   float stuck_goal_dist_ = 0.0f;
   float detection_scale_ = 1.0f;
+  // Last-resort recovery: the point cloud has been temporarily disabled (via
+  // /navigation/potential_fields/enable_cloud) because even the floored cloud
+  // box could not get through. Latched until reset_recovery_state() (recovery
+  // escape / goal reached / new task). The lidar box stays full throughout.
+  bool recovery_cloud_disabled_ = false;
   // Async augmented-map fetch used for the rear-clearance check.
   nav_msgs::msg::OccupancyGrid recovery_map_;
   bool recovery_map_ready_ = false;
@@ -326,7 +342,7 @@ private:
   const float recovery_progress_dist_ =
       0.50f;                                  // advance to count as escaped [m]
   const float recovery_shrink_factor_ = 0.8f; // detection scale mult / step
-  const float recovery_min_detection_scale_ = 0.5f; // detection scale floor
+  const float recovery_min_detection_scale_ = 0.30f; // detection scale floor
   const float recovery_rear_lateral_ = 0.15f; // rear-check lateral offset [m]
   const int recovery_max_shrink_steps_ = 3;   // shrink steps before wrapping
 
@@ -461,6 +477,8 @@ private:
         goal_relocation_report_threshold_ = param.as_double();
       else if (param.get_name() == "collision_recovery_trigger_count")
         collision_recovery_trigger_count_ = param.as_int();
+      else if (param.get_name() == "use_online")
+        use_online_ = param.as_bool();
 
       else {
         result.successful = false;
@@ -883,14 +901,27 @@ private:
       detection_scale_ = 1.0f;
       publish_detection_scale(1.0f);
     }
+    if (recovery_cloud_disabled_) {
+      std_msgs::msg::Bool m;
+      m.data = true;
+      pub_pot_fields_enable_cloud_->publish(m);
+      recovery_cloud_disabled_ = false;
+      std::cout << "MotionPlanner.-> Recovery reset: point cloud RE-ENABLED."
+                << std::endl;
+    }
   }
 
-  // Step the recovery tier. After the configured number of shrink steps, wrap
-  // back to tier 0 (re-attempt a back-up) while leaving the detection scale at
-  // its floor -> never gives up.
+  // Step the recovery tier. OFFLINE (use_online_ == false): after the shrink
+  // steps comes the cloud-off tier (recovery_max_shrink_steps_ + 1); past that
+  // the level wraps to tier 0 (re-attempt an escape move) while leaving the
+  // scale at its floor and the cloud disabled -> never gives up. ONLINE: the
+  // ladder stops at the last shrink step and wraps there, so recovery_level_
+  // never reaches the cloud-off tier and the cloud is never dropped.
   void advance_recovery_level() {
     recovery_level_++;
-    if (recovery_level_ > recovery_max_shrink_steps_)
+    const int max_level = use_online_ ? recovery_max_shrink_steps_
+                                      : recovery_max_shrink_steps_ + 1;
+    if (recovery_level_ > max_level)
       recovery_level_ = 0;
   }
 
@@ -1690,8 +1721,8 @@ private:
                     << std::endl;
           request_augmented_map();
           state = SM_RECOVERY_WAIT_MAP;
-        } else {
-          // Tier >= 1: shrink the cloud detection box one notch, replan.
+        } else if (recovery_level_ <= recovery_max_shrink_steps_) {
+          // Tier 1..N: shrink the cloud detection box one notch, replan.
           detection_scale_ =
               std::max(recovery_min_detection_scale_,
                        detection_scale_ * recovery_shrink_factor_);
@@ -1700,6 +1731,27 @@ private:
                     << recovery_level_
                     << ": shrink cloud box, scale=" << detection_scale_
                     << std::endl;
+          advance_recovery_level();
+          state = SM_CALCULATE_PATH;
+        } else {
+          // Tier N+1 (last resort, OFFLINE only): even the floored cloud box
+          // cannot get through. Temporarily disable the point cloud entirely
+          // (lidar stays full as the collision_risk trigger), then replan.
+          // Latched until reset_recovery_state() re-enables it on recovery
+          // escape / goal reached / new task. Online navigation must NEVER drop
+          // the cloud: advance_recovery_level() keeps recovery_level_ from ever
+          // reaching this tier when use_online_ is true; the !use_online_ guard
+          // below is a belt-and-suspenders backstop.
+          if (!use_online_ && !recovery_cloud_disabled_) {
+            std_msgs::msg::Bool m;
+            m.data = false;
+            pub_pot_fields_enable_cloud_->publish(m);
+            recovery_cloud_disabled_ = true;
+            std::cout << "MotionPlanner.-> Collision recovery tier"
+                      << recovery_level_
+                      << ": last resort, point cloud DISABLED (lidar only)."
+                      << std::endl;
+          }
           advance_recovery_level();
           state = SM_CALCULATE_PATH;
         }
