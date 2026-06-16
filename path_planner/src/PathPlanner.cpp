@@ -145,9 +145,22 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   }
 
   if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
-    std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
-              << std::endl;
-    return false;
+    // The goal cell itself is non-free (buried in an obstacle outline or on
+    // unknown space) and the spiral above could not nudge it onto a free cell
+    // within its small search ring (radius <= 10 cells ~= 0.5 m). When goal
+    // relocation is enabled, do NOT fail here: fall through to A*, which floods
+    // the reachable free space and relocates to the nearest reachable cell
+    // within max_goal_relocation_dist of the requested goal (handled after the
+    // search loop below, keyed off the original _idx_goal). With relocation
+    // disabled keep the original fail-fast behavior. fix by r.k
+    if (max_goal_relocation_dist <= 0.0) {
+      std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
+                << std::endl;
+      return false;
+    }
+    std::cout << "PathPlanner.-> Goal is inside non-free space; relocating to "
+                 "the nearest reachable cell (within "
+              << max_goal_relocation_dist << " m)." << std::endl;
   }
   if (!allow_unknown_space_to_navigate(map.data[idx_start])) {
     std::cout << "PathPlanner.->Start point is inside non-free space!!!!"
