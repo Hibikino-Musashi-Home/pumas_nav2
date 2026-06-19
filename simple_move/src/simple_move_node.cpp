@@ -47,6 +47,7 @@
 #define SM_GOAL_PATH_FAILED 81
 #define SM_COLLISION_RISK 9
 #define SM_GOAL_REL_POSE 13
+#define SM_GOAL_PATH_CONSTANT 14
 
 class SimpleMoveNode : public rclcpp::Node {
 public:
@@ -59,6 +60,12 @@ public:
     this->declare_parameter<float>("max_linear_speed", 0.3f);
     this->declare_parameter<float>("min_linear_speed", 0.05f);
     this->declare_parameter<float>("max_angular_speed", 1.0f);
+    // Constant-speed (cruise-only) mode for path following.
+    // When use_constant_speed is true the trapezoidal accel/cruise/deccel
+    // profile is skipped and the robot follows the path at a fixed
+    // constant_speed [m/s] (still attenuated on sharp turns by the controller).
+    this->declare_parameter<bool>("use_constant_speed", false);
+    this->declare_parameter<float>("constant_speed", 0.3f);
     this->declare_parameter<float>("control_alpha", 0.6548f);
     this->declare_parameter<float>("control_beta", 0.2f);
     this->declare_parameter<float>("linear_acceleration", 0.1f);
@@ -77,6 +84,8 @@ public:
     this->get_parameter("max_linear_speed", max_linear_speed_);
     this->get_parameter("min_linear_speed", min_linear_speed_);
     this->get_parameter("max_angular_speed", max_angular_speed_);
+    this->get_parameter("use_constant_speed", use_constant_speed_);
+    this->get_parameter("constant_speed", constant_speed_);
     this->get_parameter("control_alpha", alpha_);
     this->get_parameter("control_beta", beta_);
     this->get_parameter("linear_acceleration", linear_acceleration_);
@@ -217,6 +226,8 @@ private:
   float max_linear_speed_;
   float min_linear_speed_;
   float max_angular_speed_;
+  bool use_constant_speed_ = false;
+  float constant_speed_;
   float alpha_;
   float beta_;
   float linear_acceleration_;
@@ -292,6 +303,10 @@ private:
         min_linear_speed_ = param.as_double();
       else if (param.get_name() == "max_angular_speed")
         max_angular_speed_ = param.as_double();
+      else if (param.get_name() == "use_constant_speed")
+        use_constant_speed_ = param.as_bool();
+      else if (param.get_name() == "constant_speed")
+        constant_speed_ = param.as_double();
       else if (param.get_name() == "control_alpha")
         alpha_ = param.as_double();
       else if (param.get_name() == "control_beta")
@@ -812,7 +827,10 @@ private:
         }
         if (new_path_) {
           collision_risk_ = false;
-          state = SM_GOAL_PATH_ACCEL;
+          // In constant-speed mode skip the accel/cruise/deccel profile and
+          // follow the path at a fixed speed from the start.
+          state = use_constant_speed_ ? SM_GOAL_PATH_CONSTANT
+                                      : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
           prev_pose_idx = 0;
           next_pose_idx = 0;
@@ -823,8 +841,13 @@ private:
           std::stringstream ss;
           ss << goal_path_.header.stamp.sec;
           ss >> msg_goal_reached.goal_id.id;
-          attempts = (int)(get_path_total_distance(goal_path_) /
-                               max_linear_speed_ * 4 * RATE +
+          // Timeout is sized from the speed actually used, otherwise a slow
+          // constant_speed would run out of attempts before reaching the goal.
+          float plan_speed = use_constant_speed_ && constant_speed_ > 0
+                                 ? constant_speed_
+                                 : max_linear_speed_;
+          attempts = (int)(get_path_total_distance(goal_path_) / plan_speed *
+                               4 * RATE +
                            5 * RATE);
         }
         if (new_rel_pose_) {
@@ -1119,6 +1142,40 @@ private:
           current_linear_speed = temp_k * sqrt(global_error);
           if (current_linear_speed < min_linear_speed_)
             current_linear_speed = min_linear_speed_;
+          pub_cmd_vel_->publish(calculate_speeds(
+              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
+              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
+              move_lat_, use_pot_fields_, rejection_force_.y));
+          if (move_head_)
+            pub_head_goal_pose_->publish(
+                get_next_goal_head_angles(next_pose_idx));
+        }
+        break;
+
+      case SM_GOAL_PATH_CONSTANT:
+        // Constant-speed path following: like CRUISE but the speed is held at
+        // constant_speed_ for the whole path (no accel/deccel ramp). The
+        // controller still attenuates linear speed on sharp turns.
+        if (collision_risk_) {
+          state = SM_GOAL_PATH_FAILED;
+          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
+                    << std::endl;
+        } else {
+          get_robot_position_wrt_map();
+          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+          global_error =
+              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+          if (global_error < coarse_dist_tolerance_)
+            state = SM_GOAL_PATH_FINISH;
+          if (--attempts <= 0) {
+            state = SM_GOAL_PATH_FAILED;
+            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                         "goal path. Current state: GOAL_PATH_CONSTANT."
+                      << std::endl;
+          }
+          current_linear_speed = constant_speed_;
           pub_cmd_vel_->publish(calculate_speeds(
               robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
               current_linear_speed, max_angular_speed_, alpha_, beta_, false,
