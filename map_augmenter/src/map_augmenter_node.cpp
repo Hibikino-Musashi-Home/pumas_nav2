@@ -8,6 +8,7 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/range.hpp"
+#include "std_msgs/msg/bool.hpp"
 
 #include "nav_msgs/srv/get_map.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -124,16 +125,21 @@ public:
             std::bind(&MapAugmenterNode::callback_point_obstacle, this,
                       std::placeholders::_1));
 
-    sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        point_cloud_topic_, rclcpp::SensorDataQoS(),
-        std::bind(&MapAugmenterNode::callback_point_cloud, this,
+    // Cloud subscriptions are created on demand
+    sub_enable_ = this->create_subscription<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable"),
+        rclcpp::QoS(1).transient_local(),
+        std::bind(&MapAugmenterNode::callback_enable, this,
                   std::placeholders::_1));
 
-    sub_point_cloud2_ =
-        this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            point_cloud_topic2_, rclcpp::SensorDataQoS(),
-            std::bind(&MapAugmenterNode::callback_point_cloud2, this,
-                      std::placeholders::_1));
+    sub_enable_cloud_ = this->create_subscription<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable_cloud"),
+        rclcpp::QoS(1).transient_local(),
+        std::bind(&MapAugmenterNode::callback_enable_cloud, this,
+                  std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(),
+                "MapAugmenter.-> Point-cloud gating enabled; subscribing to "
+                "the cloud only while navigating.");
 
     sub_laser_scan_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         laser_scan_topic_, rclcpp::SensorDataQoS(),
@@ -238,13 +244,6 @@ private:
   // Persistent "memory" of every cell ever observed as obstacle.
   // /map_augmenter/clear_memory_all_obstacles.
   //
-  // Stored as map-frame METRIC grid keys (floor(x/res), floor(y/res)) anchored
-  // at the world origin (0,0), NOT as flat array indices. Under online SLAM the
-  // static map grows and its width/origin change over time, so a flat idx
-  // recorded against one geometry points at a different world cell when the
-  // grid is later resized. Metric keys are geometry-independent; the actual
-  // cell is recomputed against the current grid every time the memory is
-  // re-applied.
   bool memory_all_obstacles_ = false;
   std::set<std::pair<int, int>> memory_cells_;
   std::mutex memory_mutex_;
@@ -257,6 +256,11 @@ private:
   //  Subscribers
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr
       sub_clicked_point_;
+
+  // Episode-level gate for the on-demand point-cloud subscriptions.
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_;
+  // Cloud-only override (recovery), independent of the episode-level enable.
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_cloud_;
 
   // PointCloud
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
@@ -559,15 +563,95 @@ private:
     }
   }
 
+  // ############
+  //  On-demand point-cloud subscription management
+  void create_cloud_subscriptions() {
+    if (use_cloud_ && !sub_point_cloud_) {
+      point_cloud_received_ = false;
+      sub_point_cloud_ =
+          this->create_subscription<sensor_msgs::msg::PointCloud2>(
+              point_cloud_topic_, rclcpp::SensorDataQoS(),
+              std::bind(&MapAugmenterNode::callback_point_cloud, this,
+                        std::placeholders::_1));
+    }
+    if (use_cloud2_ && !sub_point_cloud2_) {
+      point_cloud2_received_ = false;
+      sub_point_cloud2_ =
+          this->create_subscription<sensor_msgs::msg::PointCloud2>(
+              point_cloud_topic2_, rclcpp::SensorDataQoS(),
+              std::bind(&MapAugmenterNode::callback_point_cloud2, this,
+                        std::placeholders::_1));
+    }
+  }
+
+  void destroy_cloud_subscriptions() {
+    if (sub_point_cloud_) {
+      sub_point_cloud_.reset();
+      point_cloud_received_ = false;
+    }
+    if (sub_point_cloud2_) {
+      sub_point_cloud2_.reset();
+      point_cloud2_received_ = false;
+    }
+  }
+
+  void callback_enable(const std_msgs::msg::Bool::SharedPtr msg) {
+    if (msg->data) {
+      if ((use_cloud_ && !sub_point_cloud_) ||
+          (use_cloud2_ && !sub_point_cloud2_)) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Navigation active; subscribing to point "
+                    "cloud.");
+        create_cloud_subscriptions();
+      }
+    } else {
+      if (sub_point_cloud_ || sub_point_cloud2_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Navigation idle; unsubscribing from point "
+                    "cloud to save bandwidth.");
+        destroy_cloud_subscriptions();
+      }
+    }
+  }
+
+  void callback_enable_cloud(const std_msgs::msg::Bool::SharedPtr msg) {
+    if (msg->data) {
+      if ((use_cloud_ && !sub_point_cloud_) ||
+          (use_cloud2_ && !sub_point_cloud2_)) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Cloud re-enabled; subscribing to point "
+                    "cloud.");
+        create_cloud_subscriptions();
+      }
+    } else {
+      if (sub_point_cloud_ || sub_point_cloud2_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Cloud disabled (recovery); unsubscribing "
+                    "from point cloud.");
+        destroy_cloud_subscriptions();
+      }
+    }
+  }
+
   // Sensor callbacks
   void
   callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    if (!use_cloud_) {
+      point_cloud_received_ = false;
+      return;
+    }
     latest_point_cloud_ = msg;
     point_cloud_received_ = true;
   }
 
   void
   callback_point_cloud2(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    // See callback_point_cloud(): use_point_cloud2 is the single source of
+    // truth.
+    if (!use_cloud2_) {
+      point_cloud2_received_ = false;
+      return;
+    }
     latest_point_cloud2_ = msg;
     point_cloud2_received_ = true;
   }
@@ -797,9 +881,13 @@ private:
     // cloud from topic: %s", point_cloud_topic_.c_str());
 
     if (!point_cloud_received_) {
-      RCLCPP_WARN(this->get_logger(),
-                  "MapAugmenter.-> No new point cloud available.");
-      return false;
+      // The cloud subscription is (re)created per navigation episode, so the
+      // first frame may not have arrived yet. Treat this as "no cloud obstacles
+      // this round" instead of failing the whole augmented map — lidar and the
+      // reactive potential_fields layer still cover obstacles, and the cloud is
+      // folded in on the next planning cycle once a frame arrives. (Once
+      // received the flag latches for the episode.)
+      return true;
     }
 
     const unsigned char *p = latest_point_cloud_->data.data();
@@ -865,9 +953,7 @@ private:
     // cloud from topic: %s", point_cloud_topic2_.c_str());
 
     if (!point_cloud2_received_) {
-      RCLCPP_WARN(this->get_logger(),
-                  "MapAugmenter.-> No new point cloud2 available.");
-      return false;
+      return true;
     }
 
     const unsigned char *p = latest_point_cloud2_->data.data();
