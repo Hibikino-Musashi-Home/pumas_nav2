@@ -38,6 +38,9 @@
   <arg name="use_point_cloud" default="True"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
+  <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
 
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
@@ -197,6 +200,8 @@
     
     <param name="max_linear_speed" value="0.8"/>
     <param name="max_angular_speed" value="1.25"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
 
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
