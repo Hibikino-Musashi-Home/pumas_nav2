@@ -133,12 +133,20 @@ public:
 
     // ############
     //  Publishers
+    //
     pub_pot_fields_enable_ = this->create_publisher<std_msgs::msg::Bool>(
         make_name("/navigation/potential_fields/enable"),
         rclcpp::QoS(10).transient_local());
     pub_pot_fields_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>(
         make_name("/navigation/potential_fields/enable_cloud"),
         rclcpp::QoS(10).transient_local());
+    pub_map_aug_enable_ = this->create_publisher<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable"),
+        rclcpp::QoS(10).transient_local());
+    pub_map_aug_enable_cloud_ = this->create_publisher<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable_cloud"),
+        rclcpp::QoS(10).transient_local());
+
     pub_goal_path_ = this->create_publisher<nav_msgs::msg::Path>(
         make_name("/simple_move/goal_path"), rclcpp::QoS(10).transient_local());
     pub_goal_dist_angle_ =
@@ -329,9 +337,11 @@ private:
   float stuck_goal_dist_ = 0.0f;
   float detection_scale_ = 1.0f;
   // Last-resort recovery: the point cloud has been temporarily disabled (via
-  // /navigation/potential_fields/enable_cloud) because even the floored cloud
-  // box could not get through. Latched until reset_recovery_state() (recovery
-  // escape / goal reached / new task). The lidar box stays full throughout.
+  // both /navigation/potential_fields/enable_cloud and
+  // /navigation/map_augmenter/enable_cloud, so the reactive and planning layers
+  // drop the camera in lockstep) because even the floored cloud box could not
+  // get through. Latched until reset_recovery_state() (recovery escape / goal
+  // reached / new task). The lidar box stays full throughout.
   bool recovery_cloud_disabled_ = false;
   // Async augmented-map fetch used for the rear-clearance check.
   nav_msgs::msg::OccupancyGrid recovery_map_;
@@ -361,6 +371,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_pot_fields_enable_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr
       pub_pot_fields_enable_cloud_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_map_aug_enable_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_map_aug_enable_cloud_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_goal_path_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr
       pub_goal_dist_angle_;
@@ -905,6 +917,7 @@ private:
       std_msgs::msg::Bool m;
       m.data = true;
       pub_pot_fields_enable_cloud_->publish(m);
+      pub_map_aug_enable_cloud_->publish(m);
       recovery_cloud_disabled_ = false;
       std::cout << "MotionPlanner.-> Recovery reset: point cloud RE-ENABLED."
                 << std::endl;
@@ -993,7 +1006,7 @@ private:
     return true;
   }
 
-  // Choose a 15 cm escape move (base frame [x fwd+, y left+])
+  // Choose direction escape move (base frame [x fwd+, y left+])
   bool choose_escape_move(float &rel_x, float &rel_y) {
     const float ct = cos(robot_t_), st = sin(robot_t_);
     double sum_y = 0.0;
@@ -1048,8 +1061,6 @@ private:
     return status;
   }
 
-  // ############
-  // Simple Move main processing
   void send_motion_synth_goal(
       const geometry_msgs::msg::Pose &nav_goal_pose,
       const pumas_interfaces::msg::StartAndEndJoints &arm_joints) {
@@ -1174,6 +1185,12 @@ private:
     active_goal_handle_->publish_feedback(feedback);
   }
 
+  void set_map_augmenter_enable(bool enable) {
+    std_msgs::msg::Bool msg;
+    msg.data = enable;
+    pub_map_aug_enable_->publish(msg);
+  }
+
   void finish_action_success(const std::string &message) {
     if (!action_active_ || !active_goal_handle_) {
       return;
@@ -1189,6 +1206,7 @@ private:
     action_active_ = false;
     cancel_requested_ = false;
     via_points_.clear();
+    set_map_augmenter_enable(false);
   }
 
   void finish_action_abort(const std::string &message) {
@@ -1206,6 +1224,7 @@ private:
     action_active_ = false;
     cancel_requested_ = false;
     via_points_.clear();
+    set_map_augmenter_enable(false);
   }
 
   void finish_action_cancel(const std::string &message) {
@@ -1223,10 +1242,11 @@ private:
     action_active_ = false;
     cancel_requested_ = false;
     via_points_.clear();
+    set_map_augmenter_enable(false);
   }
 
   // ############
-  // Simple Move main processing
+  // motion planner main processing
   void motion_planner_processing() {
     if (!services_ready_) {
       RCLCPP_ERROR(this->get_logger(), "MotionPlanner.-> Services not ready.");
@@ -1273,6 +1293,7 @@ private:
         publish_nav_feedback("SM_WAITING_FOR_TASK", "Waiting for task");
         if (new_global_goal_) {
           new_global_goal_ = false;
+          set_map_augmenter_enable(true);
           state = SM_CALCULATE_PATH;
           if (current_status == actionlib_msgs::msg::GoalStatus::ACTIVE)
             current_status =
@@ -1700,7 +1721,7 @@ private:
               state = SM_COLLISION_RECOVERY;
             }
           } else {
-            // Generic (timeout) abort: unchanged behaviour.
+            // Generic (timeout) abort: unchanged behaviour. //TODO
             std::cout << "MotionPlanner.-> Simple move reported path aborted. "
                          "Trying again..."
                       << std::endl;
@@ -1746,6 +1767,7 @@ private:
             std_msgs::msg::Bool m;
             m.data = false;
             pub_pot_fields_enable_cloud_->publish(m);
+            pub_map_aug_enable_cloud_->publish(m);
             recovery_cloud_disabled_ = true;
             std::cout << "MotionPlanner.-> Collision recovery tier"
                       << recovery_level_
