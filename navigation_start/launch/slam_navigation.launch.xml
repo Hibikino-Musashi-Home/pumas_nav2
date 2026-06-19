@@ -29,13 +29,14 @@
   <arg name="lidar_points_threshold" default="20"/>
 
 
-  // for online
+  <!--for online-->
   <arg name="use_online" default="True"/>
   <arg name="mvn_pln_patience" default="False"/>
-  <arg name="memory_all_obstacles" default="True"/>
+  <arg name="memory_all_obstacles" default="False"/>
   <arg name="collision_recovery_trigger_count" default="3"/>
   <arg name="disable_rear_path_plan" default="True"/>
-  <arg name="online_behind_clearance" default="0.3"/>
+  <arg name="online_behind_clearance" default="0.8"/>
+
   <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
   <arg name="escape_clear_radius" default="0.6"/>
 
@@ -46,7 +47,7 @@
   <arg name="laser_min_z"
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
-  <arg name="cloud_min_x" default="0.3"/>
+  <arg name="cloud_min_x" default="0.40"/>
   <arg name="cloud_max_x" default="0.55"/>
   <arg name="cloud_min_y" default="-0.25"/>
   <arg name="cloud_max_y" default="0.25"/>
@@ -235,7 +236,7 @@
         pkg="hardware_controller"
         exec="arm_node"
         output="screen">
-        <param name="torso_default_pose" value="0.15"/>
+        <param name="torso_default_pose" value="0.0"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
         <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
@@ -247,7 +248,7 @@
         <param name="pan_min" value="-3.14" />
         <param name="pan_max" value="1.74" />
         <param name="tilt_min" value="-0.7" />
-        <param name="tilt_max" value="0.47" />
+        <param name="tilt_max" value="0.6" />
   </node>
 
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">

@@ -342,7 +342,7 @@ private:
   const float recovery_progress_dist_ =
       0.50f;                                  // advance to count as escaped [m]
   const float recovery_shrink_factor_ = 0.8f; // detection scale mult / step
-  const float recovery_min_detection_scale_ = 0.30f; // detection scale floor
+  const float recovery_min_detection_scale_ = 0.50f; // detection scale floor
   const float recovery_rear_lateral_ = 0.15f; // rear-check lateral offset [m]
   const int recovery_max_shrink_steps_ = 3;   // shrink steps before wrapping
 

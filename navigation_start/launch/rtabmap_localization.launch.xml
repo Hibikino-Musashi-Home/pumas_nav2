@@ -50,7 +50,7 @@
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_min_x" default="0.45"/>
   <arg name="cloud_max_x" default="0.60"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.25"/>
@@ -115,7 +115,7 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="decay_factor" value="3"/>
     <param name="inflation_radius" value="0.22"/> <!--[m]通行不可，黒領域の膨張，環境依存なので基本的にはこれを調整する．すくなくともfootprintの半径分は指定する-->
-    <param name="cost_radius" value="0.55"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
+    <param name="cost_radius" value="0.45"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
@@ -193,7 +193,7 @@
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
-    <param name="goal_relocation_report_threshold" value="0.3"/> <!--[m]計画経路の終端が要求ゴールからこの距離以上離れていたら「ゴール貼り直し」とみなし，abortせずnear_goal＋メッセージで報告-->
+    <param name="goal_relocation_report_threshold" value="0.5"/> <!--[m]計画経路の終端が要求ゴールからこの距離以上離れていたら「ゴール貼り直し」とみなし，abortせずnear_goal＋メッセージで報告-->
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
   </node>
 
