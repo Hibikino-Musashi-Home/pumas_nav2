@@ -135,9 +135,8 @@
     <param name="use_online" value="$(var use_online)"/>
     <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
-    <param name="escape_clear_radius" value="0.6"/> <!--[m]計画失敗時に自機周辺をこの半径だけ自由(0)化して1回だけ再計画．障害物に囲まれた際の脱出用．0以下で無効-->
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/> <!--[m]計画失敗時に自機周辺をこの半径だけ自由(0)化して1回だけ再計画．障害物に囲まれた際の脱出用．0以下で無効-->
     <param name="goal_relocation_radius" value="1.2"/> <!--[m]ゴールが障害物に囲まれ到達不可のとき，到達可能な最近傍セルへ貼り直して継続．要求ゴールからこの距離以内のみ採用（最終手段）．0以下で無効-->
-    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="1.0"/>
@@ -226,6 +225,8 @@
     <param name="gaze_tf_name"   value="gaze_point"/>
     <param name="base_link_name" value="base_footprint"/>
     <param name="head_height"    value="1.1"/>
+    <param name="max_pan_vel"    value="1.0"/>
+    <param name="max_tilt_vel"   value="0.7"/>
   </node>
 
   <!-- RVIZ2 -->

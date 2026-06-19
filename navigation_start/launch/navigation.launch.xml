@@ -246,7 +246,6 @@
     <param name="head_height"    value="1.1"/>
     <param name="max_pan_vel"    value="1.0"/>
     <param name="max_tilt_vel"   value="0.7"/>
-    <param name="gaze_period_ms" value="100"/>
   </node>
 
   <!-- RVIZ2 -->
