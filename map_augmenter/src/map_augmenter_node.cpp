@@ -712,26 +712,59 @@ private:
   nav_msgs::msg::OccupancyGrid
   merge_maps(const nav_msgs::msg::OccupancyGrid &a,
              const nav_msgs::msg::OccupancyGrid &b) {
-    if (a.info.width != b.info.width || a.info.height != b.info.height) {
-      RCLCPP_WARN(
-          this->get_logger(),
-          "MapAugmenter.-> WARNING!!! Cannot merge maps of different sizes!");
-      return a;
+    // Overlay semantics: the overlay map `b` (prohibition / sensor obstacles)
+    // contributes ONLY obstacle (positive) cells; everywhere else keep the base
+    // map `a`. This preserves unknown (-1) in the base map instead of turning
+    // -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path planner
+    // decide via use_online whether unknown space is navigable (use_online=true:
+    // -1 reachable for SLAM; use_online=false: -1 blocked because entering
+    // unknown space is dangerous in a known environment).
+
+    // Fast path: identical geometry -> direct index-wise overlay.
+    if (a.info.width == b.info.width && a.info.height == b.info.height &&
+        a.info.resolution == b.info.resolution &&
+        a.info.origin.position.x == b.info.origin.position.x &&
+        a.info.origin.position.y == b.info.origin.position.y) {
+      nav_msgs::msg::OccupancyGrid c = a;
+      for (size_t i = 0; i < c.data.size(); ++i) {
+        if (b.data[i] > 0)
+          c.data[i] = std::max(a.data[i], b.data[i]);
+      }
+      return c;
     }
+
+    //fixed map size is different by ry0hei-kobayashi
+    if (a.info.resolution <= 0.0 || b.info.resolution <= 0.0 || b.data.empty())
+      return a;
 
     nav_msgs::msg::OccupancyGrid c = a;
-    for (size_t i = 0; i < c.data.size(); ++i) {
-      // Overlay semantics: the overlay map `b` (prohibition / sensor obstacles)
-      // contributes ONLY obstacle (positive) cells; everywhere else keep the
-      // base map `a`. This preserves unknown (-1) in the base map instead of
-      // turning -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path
-      // planner decide via use_online whether unknown space is navigable
-      // (use_online=true: -1 reachable for SLAM; use_online=false: -1 blocked
-      // because entering unknown space is dangerous in a known environment).
-      if (b.data[i] > 0)
-        c.data[i] = std::max(a.data[i], b.data[i]);
+    const double ax0 = a.info.origin.position.x;
+    const double ay0 = a.info.origin.position.y;
+    const double bx0 = b.info.origin.position.x;
+    const double by0 = b.info.origin.position.y;
+    const double ares = a.info.resolution;
+    const double bres = b.info.resolution;
+    const int aw = static_cast<int>(a.info.width);
+    const int ah = static_cast<int>(a.info.height);
+    const int bw = static_cast<int>(b.info.width);
+    const int bh = static_cast<int>(b.info.height);
+    for (int by = 0; by < bh; ++by) {
+      for (int bx = 0; bx < bw; ++bx) {
+        const int8_t v = b.data[static_cast<size_t>(by) * bw + bx];
+        if (v <= 0)
+          continue;
+        // Overlay cell center -> world -> base cell index.
+        const double wx = bx0 + (bx + 0.5) * bres;
+        const double wy = by0 + (by + 0.5) * bres;
+        const int ax = static_cast<int>((wx - ax0) / ares);
+        const int ay = static_cast<int>((wy - ay0) / ares);
+        if (ax < 0 || ay < 0 || ax >= aw || ay >= ah)
+          continue;
+        const size_t idx = static_cast<size_t>(ay) * aw + ax;
+        if (c.data[idx] < v)
+          c.data[idx] = v;
+      }
     }
-
     return c;
   }
 
@@ -864,6 +897,37 @@ private:
 
     std::lock_guard<std::mutex> lock(memory_mutex_);
     memory_cells_.insert(std::make_pair(mx, my));
+  }
+
+  // Stamp every remembered obstacle cell onto obstacles_map_ (=100), recomputing
+  // each cell against the CURRENT grid geometry so the obstacle stays at its true
+  // map-frame position even after the online SLAM map has grown / shifted its
+  // origin since the cell was recorded. Must be applied in BOTH the periodic
+  // processing (published /augmented_map) AND the augmented-map SERVICE used for
+  // path planning: the service rebuilds obstacles_map_ from current sensors only
+  // (and, in online, process_maps() zeroes it on every request), so without this
+  // the remembered obstacles never reach the planner -> memory_all_obstacles has
+  // no effect on path planning.
+  void apply_memory_obstacles() {
+    if (!memory_all_obstacles_)
+      return;
+    std::lock_guard<std::mutex> lock(memory_mutex_);
+    const double res = obstacles_map_.info.resolution;
+    if (res <= 0.0)
+      return;
+    const double ox = obstacles_map_.info.origin.position.x;
+    const double oy = obstacles_map_.info.origin.position.y;
+    const int width = static_cast<int>(obstacles_map_.info.width);
+    const int height = static_cast<int>(obstacles_map_.info.height);
+    for (const auto &key : memory_cells_) {
+      double wx = (key.first + 0.5) * res;
+      double wy = (key.second + 0.5) * res;
+      int cx = static_cast<int>((wx - ox) / res);
+      int cy = static_cast<int>((wy - oy) / res);
+      if (cx < 0 || cy < 0 || cx >= width || cy >= height)
+        continue;
+      obstacles_map_.data[cy * width + cx] = 100;
+    }
   }
 
   void callback_clear_memory_all_obstacles(
@@ -1211,6 +1275,10 @@ private:
       return;
     }
 
+    // Include remembered obstacles in the map handed to the path planner
+    // (no-op unless memory_all_obstacles is enabled).
+    apply_memory_obstacles();
+
     obstacles_inflated_map_ = inflate_map(obstacles_map_, inflation_radius_);
     augmented_map_ = merge_maps(static_map_, obstacles_inflated_map_);
     response->map = augmented_map_;
@@ -1274,29 +1342,9 @@ private:
       are_there_obstacles_ =
           decay_map_and_check_if_obstacles(obstacles_map_, decay_factor_);
 
+      apply_memory_obstacles();
       if (memory_all_obstacles_) {
         std::lock_guard<std::mutex> lock(memory_mutex_);
-        const double res = obstacles_map_.info.resolution;
-        if (res > 0.0) {
-          const double ox = obstacles_map_.info.origin.position.x;
-          const double oy = obstacles_map_.info.origin.position.y;
-          const int width = static_cast<int>(obstacles_map_.info.width);
-          const int height = static_cast<int>(obstacles_map_.info.height);
-
-          // Recompute each memory cell against the CURRENT grid geometry so the
-          // obstacle stays at its true map-frame position even after the online
-          // SLAM map has grown / shifted its origin since the cell was
-          // recorded.
-          for (const auto &key : memory_cells_) {
-            double wx = (key.first + 0.5) * res;
-            double wy = (key.second + 0.5) * res;
-            int cx = static_cast<int>((wx - ox) / res);
-            int cy = static_cast<int>((wy - oy) / res);
-            if (cx < 0 || cy < 0 || cx >= width || cy >= height)
-              continue;
-            obstacles_map_.data[cy * width + cx] = 100;
-          }
-        }
         are_there_obstacles_ = are_there_obstacles_ || !memory_cells_.empty();
       }
 

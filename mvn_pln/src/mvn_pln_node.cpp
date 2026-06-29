@@ -73,6 +73,7 @@
 #define SM_COLLISION_RECOVERY 40
 #define SM_RECOVERY_WAIT_MAP 41
 #define SM_RECOVERY_WAIT_BACKUP 42
+#define SM_RECOVERY_WAIT_ROTATE 43
 
 // Flags for clients WAIT casers
 #define SM_WAIT_FOR_PATH_RESPONSE 102
@@ -355,6 +356,17 @@ private:
   const float recovery_min_detection_scale_ = 0.50f; // detection scale floor
   const float recovery_rear_lateral_ = 0.15f; // rear-check lateral offset [m]
   const int recovery_max_shrink_steps_ = 3;   // shrink steps before wrapping
+  // ONLINE sensor-safe escape: when no translational escape is clear (the robot
+  // is boxed in on all sides, typically by a directional point-cloud phantom),
+  // rotate IN PLACE. The base center does not move, so the rotation cannot drive
+  // the robot into an obstacle (collision-safe), and it reorients the head
+  // camera, which sheds the directional phantom. Rotation is accumulated; once a
+  // full scan still finds no way through, the robot is genuinely enclosed, so we
+  // stop at the nearest reachable point instead of looping forever.
+  const float recovery_rotate_step_ =
+      0.7853982f;                              // in-place rotation / step [rad] (~45 deg)
+  const float recovery_rotate_max_ = 2.0f * M_PI; // total rotation before giving up [rad]
+  float recovery_rotated_total_ = 0.0f;
 
   // Memory obstacle clear flow (used when memory_all_obstacles is enabled and
   // path planning has just failed — we wipe accumulated memory then retry)
@@ -909,6 +921,7 @@ private:
     collision_event_count_ = 0;
     recovery_level_ = 0;
     recovery_stuck_recorded_ = false;
+    recovery_rotated_total_ = 0.0f;
     if (detection_scale_ != 1.0f) {
       detection_scale_ = 1.0f;
       publish_detection_scale(1.0f);
@@ -1733,10 +1746,14 @@ private:
 
       case SM_COLLISION_RECOVERY: {
         get_robot_position();
-        if (recovery_level_ == 0) {
+        if (use_online_ || recovery_level_ == 0) {
           // Tier 0: risk-aware escape move. Fetch the augmented map first so
           // the escape direction (away from the obstacle) can be chosen +
-          // clearance checked.
+          // clearance checked. ONLINE always lands here: the shrink / cloud-off
+          // tiers below are OFFLINE-only (online must never drop the cloud and,
+          // empirically, shrinking the cloud box does not clear a phantom that
+          // sits inside the floored box). For online, SM_RECOVERY_WAIT_MAP falls
+          // back to an in-place rotation when no translational escape is clear.
           std::cout << "MotionPlanner.-> Collision recovery tier0: escape move "
                        "(choosing direction away from obstacle)."
                     << std::endl;
@@ -1795,6 +1812,42 @@ private:
           rp.data = {rel_x, rel_y, 0.0f}; // [x fwd+, y left+, yaw] base frame
           pub_goal_rel_pose_->publish(rp);
           state = SM_RECOVERY_WAIT_BACKUP;
+        } else if (use_online_) {
+          // ONLINE: no translational escape is clear -> the robot is boxed in on
+          // all sides, typically by a directional point-cloud phantom (lidar +
+          // cloud both on). Shrinking the cloud box does not help once the
+          // phantom sits inside the floored box, and forcing a translation would
+          // risk a real collision. Instead rotate IN PLACE: the base center is
+          // fixed (collision-safe) and the head camera reorients, which sheds a
+          // directional phantom. Replan + retry after each rotation; if a full
+          // turn still finds no way through, the robot is enclosed -> stop at the
+          // nearest reachable point rather than looping forever.
+          if (recovery_rotated_total_ < recovery_rotate_max_) {
+            std::cout << "MotionPlanner.-> No clear translational escape; "
+                         "rotating in place "
+                      << recovery_rotate_step_
+                      << " rad to shed point-cloud phantom (rotated so far="
+                      << recovery_rotated_total_ << " rad)." << std::endl;
+            simple_move_goal_status_.status = 0;
+            simple_move_status_id_ = 0;
+            std_msgs::msg::Float32MultiArray rp;
+            rp.data = {0.0f, 0.0f,
+                       recovery_rotate_step_}; // [x, y, yaw]; no translation
+            pub_goal_rel_pose_->publish(rp);
+            recovery_rotated_total_ += std::fabs(recovery_rotate_step_);
+            state = SM_RECOVERY_WAIT_ROTATE;
+          } else {
+            std::cout << "MotionPlanner.-> Rotation scan exhausted; robot is "
+                         "enclosed. Stopping at nearest reachable point."
+                      << std::endl;
+            std_msgs::msg::Bool m;
+            m.data = false;
+            pub_pot_fields_enable_->publish(m);
+            reset_recovery_state();
+            finish_action_success(
+                "Blocked by obstacles; stopped at nearest reachable point");
+            state = SM_INIT;
+          }
         } else {
           std::cout << "MotionPlanner.-> No clear escape direction; shrinking "
                        "cloud box instead."
@@ -1826,6 +1879,35 @@ private:
           state = SM_CALCULATE_PATH;
         } else {
           break; // still backing up
+        }
+        break;
+      }
+
+      case SM_RECOVERY_WAIT_ROTATE: {
+        // In-place recovery rotation (ONLINE phantom shedding). On completion,
+        // stay in the escape/rotation tier (recovery_level_ = 0) and replan, so
+        // the next collision re-enters the escape->rotate path and the rotation
+        // scan keeps accumulating until the robot breaks free (forward progress
+        // resets recovery) or a full turn is exhausted.
+        if (simple_move_goal_status_.status ==
+                actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
+            simple_move_status_id_ == -1) {
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Recovery rotation finished; replanning."
+                    << std::endl;
+          recovery_level_ = 0;
+          state = SM_CALCULATE_PATH;
+        } else if (simple_move_goal_status_.status ==
+                   actionlib_msgs::msg::GoalStatus::ABORTED) {
+          simple_move_goal_status_.status = 0;
+          simple_move_status_id_ = 0;
+          std::cout << "MotionPlanner.-> Recovery rotation aborted; replanning."
+                    << std::endl;
+          recovery_level_ = 0;
+          state = SM_CALCULATE_PATH;
+        } else {
+          break; // still rotating
         }
         break;
       }
