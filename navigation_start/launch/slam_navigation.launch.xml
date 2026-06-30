@@ -32,10 +32,11 @@
   <!--for online-->
   <arg name="use_online" default="True"/>
   <arg name="mvn_pln_patience" default="False"/>
-  <arg name="memory_all_obstacles" default="False"/>
+  <arg name="proximity_criterion" default="0.8"/>
+  <arg name="memory_all_obstacles" default="True"/>
   <arg name="collision_recovery_trigger_count" default="3"/>
   <arg name="disable_rear_path_plan" default="True"/>
-  <arg name="online_behind_clearance" default="0.8"/>
+  <arg name="online_behind_clearance" default="1.0"/>
 
   <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
   <arg name="escape_clear_radius" default="0.6"/>
@@ -107,8 +108,8 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
     <param name="decay_factor" value="20"/>    
-    <param name="inflation_radius" value="0.23"/>
-    <param name="cost_radius" value="0.45"/> 
+    <param name="inflation_radius" value="0.22"/>
+    <param name="cost_radius" value="0.35"/> 
 
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
@@ -159,7 +160,7 @@
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
     <param name="linear_acceleration" value="0.2"/>
-    <param name="control_alpha" value="0.6"/>
+    <param name="control_alpha" value="0.35"/>
     <param name="control_beta" value="0.8"/>
 
     <param name="move_head" value="True"/>
@@ -222,6 +223,7 @@
         output="screen">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
     <param name="use_online" value="$(var use_online)"/>
