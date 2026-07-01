@@ -252,6 +252,9 @@ private:
   // Ordered via points for the current goal (empty -> plain A*). Carried in the
   // PumasNav goal; progressively popped as the robot passes each one.
   std::vector<geometry_msgs::msg::Pose> via_points_;
+  // Per-goal stop-short distance [m]. When > 0, halt + succeed as soon as
+  // straight-line dist(robot, goal) < goal_distance_. <= 0 = full arrival.
+  float goal_distance_ = 0.0f;
   actionlib_msgs::msg::GoalStatus simple_move_goal_status_;
 
   float robot_x_ = 0.0f;
@@ -1166,6 +1169,9 @@ private:
     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Goal with %zu via points",
                 via_points_.size());
 
+    // Stop-short distance for this goal (<= 0 disables; full arrival).
+    goal_distance_ = goal->goal_distance;
+
     if (goal->use_arm) {
       target_arm_pose = goal->arm_joints;
       arm_goal_received = true;
@@ -1692,6 +1698,39 @@ private:
                     << " m toward goal). Resetting recovery state."
                     << std::endl;
           reset_recovery_state();
+        }
+
+        // Stop-short-of-goal (server-side). When enabled, halt as soon as the
+        // robot is within goal_distance_ of the goal. Fresh TF (30 ms) makes
+        // `error` reliable; we actively stop simple_move so the robot really
+        // halts (unlike the old client-side cancel), skip final-angle
+        // correction (we are not at the goal), and report success. Placed
+        // before the proximity/collision checks so it wins the cycle.
+        if (goal_distance_ > 0.0f && error < goal_distance_) {
+          std::ostringstream oss;
+          oss << std::fixed << std::setprecision(2)
+              << "Stopped within goal_distance (" << error
+              << " m from goal, threshold " << goal_distance_ << " m)";
+          const std::string msg = oss.str();
+          std::cout << "MotionPlanner.-> " << msg << std::endl;
+
+          // 1) Actually halt the robot (authoritative stop).
+          pub_simple_move_stop_->publish(std_msgs::msg::Empty());
+          // 2) Disable potential fields (mirror the normal SUCCEEDED branch).
+          msg_bool.data = false;
+          pub_pot_fields_enable_->publish(msg_bool);
+          // 3) Clear any collision-recovery state / restore cloud.
+          reset_recovery_state();
+          // 4) Mark near-goal and emit one final feedback BEFORE finishing so a
+          //    client near_goal_callback (feedback-driven) still fires.
+          near_goal_sent = true;
+          publish_nav_feedback("STOP_SHORT", msg);
+          // 5) Report success and return to idle (skip final-angle correction).
+          current_status = publish_status(
+              actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id, msg);
+          finish_action_success(msg);
+          state = SM_INIT;
+          break;
         }
 
         if (error < proximity_criterion_ && !near_goal_sent) {
