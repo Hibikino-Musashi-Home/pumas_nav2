@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import math
 import threading
 from typing import Optional, Union
 
@@ -446,7 +445,7 @@ class NavModule:
 
         self.get_logger().info('NavModule.->No motion_synth: moving body to default_arm_pose')
 
-    def send_nav_action_goal(self, goal: Pose2D):
+    def send_nav_action_goal(self, goal: Pose2D, goal_distance: float = 0.0):
         if not self.nav_action_client.wait_for_server(timeout_sec=3.0):
             self.get_logger().error('NavModule.->PumasNav action server not available')
             self._action_done = True
@@ -471,9 +470,13 @@ class NavModule:
 
         goal_msg.goal = goal_pose
 
+        # Stop-short distance handled server-side by mvn_pln (<= 0 disables).
+        goal_msg.goal_distance = (
+            float(goal_distance) if goal_distance and goal_distance > 0 else 0.0
+        )
+
         # TODO
         # goal_msg.patience = True
-        # goal_msg.proximity_criterion = 2.0
 
         arm_goal = StartAndEndJoints()
         arm_goal.has_arm_start_pose = False
@@ -578,7 +581,13 @@ class NavModule:
 
         attempts = int(timeout * 10) if timeout != 0 else float('inf')
 
-        self.send_nav_action_goal(goal)
+        # goal_distance (stop-short) is now honored server-side by mvn_pln: it
+        # halts the robot and succeeds within goal_distance of the goal, so the
+        # client only forwards the value and waits for the action result.
+        self.send_nav_action_goal(
+            goal,
+            goal_distance=(goal_distance if goal_distance and goal_distance > 0 else 0.0),
+        )
 
         if not self._external_node:
             executor = SingleThreadedExecutor()
@@ -587,8 +596,6 @@ class NavModule:
             executor = None
 
         result = False
-        forced_stop_triggered = False
-        cancel_wait_count = 0
 
         while rclpy.ok() and not self.robot_stop and attempts >= 0:
             if executor is not None:
@@ -598,38 +605,12 @@ class NavModule:
                 result = self._action_success
                 break
 
-            if goal_distance is not None:
-                current_pose = self.get_global_pose_from_tf(
-                    'map', 'base_footprint')
-                if current_pose is not None:
-                    current_x, current_y, _ = current_pose
-                    current_distance = math.sqrt(
-                        (goal.x - current_x) ** 2 + (goal.y - current_y) ** 2
-                    )
-
-                    if current_distance <= goal_distance:
-                        if not forced_stop_triggered:
-                            self.get_logger().warn(
-                                f'NavModule.->Within goal_distance ({goal_distance} m). Canceling navigation action.'
-                            )
-                            forced_stop_triggered = True
-                            self.cancel_nav_action()
-                        else:
-                            cancel_wait_count += 1
-
-                        if cancel_wait_count >= 5:  # 0.5s, TODO future complete
-                            self.get_logger().warn(
-                                'NavModule.->Forced stop at goal_distance completed'
-                            )
-                            result = True
-                            break
-
             attempts -= 1
 
         if self.robot_stop:
             self.cancel_nav_action()
             result = False
-        elif attempts < 0 and not self._action_done and not forced_stop_triggered:
+        elif attempts < 0 and not self._action_done:
             self.get_logger().warn('NavModule.->Timeout waiting for PumasNav result')
             self.cancel_nav_action()
             result = False
