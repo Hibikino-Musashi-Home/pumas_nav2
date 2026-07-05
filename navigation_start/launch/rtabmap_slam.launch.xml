@@ -37,7 +37,7 @@
   <arg name="memory_all_obstacles" default="False"/>
   <arg name="collision_recovery_trigger_count" default="3"/>
   <arg name="disable_rear_path_plan" default="True"/>
-  <arg name="online_behind_clearance" default="0.6"/>
+  <arg name="online_behind_clearance" default="1.0"/>
 
   <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
   <arg name="escape_clear_radius" default="0.6"/>
@@ -50,9 +50,9 @@
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
   <arg name="cloud_min_x" default="0.35"/>
-  <arg name="cloud_max_x" default="0.55"/>
-  <arg name="cloud_min_y" default="-0.25"/>
-  <arg name="cloud_max_y" default="0.25"/>
+  <arg name="cloud_max_x" default="0.50"/>
+  <arg name="cloud_min_y" default="-0.23"/>
+  <arg name="cloud_max_y" default="0.23"/>
   <arg name="cloud_min_z" default="0.1"/>
   <arg name="cloud_max_z" default="1.0"/>
 
