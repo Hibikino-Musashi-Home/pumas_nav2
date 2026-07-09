@@ -637,6 +637,21 @@ private:
     return result;
   }
 
+  bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) const {
+    if (!collision_risk_)
+      return false;
+
+    const bool translating =
+        move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0);
+    if (translating)
+      return true;
+
+    // Rotating in place: drop any lateral pot-fields push, keep angular.z.
+    cmd.linear.x = 0.0;
+    cmd.linear.y = 0.0;
+    return false;
+  }
+
   bool get_robot_position_wrt_map() {
     try {
       geometry_msgs::msg::TransformStamped transformStamped =
@@ -829,8 +844,8 @@ private:
           collision_risk_ = false;
           // In constant-speed mode skip the accel/cruise/deccel profile and
           // follow the path at a fixed speed from the start.
-          state = use_constant_speed_ ? SM_GOAL_PATH_CONSTANT
-                                      : SM_GOAL_PATH_ACCEL;
+          state =
+              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
           prev_pose_idx = 0;
           next_pose_idx = 0;
@@ -870,7 +885,7 @@ private:
         }
         break;
 
-      case SM_GOAL_REL_POSE: { // TODO maybe its moves only holonomic robot
+      case SM_GOAL_REL_POSE: { // TODO its moves only holonomic robot
         get_robot_position_wrt_odom();
         float dx = goal_x_ - robot_x_;
         float dy = goal_y_ - robot_y_;
@@ -1043,127 +1058,152 @@ private:
         current_linear_speed = 0;
         break;
 
-      case SM_GOAL_PATH_ACCEL:
-        if (collision_risk_) {
+      case SM_GOAL_PATH_ACCEL: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        auto cmd = calculate_speeds(
+            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
+            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
+            move_lat_, use_pot_fields_, rejection_force_.y);
+
+        if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-
-          if (global_error < coarse_dist_tolerance_) {
-            state = SM_GOAL_PATH_FINISH;
-          } else if (global_error < current_linear_speed *
-                                        current_linear_speed /
-                                        linear_acceleration_) {
-            state = SM_GOAL_PATH_DECCEL;
-            temp_k = current_linear_speed / sqrt(global_error);
-          } else if (current_linear_speed >= max_linear_speed_) {
-            state = SM_GOAL_PATH_CRUISE;
-            current_linear_speed = max_linear_speed_;
-          }
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state: GOAL_PATH_ACCEL."
-                      << std::endl;
-          }
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
-          current_linear_speed += linear_acceleration_ / RATE;
+          break;
         }
-        break;
 
-      case SM_GOAL_PATH_CRUISE:
-        if (collision_risk_) {
-          state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
-          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
-                    << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-          if (global_error < coarse_dist_tolerance_)
-            state = SM_GOAL_PATH_FINISH;
-          else if (global_error < current_linear_speed * current_linear_speed /
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+
+        if (global_error < coarse_dist_tolerance_) {
+          state = SM_GOAL_PATH_FINISH;
+        } else if (global_error < current_linear_speed * current_linear_speed /
                                       linear_acceleration_) {
-            state = SM_GOAL_PATH_DECCEL;
-            temp_k = current_linear_speed / sqrt(global_error);
-          }
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state: GOAL_PATH_CRUISE."
-                      << std::endl;
-          }
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+          state = SM_GOAL_PATH_DECCEL;
+          temp_k = current_linear_speed / sqrt(global_error);
+        } else if (current_linear_speed >= max_linear_speed_) {
+          state = SM_GOAL_PATH_CRUISE;
+          current_linear_speed = max_linear_speed_;
         }
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state: GOAL_PATH_ACCEL."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          pub_head_goal_pose_->publish(
+              get_next_goal_head_angles(next_pose_idx));
+        current_linear_speed += linear_acceleration_ / RATE;
         break;
+      }
 
-      case SM_GOAL_PATH_DECCEL:
-        if (collision_risk_) {
+      case SM_GOAL_PATH_CRUISE: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        auto cmd = calculate_speeds(
+            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
+            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
+            move_lat_, use_pot_fields_, rejection_force_.y);
+
+        if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-          if (global_error < coarse_dist_tolerance_)
-            state = SM_GOAL_PATH_FINISH;
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state:GOAL_PATH_DECCEL."
-                      << std::endl;
-          }
-          current_linear_speed = temp_k * sqrt(global_error);
-          if (current_linear_speed < min_linear_speed_)
-            current_linear_speed = min_linear_speed_;
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+          break;
         }
+
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+        if (global_error < coarse_dist_tolerance_)
+          state = SM_GOAL_PATH_FINISH;
+        else if (global_error < current_linear_speed * current_linear_speed /
+                                    linear_acceleration_) {
+          state = SM_GOAL_PATH_DECCEL;
+          temp_k = current_linear_speed / sqrt(global_error);
+        }
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state: GOAL_PATH_CRUISE."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          pub_head_goal_pose_->publish(
+              get_next_goal_head_angles(next_pose_idx));
         break;
+      }
+
+      case SM_GOAL_PATH_DECCEL: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+
+        // Speed ramp must be applied before the twist is built, since the gate
+        // below inspects that twist.
+        current_linear_speed = temp_k * sqrt(global_error);
+        if (current_linear_speed < min_linear_speed_)
+          current_linear_speed = min_linear_speed_;
+
+        auto cmd = calculate_speeds(
+            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
+            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
+            move_lat_, use_pot_fields_, rejection_force_.y);
+
+        if (collision_blocks_tracking(cmd)) {
+          state = SM_GOAL_PATH_FAILED;
+          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
+                    << std::endl;
+          break;
+        }
+
+        if (global_error < coarse_dist_tolerance_)
+          state = SM_GOAL_PATH_FINISH;
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state:GOAL_PATH_DECCEL."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          pub_head_goal_pose_->publish(
+              get_next_goal_head_angles(next_pose_idx));
+        break;
+      }
 
       case SM_GOAL_PATH_CONSTANT:
         // Constant-speed path following: like CRUISE but the speed is held at
         // constant_speed_ for the whole path (no accel/deccel ramp). The
         // controller still attenuates linear speed on sharp turns.
-        if (collision_risk_) {
-          state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
-          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
-                    << std::endl;
-        } else {
+        {
           get_robot_position_wrt_map();
           get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+          current_linear_speed = constant_speed_;
+
+          auto cmd = calculate_speeds(
+              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
+              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
+              move_lat_, use_pot_fields_, rejection_force_.y);
+
+          if (collision_blocks_tracking(cmd)) {
+            state = SM_GOAL_PATH_FAILED;
+            pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+            std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
+                      << std::endl;
+            break;
+          }
+
           global_error =
               sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
                    (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
@@ -1175,11 +1215,7 @@ private:
                          "goal path. Current state: GOAL_PATH_CONSTANT."
                       << std::endl;
           }
-          current_linear_speed = constant_speed_;
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
+          pub_cmd_vel_->publish(cmd);
           if (move_head_)
             pub_head_goal_pose_->publish(
                 get_next_goal_head_angles(next_pose_idx));

@@ -26,6 +26,8 @@
 
 #include "message_filters/subscriber.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <mutex>
 #include <set>
@@ -69,6 +71,7 @@ public:
                             "/prohibition_map_server/map");
     this->declare_parameter("base_link_name", "base_footprint");
     this->declare_parameter("memory_all_obstacles", false);
+    this->declare_parameter("cloud_wait_timeout", 0.5);
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
@@ -104,6 +107,10 @@ public:
     this->get_parameter("prohibition_map_server", prohibition_map_server_);
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
+    this->get_parameter("cloud_wait_timeout", cloud_wait_timeout_);
+
+    cloud_cb_group_ =
+        this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
@@ -232,6 +239,7 @@ private:
 
   double inflation_radius_;
   double cost_radius_;
+  double cloud_wait_timeout_;
 
   std::string point_cloud_topic_;
   std::string point_cloud_topic2_;
@@ -262,21 +270,31 @@ private:
   // Cloud-only override (recovery), independent of the episode-level enable.
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_cloud_;
 
+  rclcpp::CallbackGroup::SharedPtr cloud_cb_group_;
+  std::mutex cloud_mutex_;
+
+  std::atomic<bool> cloud_wait_expired_{false};
+
   // PointCloud
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
       sub_point_cloud_;
   sensor_msgs::msg::PointCloud2::SharedPtr latest_point_cloud_;
-  std::atomic<bool> point_cloud_received_{false};
+  std::atomic<bool> point_cloud_new_{false};
+  std::atomic<bool> point_cloud_ready_{false};
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
       sub_point_cloud2_;
   sensor_msgs::msg::PointCloud2::SharedPtr latest_point_cloud2_;
-  std::atomic<bool> point_cloud2_received_{false};
+  std::atomic<bool> point_cloud2_new_{false};
+  std::atomic<bool> point_cloud2_ready_{false};
 
   // LaserScan
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_laser_scan_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_laser_scan_;
-  std::atomic<bool> laser_scan_received_{false};
+  std::atomic<bool> laser_scan_new_{false};
+
+  rclcpp::Time laser_scan_stamp_{0, 0, RCL_ROS_TIME};
+  bool laser_scan_ever_ = false;
 
   // ############
   //  Service clients
@@ -377,6 +395,9 @@ private:
 
       else if (param.get_name() == "base_link_name")
         base_link_name_ = param.as_string();
+
+      else if (param.get_name() == "cloud_wait_timeout")
+        cloud_wait_timeout_ = param.as_double();
 
       else if (param.get_name() == "memory_all_obstacles") {
         memory_all_obstacles_ = param.as_bool();
@@ -552,9 +573,7 @@ private:
       static_map_ = inflate_map(static_map_, inflation_radius_);
 
       static_cost_map_ = get_cost_map(static_map_, cost_radius_);
-      obstacles_map_ = this->static_map_;
-      for (size_t i = 0; i < obstacles_map_.data.size(); ++i)
-        obstacles_map_.data[i] = 0;
+      reproject_obstacles_map();
 
       is_static_map_ = false;
       is_prohibition_map_ = false;
@@ -563,36 +582,126 @@ private:
     }
   }
 
+  // Re-fit obstacles_map_ to the current static-map geometry while KEEPING the
+  // sensed obstacles. This used to zero the whole layer, which under
+  // use_online=true wiped every point-cloud obstacle a few ms after each
+  // get_augmented_map request (the static map is re-fetched asynchronously on
+  // every request, and its response callback lands here).
+  //
+  // Under online SLAM the grid grows and its origin shifts, so surviving cells
+  // are re-projected through world coordinates instead of copied index-wise.
+  void reproject_obstacles_map() {
+    const auto &new_info = static_map_.info;
+    const auto &old_info = obstacles_map_.info;
+
+    const bool same_geometry =
+        !obstacles_map_.data.empty() && old_info.width == new_info.width &&
+        old_info.height == new_info.height &&
+        old_info.resolution == new_info.resolution &&
+        old_info.origin.position.x == new_info.origin.position.x &&
+        old_info.origin.position.y == new_info.origin.position.y;
+
+    if (same_geometry) {
+      obstacles_map_.header = static_map_.header;
+      return;
+    }
+
+    nav_msgs::msg::OccupancyGrid new_map = static_map_;
+    std::fill(new_map.data.begin(), new_map.data.end(), 0);
+
+    if (!obstacles_map_.data.empty() && old_info.resolution > 0.0) {
+      const int old_w = static_cast<int>(old_info.width);
+      const int old_h = static_cast<int>(old_info.height);
+      for (int y = 0; y < old_h; ++y) {
+        for (int x = 0; x < old_w; ++x) {
+          const int8_t v =
+              obstacles_map_.data[static_cast<size_t>(y) * old_w + x];
+          if (v <= 0)
+            continue;
+          const double wx =
+              old_info.origin.position.x + (x + 0.5) * old_info.resolution;
+          const double wy =
+              old_info.origin.position.y + (y + 0.5) * old_info.resolution;
+          int cell = 0;
+          if (world_to_cell(new_map, wx, wy, cell) && new_map.data[cell] < v)
+            new_map.data[cell] = v;
+        }
+      }
+    }
+
+    obstacles_map_ = std::move(new_map);
+  }
+
   // ############
   //  On-demand point-cloud subscription management
   void create_cloud_subscriptions() {
+    rclcpp::SubscriptionOptions options;
+    options.callback_group = cloud_cb_group_;
+    cloud_wait_expired_ = false;
+
     if (use_cloud_ && !sub_point_cloud_) {
-      point_cloud_received_ = false;
+      point_cloud_new_ = false;
+      point_cloud_ready_ = false;
       sub_point_cloud_ =
           this->create_subscription<sensor_msgs::msg::PointCloud2>(
               point_cloud_topic_, rclcpp::SensorDataQoS(),
               std::bind(&MapAugmenterNode::callback_point_cloud, this,
-                        std::placeholders::_1));
+                        std::placeholders::_1),
+              options);
     }
     if (use_cloud2_ && !sub_point_cloud2_) {
-      point_cloud2_received_ = false;
+      point_cloud2_new_ = false;
+      point_cloud2_ready_ = false;
       sub_point_cloud2_ =
           this->create_subscription<sensor_msgs::msg::PointCloud2>(
               point_cloud_topic2_, rclcpp::SensorDataQoS(),
               std::bind(&MapAugmenterNode::callback_point_cloud2, this,
-                        std::placeholders::_1));
+                        std::placeholders::_1),
+              options);
     }
   }
 
   void destroy_cloud_subscriptions() {
+    cloud_wait_expired_ = false;
     if (sub_point_cloud_) {
       sub_point_cloud_.reset();
-      point_cloud_received_ = false;
+      point_cloud_new_ = false;
+      point_cloud_ready_ = false;
     }
     if (sub_point_cloud2_) {
       sub_point_cloud2_.reset();
-      point_cloud2_received_ = false;
+      point_cloud2_new_ = false;
+      point_cloud2_ready_ = false;
     }
+  }
+
+  void wait_for_first_cloud() {
+    if (cloud_wait_expired_)
+      return;
+
+    const bool wait_cloud =
+        use_cloud_ && sub_point_cloud_ && !point_cloud_ready_;
+    const bool wait_cloud2 =
+        use_cloud2_ && sub_point_cloud2_ && !point_cloud2_ready_;
+    if (!wait_cloud && !wait_cloud2)
+      return;
+
+    const rclcpp::Time start = this->now();
+    const rclcpp::Duration timeout =
+        rclcpp::Duration::from_seconds(cloud_wait_timeout_);
+
+    while (rclcpp::ok() && (this->now() - start) < timeout) {
+      if ((!wait_cloud || point_cloud_ready_) &&
+          (!wait_cloud2 || point_cloud2_ready_))
+        return;
+      rclcpp::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    cloud_wait_expired_ = true;
+    RCLCPP_WARN(this->get_logger(),
+                "MapAugmenter.-> Timed out after %.2f s waiting for the first "
+                "point cloud; augmenting without it for this episode.",
+                cloud_wait_timeout_);
   }
 
   void callback_enable(const std_msgs::msg::Bool::SharedPtr msg) {
@@ -637,11 +746,15 @@ private:
   void
   callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     if (!use_cloud_) {
-      point_cloud_received_ = false;
+      point_cloud_new_ = false;
       return;
     }
-    latest_point_cloud_ = msg;
-    point_cloud_received_ = true;
+    {
+      std::lock_guard<std::mutex> lock(cloud_mutex_);
+      latest_point_cloud_ = msg;
+    }
+    point_cloud_new_ = true;
+    point_cloud_ready_ = true;
   }
 
   void
@@ -649,16 +762,22 @@ private:
     // See callback_point_cloud(): use_point_cloud2 is the single source of
     // truth.
     if (!use_cloud2_) {
-      point_cloud2_received_ = false;
+      point_cloud2_new_ = false;
       return;
     }
-    latest_point_cloud2_ = msg;
-    point_cloud2_received_ = true;
+    {
+      std::lock_guard<std::mutex> lock(cloud_mutex_);
+      latest_point_cloud2_ = msg;
+    }
+    point_cloud2_new_ = true;
+    point_cloud2_ready_ = true;
   }
 
   void callback_laser_scan(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
     latest_laser_scan_ = msg;
-    laser_scan_received_ = true;
+    laser_scan_new_ = true;
+    laser_scan_stamp_ = this->now();
+    laser_scan_ever_ = true;
   }
 
   // ############
@@ -709,6 +828,30 @@ private:
     }
   }
 
+  // Map-frame world coords -> flat cell index. Both axes are range-checked
+  // BEFORE the index is formed: validating only the flat index lets a column
+  // outside [0, width) wrap into the neighbouring row, stamping the obstacle at
+  // the wrong place (or on the opposite edge of the map).
+  static bool world_to_cell(const nav_msgs::msg::OccupancyGrid &map, double wx,
+                            double wy, int &cell) {
+    const double res = map.info.resolution;
+    if (res <= 0.0)
+      return false;
+
+    const int width = static_cast<int>(map.info.width);
+    const int height = static_cast<int>(map.info.height);
+    const int cx =
+        static_cast<int>(std::floor((wx - map.info.origin.position.x) / res));
+    const int cy =
+        static_cast<int>(std::floor((wy - map.info.origin.position.y) / res));
+
+    if (cx < 0 || cy < 0 || cx >= width || cy >= height)
+      return false;
+
+    cell = cy * width + cx;
+    return true;
+  }
+
   nav_msgs::msg::OccupancyGrid
   merge_maps(const nav_msgs::msg::OccupancyGrid &a,
              const nav_msgs::msg::OccupancyGrid &b) {
@@ -716,9 +859,9 @@ private:
     // contributes ONLY obstacle (positive) cells; everywhere else keep the base
     // map `a`. This preserves unknown (-1) in the base map instead of turning
     // -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path planner
-    // decide via use_online whether unknown space is navigable (use_online=true:
-    // -1 reachable for SLAM; use_online=false: -1 blocked because entering
-    // unknown space is dangerous in a known environment).
+    // decide via use_online whether unknown space is navigable
+    // (use_online=true: -1 reachable for SLAM; use_online=false: -1 blocked
+    // because entering unknown space is dangerous in a known environment).
 
     // Fast path: identical geometry -> direct index-wise overlay.
     if (a.info.width == b.info.width && a.info.height == b.info.height &&
@@ -733,7 +876,7 @@ private:
       return c;
     }
 
-    //fixed map size is different by ry0hei-kobayashi
+    // fixed map size is different by ry0hei-kobayashi
     if (a.info.resolution <= 0.0 || b.info.resolution <= 0.0 || b.data.empty())
       return a;
 
@@ -899,15 +1042,6 @@ private:
     memory_cells_.insert(std::make_pair(mx, my));
   }
 
-  // Stamp every remembered obstacle cell onto obstacles_map_ (=100), recomputing
-  // each cell against the CURRENT grid geometry so the obstacle stays at its true
-  // map-frame position even after the online SLAM map has grown / shifted its
-  // origin since the cell was recorded. Must be applied in BOTH the periodic
-  // processing (published /augmented_map) AND the augmented-map SERVICE used for
-  // path planning: the service rebuilds obstacles_map_ from current sensors only
-  // (and, in online, process_maps() zeroes it on every request), so without this
-  // the remembered obstacles never reach the planner -> memory_all_obstacles has
-  // no effect on path planning.
   void apply_memory_obstacles() {
     if (!memory_all_obstacles_)
       return;
@@ -915,18 +1049,12 @@ private:
     const double res = obstacles_map_.info.resolution;
     if (res <= 0.0)
       return;
-    const double ox = obstacles_map_.info.origin.position.x;
-    const double oy = obstacles_map_.info.origin.position.y;
-    const int width = static_cast<int>(obstacles_map_.info.width);
-    const int height = static_cast<int>(obstacles_map_.info.height);
     for (const auto &key : memory_cells_) {
-      double wx = (key.first + 0.5) * res;
-      double wy = (key.second + 0.5) * res;
-      int cx = static_cast<int>((wx - ox) / res);
-      int cy = static_cast<int>((wy - oy) / res);
-      if (cx < 0 || cy < 0 || cx >= width || cy >= height)
-        continue;
-      obstacles_map_.data[cy * width + cx] = 100;
+      const double wx = (key.first + 0.5) * res;
+      const double wy = (key.second + 0.5) * res;
+      int cell = 0;
+      if (world_to_cell(obstacles_map_, wx, wy, cell))
+        obstacles_map_.data[cell] = 100;
     }
   }
 
@@ -940,31 +1068,17 @@ private:
     response->message = "MapAugmenter.-> Memory obstacles have been cleared.";
   }
 
-  bool obstacles_map_with_cloud() {
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point
-    // cloud from topic: %s", point_cloud_topic_.c_str());
+  // Stamp one PointCloud2 into obstacles_map_. Shared by both cloud inputs.
+  void stamp_cloud(const sensor_msgs::msg::PointCloud2 &cloud,
+                   int downsampling) {
+    const unsigned char *p = cloud.data.data();
 
-    if (!point_cloud_received_) {
-      // The cloud subscription is (re)created per navigation episode, so the
-      // first frame may not have arrived yet. Treat this as "no cloud obstacles
-      // this round" instead of failing the whole augmented map — lidar and the
-      // reactive potential_fields layer still cover obstacles, and the cloud is
-      // folded in on the next planning cycle once a frame arrives. (Once
-      // received the flag latches for the episode.)
-      return true;
-    }
-
-    const unsigned char *p = latest_point_cloud_->data.data();
-    int cell_x = 0;
-    int cell_y = 0;
-    int cell = 0;
-
-    Eigen::Affine3d cam_to_robot = get_relative_position(
-        base_link_name_, latest_point_cloud_->header.frame_id);
+    Eigen::Affine3d cam_to_robot =
+        get_relative_position(base_link_name_, cloud.header.frame_id);
     Eigen::Affine3d robot_to_map =
         get_relative_position("map", base_link_name_);
 
-    // Head-follow: rotated cloud detect
+    // Head-follow: rotate the cloud box to the camera's horizontal viewing yaw.
     const Eigen::Vector3d view =
         cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
     const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
@@ -972,9 +1086,7 @@ private:
                                : 0.0;
     const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
 
-    for (size_t i = 0;
-         i < latest_point_cloud_->width * latest_point_cloud_->height;
-         i += cloud_downsampling_) {
+    for (size_t i = 0; i < cloud.width * cloud.height; i += downsampling) {
       Eigen::Vector3d v(*reinterpret_cast<const float *>(p),
                         *reinterpret_cast<const float *>(p + 4),
                         *reinterpret_cast<const float *>(p + 8));
@@ -989,109 +1101,60 @@ private:
         v = robot_to_map * v;
         if (memory_all_obstacles_)
           add_memory_obstacle(v);
-        cell_x =
-            static_cast<int>((v.x() - obstacles_map_.info.origin.position.x) /
-                             obstacles_map_.info.resolution);
-        cell_y =
-            static_cast<int>((v.y() - obstacles_map_.info.origin.position.y) /
-                             obstacles_map_.info.resolution);
-        cell = cell_y * obstacles_map_.info.width + cell_x;
 
-        if (cell >= 0 && cell < static_cast<int>(obstacles_map_.data.size())) {
+        int cell = 0;
+        if (world_to_cell(obstacles_map_, v.x(), v.y(), cell)) {
           obstacles_map_.data[cell] = 100;
           are_there_obstacles_ = true;
         }
       }
 
-      p += static_cast<std::size_t>(cloud_downsampling_ *
-                                    latest_point_cloud_->point_step);
+      p += static_cast<std::size_t>(downsampling * cloud.point_step);
     }
-
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.->
-    // obstacles_map_with_cloud() done");
-    return true;
   }
 
-  bool obstacles_map_with_cloud2() {
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get point
-    // cloud from topic: %s", point_cloud_topic2_.c_str());
+  void obstacles_map_with_cloud() {
+    // Consume the new-frame flag: a frame is stamped exactly once. Without the
+    // exchange a stalled sensor would have its last cloud re-stamped every
+    // cycle, outrunning the decay and pinning stale obstacles forever.
+    if (!point_cloud_new_.exchange(false))
+      return;
 
-    if (!point_cloud2_received_) {
-      return true;
+    sensor_msgs::msg::PointCloud2::SharedPtr cloud;
+    {
+      std::lock_guard<std::mutex> lock(cloud_mutex_);
+      cloud = latest_point_cloud_;
     }
+    if (!cloud)
+      return;
 
-    const unsigned char *p = latest_point_cloud2_->data.data();
-    int cell_x = 0;
-    int cell_y = 0;
-    int cell = 0;
-
-    Eigen::Affine3d cam_to_robot = get_relative_position(
-        base_link_name_, latest_point_cloud2_->header.frame_id);
-    Eigen::Affine3d robot_to_map =
-        get_relative_position("map", base_link_name_);
-
-    // Head-follow: rotate the cloud box to the camera's horizontal viewing yaw
-    // (see obstacles_map_with_cloud()).
-    const Eigen::Vector3d view =
-        cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
-    const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
-                               ? std::atan2(view.y(), view.x())
-                               : 0.0;
-    const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
-
-    for (size_t i = 0;
-         i < latest_point_cloud2_->width * latest_point_cloud2_->height;
-         i += cloud_downsampling2_) {
-      Eigen::Vector3d v(*reinterpret_cast<const float *>(p),
-                        *reinterpret_cast<const float *>(p + 4),
-                        *reinterpret_cast<const float *>(p + 8));
-
-      v = cam_to_robot * v;
-
-      const double xr = cyaw * v.x() + syaw * v.y();
-      const double yr = -syaw * v.x() + cyaw * v.y();
-      if (xr > cloud_min_x_ && xr < cloud_max_x_ && yr > cloud_min_y_ &&
-          yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
-
-        v = robot_to_map * v;
-        if (memory_all_obstacles_)
-          add_memory_obstacle(v);
-        cell_x =
-            static_cast<int>((v.x() - obstacles_map_.info.origin.position.x) /
-                             obstacles_map_.info.resolution);
-        cell_y =
-            static_cast<int>((v.y() - obstacles_map_.info.origin.position.y) /
-                             obstacles_map_.info.resolution);
-        cell = cell_y * obstacles_map_.info.width + cell_x;
-
-        if (cell >= 0 && cell < static_cast<int>(obstacles_map_.data.size())) {
-          obstacles_map_.data[cell] = 100;
-          are_there_obstacles_ = true;
-        }
-      }
-
-      p += static_cast<std::size_t>(cloud_downsampling2_ *
-                                    latest_point_cloud2_->point_step);
-    }
-
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.->
-    // obstacles_map_with_cloud2() done");
-    return true;
+    stamp_cloud(*cloud, cloud_downsampling_);
   }
 
-  bool obstacles_map_with_lidar() {
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.-> Trying to get laser scan
-    // from topic: %s", laser_scan_topic_.c_str());
+  void obstacles_map_with_cloud2() {
+    if (!point_cloud2_new_.exchange(false))
+      return;
 
-    if (!laser_scan_received_) {
-      RCLCPP_WARN(this->get_logger(),
-                  "MapAugmenter.-> No new LaserScan available.");
-      return false;
+    sensor_msgs::msg::PointCloud2::SharedPtr cloud;
+    {
+      std::lock_guard<std::mutex> lock(cloud_mutex_);
+      cloud = latest_point_cloud2_;
     }
+    if (!cloud)
+      return;
 
-    int cell_x = 0;
-    int cell_y = 0;
-    int cell = 0;
+    stamp_cloud(*cloud, cloud_downsampling2_);
+  }
+
+  void obstacles_map_with_lidar() {
+    if (!laser_scan_new_.exchange(false)) {
+
+      if (!laser_scan_ever_ ||
+          (this->now() - laser_scan_stamp_).seconds() > 1.0)
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                             "MapAugmenter.-> No new LaserScan available.");
+      return;
+    }
 
     Eigen::Affine3d lidar_to_robot = get_relative_position(
         base_link_name_, latest_laser_scan_->header.frame_id);
@@ -1112,24 +1175,23 @@ private:
         v = robot_to_map * v;
         if (memory_all_obstacles_)
           add_memory_obstacle(v);
-        cell_x =
-            static_cast<int>((v.x() - obstacles_map_.info.origin.position.x) /
-                             obstacles_map_.info.resolution);
-        cell_y =
-            static_cast<int>((v.y() - obstacles_map_.info.origin.position.y) /
-                             obstacles_map_.info.resolution);
-        cell = cell_y * obstacles_map_.info.width + cell_x;
 
-        if (cell >= 0 && cell < (int)obstacles_map_.data.size()) {
+        int cell = 0;
+        if (world_to_cell(obstacles_map_, v.x(), v.y(), cell)) {
           obstacles_map_.data[cell] = 100;
           are_there_obstacles_ = true;
         }
       }
     }
+  }
 
-    // RCLCPP_INFO(this->get_logger(), "MapAugmenter.->
-    // obstacles_map_with_lidar() done");
-    return true;
+  void obstacles_map_with_sensors() {
+    if (use_lidar_)
+      obstacles_map_with_lidar();
+    if (use_cloud_)
+      obstacles_map_with_cloud();
+    if (use_cloud2_)
+      obstacles_map_with_cloud2();
   }
 
   bool decay_map_and_check_if_obstacles(nav_msgs::msg::OccupancyGrid &map,
@@ -1267,13 +1329,10 @@ private:
           });
     }
 
-    if ((use_lidar_ && !obstacles_map_with_lidar()) ||
-        (use_cloud_ && !obstacles_map_with_cloud()) ||
-        (use_cloud2_ && !obstacles_map_with_cloud2())) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "MapAugmenter.-> Failed to add obstacles with sensors.");
-      return;
-    }
+    // Wait for the first cloud frame of the episode, then fold in whatever the
+    // sensors have delivered since the last processing cycle.
+    wait_for_first_cloud();
+    obstacles_map_with_sensors();
 
     // Include remembered obstacles in the map handed to the path planner
     // (no-op unless memory_all_obstacles is enabled).
@@ -1312,17 +1371,9 @@ private:
     float robot_x, robot_y, robot_a;
     get_relative_position("map", base_link_name_, robot_x, robot_y, robot_a);
 
-    int cell_x =
-        static_cast<int>((robot_x - augmented_map_.info.origin.position.x) /
-                         augmented_map_.info.resolution);
-    int cell_y =
-        static_cast<int>((robot_y - augmented_map_.info.origin.position.y) /
-                         augmented_map_.info.resolution);
-    int cell = cell_y * augmented_map_.info.width + cell_x;
-
-    response->success =
-        (cell >= 0 && static_cast<size_t>(cell) < augmented_map_.data.size() &&
-         augmented_map_.data[cell] > 0);
+    int cell = 0;
+    response->success = world_to_cell(augmented_map_, robot_x, robot_y, cell) &&
+                        augmented_map_.data[cell] > 0;
   }
 
   // ############
@@ -1334,6 +1385,10 @@ private:
       return;
     }
 
+    // Nothing to augment until process_maps() has sized the obstacle layer.
+    if (obstacles_map_.data.empty())
+      return;
+
     static int counter = 0;
 
     if (++counter > 10) {
@@ -1341,6 +1396,8 @@ private:
 
       are_there_obstacles_ =
           decay_map_and_check_if_obstacles(obstacles_map_, decay_factor_);
+
+      obstacles_map_with_sensors();
 
       apply_memory_obstacles();
       if (memory_all_obstacles_) {

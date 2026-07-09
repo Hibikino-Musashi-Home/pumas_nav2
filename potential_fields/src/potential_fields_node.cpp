@@ -730,9 +730,8 @@ private:
     const double cyaw = std::cos(cloud_cam_yaw_);
     const double syaw = std::sin(cloud_cam_yaw_);
 
-    // Skip the heavy point scan while stopped (no cloud collision check
-    // needed).
-    if (current_speed_linear_ <= 0.0 && !(debug_ || show_img_)) {
+    const bool stopped = current_speed_linear_ <= 0.0;
+    if (stopped && !debug_ && !show_img_) {
       return false;
     }
 
@@ -807,6 +806,12 @@ private:
                   << rejection_force_x
                   << "  rejection_force_y: " << rejection_force_y << std::endl;
       }
+    }
+
+    if (stopped && !debug_) {
+      rejection_force_x = 0.0;
+      rejection_force_y = 0.0;
+      return false;
     }
 
     return obstacle_count > cloud_threshold_;
