@@ -20,7 +20,6 @@
   <exec_depend>hardware_controller</exec_depend>
   <exec_depend>human_follower</exec_depend>
   <exec_depend>map_augmenter</exec_depend>
-  <exec_depend>map_server_bypass</exec_depend>
   <exec_depend>motion_synth</exec_depend>
   <exec_depend>mvn_pln</exec_depend>
   <exec_depend>navigation_start</exec_depend>

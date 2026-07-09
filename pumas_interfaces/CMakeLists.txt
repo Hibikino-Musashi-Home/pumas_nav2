@@ -23,7 +23,6 @@ set(msg_files
 )
 
 set(srv_files
-  "srv/GetInflatedMap.srv"
   "srv/ParamReadWrite.srv"
   "srv/GetPlanWithVia.srv"
 )

@@ -50,7 +50,7 @@
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
   <arg name="cloud_min_x" default="0.35"/>
-  <arg name="cloud_max_x" default="0.50"/>
+  <arg name="cloud_max_x" default="0.60"/>
   <arg name="cloud_min_y" default="-0.23"/>
   <arg name="cloud_max_y" default="0.23"/>
   <arg name="cloud_min_z" default="0.1"/>
@@ -109,7 +109,7 @@
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
 
-    <param name="decay_factor" value="20"/>
+    <param name="decay_factor" value="10"/>
     <param name="inflation_radius" value="0.22"/> <!--default 0.22 (hsr)-->
     <param name="cost_radius" value="0.35"/>
 
