@@ -48,6 +48,7 @@
 #define SM_COLLISION_RISK 9
 #define SM_GOAL_REL_POSE 13
 #define SM_GOAL_PATH_CONSTANT 14
+#define SM_GOAL_PATH_ALIGN_HEAD 15
 
 class SimpleMoveNode : public rclcpp::Node {
 public:
@@ -66,6 +67,31 @@ public:
     // constant_speed [m/s] (still attenuated on sharp turns by the controller).
     this->declare_parameter<bool>("use_constant_speed", false);
     this->declare_parameter<float>("constant_speed", 0.3f);
+    // Omnidirectional path following. When true the base translates straight
+    // along the path whatever its yaw is, and the head pan (which simple_move
+    // already commands, base-relative) is what points the camera along the
+    // travel direction. The camera leads: the head is aimed down the path
+    // before the base translates at all, and the base then yaws onto the goal
+    // orientation while it moves, instead of arriving and turning in place.
+    this->declare_parameter<bool>("omnidirectional", false);
+    // Gradual yaw toward the goal orientation. Small enough that the base
+    // trails the head rather than dragging it.
+    this->declare_parameter<float>("yaw_gain", 0.6f);
+    // Head pan range, which must match head_node's pan_min / pan_max. It is
+    // asymmetric on the HSR. Once the travel direction falls outside it the
+    // camera can no longer be aimed down the path, so the base gets an extra
+    // yaw term to bring the direction back into reach.
+    this->declare_parameter<float>("head_pan_min", -3.14f);
+    this->declare_parameter<float>("head_pan_max", 1.74f);
+    this->declare_parameter<float>("pan_catchup_gain", 1.5f);
+    // Head-leads-the-body startup: hold the base still (yaw only) until the
+    // head pan has reached the travel direction, or this timeout expires.
+    this->declare_parameter<float>("head_align_tolerance", 0.15f);
+    this->declare_parameter<float>("head_align_timeout", 3.0f);
+    // How far down the path the camera looks, in path points. The planner emits
+    // one point per map cell, so this is (points x resolution) metres ahead.
+    // Raising it makes the head anticipate turns earlier.
+    this->declare_parameter<int>("head_lookahead_points", 5);
     this->declare_parameter<float>("control_alpha", 0.6548f);
     this->declare_parameter<float>("control_beta", 0.2f);
     this->declare_parameter<float>("linear_acceleration", 0.1f);
@@ -86,6 +112,14 @@ public:
     this->get_parameter("max_angular_speed", max_angular_speed_);
     this->get_parameter("use_constant_speed", use_constant_speed_);
     this->get_parameter("constant_speed", constant_speed_);
+    this->get_parameter("omnidirectional", omnidirectional_);
+    this->get_parameter("yaw_gain", yaw_gain_);
+    this->get_parameter("head_pan_min", head_pan_min_);
+    this->get_parameter("head_pan_max", head_pan_max_);
+    this->get_parameter("pan_catchup_gain", pan_catchup_gain_);
+    this->get_parameter("head_align_tolerance", head_align_tolerance_);
+    this->get_parameter("head_align_timeout", head_align_timeout_);
+    this->get_parameter("head_lookahead_points", head_lookahead_points_);
     this->get_parameter("control_alpha", alpha_);
     this->get_parameter("control_beta", beta_);
     this->get_parameter("linear_acceleration", linear_acceleration_);
@@ -163,6 +197,14 @@ public:
             std::bind(&SimpleMoveNode::callback_goal_rel_pose, this,
                       std::placeholders::_1));
 
+    //// head feedback, used to hold the base still until the camera is aimed
+    //// down the path (omnidirectional mode only).
+    sub_headCurrentPose_ =
+        this->create_subscription<std_msgs::msg::Float32MultiArray>(
+            make_name("/hardware/head/current_pose"), rclcpp::QoS(10).reliable(),
+            std::bind(&SimpleMoveNode::callback_head_current_pose, this,
+                      std::placeholders::_1));
+
     sub_collisionRisk_ = this->create_subscription<std_msgs::msg::Bool>(
         make_name("/navigation/potential_fields/collision_risk"),
         rclcpp::SensorDataQoS(),
@@ -228,6 +270,14 @@ private:
   float max_angular_speed_;
   bool use_constant_speed_ = false;
   float constant_speed_;
+  bool omnidirectional_ = false;
+  float yaw_gain_;
+  float head_pan_min_;
+  float head_pan_max_;
+  float pan_catchup_gain_;
+  float head_align_tolerance_;
+  float head_align_timeout_;
+  int head_lookahead_points_;
   float alpha_;
   float beta_;
   float linear_acceleration_;
@@ -249,7 +299,18 @@ private:
   int next_pose_idx = 0;
   float temp_k = 0;
   int attempts = 0;
+  int align_attempts = 0;
   float global_error = 0;
+
+  float head_current_pan_ = 0;
+  bool head_pose_received_ = false;
+  float align_head_goal_pan_ = 0;
+  bool align_head_goal_sent_ = false;
+
+  // Goal orientation, carried on the last path pose by mvn_pln. Absent when the
+  // path comes from somewhere that does not request a final yaw.
+  float path_goal_t_ = 0;
+  bool path_goal_t_valid_ = false;
 
   // ############
   //  Publishers
@@ -276,6 +337,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_moveLateral_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
       sub_goalRelPose_;
+  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
+      sub_headCurrentPose_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_collisionRisk_;
   rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr
       sub_rejectionForce_;
@@ -307,6 +370,22 @@ private:
         use_constant_speed_ = param.as_bool();
       else if (param.get_name() == "constant_speed")
         constant_speed_ = param.as_double();
+      else if (param.get_name() == "omnidirectional")
+        omnidirectional_ = param.as_bool();
+      else if (param.get_name() == "yaw_gain")
+        yaw_gain_ = param.as_double();
+      else if (param.get_name() == "head_pan_min")
+        head_pan_min_ = param.as_double();
+      else if (param.get_name() == "head_pan_max")
+        head_pan_max_ = param.as_double();
+      else if (param.get_name() == "pan_catchup_gain")
+        pan_catchup_gain_ = param.as_double();
+      else if (param.get_name() == "head_align_tolerance")
+        head_align_tolerance_ = param.as_double();
+      else if (param.get_name() == "head_align_timeout")
+        head_align_timeout_ = param.as_double();
+      else if (param.get_name() == "head_lookahead_points")
+        head_lookahead_points_ = param.as_int();
       else if (param.get_name() == "control_alpha")
         alpha_ = param.as_double();
       else if (param.get_name() == "control_beta")
@@ -555,6 +634,21 @@ private:
     }
   }
 
+  void callback_head_current_pose(
+      const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
+    try {
+      if (msg->data.size() < 1)
+        return;
+      head_current_pan_ = msg->data[0];
+      head_pose_received_ = true;
+    } catch (const std::exception &e) {
+      RCLCPP_ERROR(
+          this->get_logger(),
+          "SimpleMove.-> Error processing callback_head_current_pose: %s",
+          e.what());
+    }
+  }
+
   void callback_collision_risk(const std_msgs::msg::Bool::SharedPtr msg) {
     try {
       collision_risk_ = msg->data;
@@ -637,12 +731,128 @@ private:
     return result;
   }
 
+  // mvn_pln stamps the goal orientation onto the last path pose. The path
+  // planner zeroes every orientation it writes, and an all-zero quaternion is
+  // not a rotation, so its norm tells a requested yaw from an absent one.
+  void read_path_goal_orientation() {
+    path_goal_t_valid_ = false;
+    if (goal_path_.poses.empty())
+      return;
+
+    const auto &q = goal_path_.poses.back().pose.orientation;
+    if (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-6)
+      return;
+
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(tf2::Quaternion(q.x, q.y, q.z, q.w)).getRPY(roll, pitch, yaw);
+    path_goal_t_ = static_cast<float>(yaw);
+    path_goal_t_valid_ = true;
+  }
+
+  static float wrap_to_pi(float angle) {
+    while (angle > M_PI)
+      angle -= 2 * M_PI;
+    while (angle <= -M_PI)
+      angle += 2 * M_PI;
+    return angle;
+  }
+
+  // Holonomic path tracking. The base translates straight at the lookahead
+  // point whatever its yaw is, so the exp(-angle_error^2/alpha) attenuation of
+  // the unicycle controller -- which is what makes the robot turn its body
+  // before it can move -- is gone. Heading the camera is left to the head pan,
+  // which get_next_goal_head_angles() already commands as this same angle.
+  geometry_msgs::msg::Twist
+  calculate_speeds_omni(float robot_x, float robot_y, float robot_t,
+                        float goal_x, float goal_y, float min_linear_speed,
+                        float linear_speed, float max_angular_speed,
+                        bool use_pot_fields, double rejection_force_x,
+                        double rejection_force_y) {
+    float heading =
+        wrap_to_pi(atan2(goal_y - robot_y, goal_x - robot_x) - robot_t);
+
+    float vx = linear_speed * cos(heading);
+    float vy = linear_speed * sin(heading);
+
+    // The deadzone is on the magnitude, not per axis: a diagonal command whose
+    // two components are each below min_linear_speed is still a valid move.
+    if (sqrt(vx * vx + vy * vy) < min_linear_speed) {
+      vx = 0;
+      vy = 0;
+    } else if (use_pot_fields) {
+      // Both axes are free here, so the rejection force adds to the tracking
+      // velocity rather than overwriting the lateral one as in the unicycle
+      // controller. It is only applied while translating, which keeps the
+      // "rotating in place" case of collision_blocks_tracking() exact.
+      vx += rejection_force_x;
+      vy += rejection_force_y;
+      float mag = sqrt(vx * vx + vy * vy);
+      if (mag > max_linear_speed_) {
+        vx *= max_linear_speed_ / mag;
+        vy *= max_linear_speed_ / mag;
+      }
+    }
+
+    geometry_msgs::msg::Twist result;
+    result.linear.x = vx;
+    result.linear.y = vy;
+    result.angular.z = omni_yaw_speed(heading, max_angular_speed);
+    return result;
+  }
+
+  float clamp_yaw(float w, float max_angular_speed) const {
+    return std::max(-max_angular_speed, std::min(max_angular_speed, w));
+  }
+
+  // Yaw by however far the travel direction has left the range the head can
+  // actually pan to. Below that it returns zero, which is what lets the base
+  // hold still while the head is being aimed.
+  float pan_catchup_yaw_speed(float heading) const {
+    float excess = 0;
+    if (heading > head_pan_max_)
+      excess = heading - head_pan_max_;
+    else if (heading < head_pan_min_)
+      excess = heading - head_pan_min_;
+    return pan_catchup_gain_ * excess;
+  }
+
+  // The base yaws onto the goal orientation gradually while it translates, so
+  // it arrives already facing the right way instead of turning in place at the
+  // end. Wanting a yaw that is not the travel direction is exactly what makes
+  // this worth doing holonomically -- but it can swing the path out of the
+  // head's pan range, and then the camera could no longer watch where the robot
+  // is going. The catchup term is what forbids that: the base settles at
+  // whatever yaw trades the two off. Without a goal orientation there is nothing
+  // to trade against and the base simply follows the path.
+  float omni_yaw_speed(float heading, float max_angular_speed) const {
+    float yaw_error =
+        path_goal_t_valid_ ? wrap_to_pi(path_goal_t_ - robot_t_) : heading;
+
+    return clamp_yaw(yaw_gain_ * yaw_error + pan_catchup_yaw_speed(heading),
+                     max_angular_speed);
+  }
+
+  geometry_msgs::msg::Twist path_tracking_speeds() {
+    if (omnidirectional_)
+      return calculate_speeds_omni(robot_x_, robot_y_, robot_t_, goal_x_,
+                                   goal_y_, min_linear_speed_,
+                                   current_linear_speed, max_angular_speed_,
+                                   use_pot_fields_, rejection_force_.x,
+                                   rejection_force_.y);
+    return calculate_speeds(robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
+                            min_linear_speed_, current_linear_speed,
+                            max_angular_speed_, alpha_, beta_, false, move_lat_,
+                            use_pot_fields_, rejection_force_.y);
+  }
+
   bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) const {
     if (!collision_risk_)
       return false;
 
     const bool translating =
-        move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0);
+        omnidirectional_
+            ? (cmd.linear.x != 0.0 || cmd.linear.y != 0.0)
+            : (move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0));
     if (translating)
       return true;
 
@@ -787,10 +997,7 @@ private:
     if (last < 0)
       return msg; // empty path guard
 
-    int idx = std::min(next_pose_idx + 5, last);
-    // int idx = next_pose_idx + 5 >= goal_path_.poses.size() - 1
-    //               ? goal_path_.poses.size() - 1
-    //               : next_pose_idx + 5;
+    int idx = std::min(next_pose_idx + head_lookahead_points_, last);
     float goal_x = goal_path_.poses[idx].pose.position.x;
     float goal_y = goal_path_.poses[idx].pose.position.y;
     float angle = atan2(goal_y - robot_y_, goal_x - robot_x_) - robot_t_;
@@ -842,11 +1049,16 @@ private:
         }
         if (new_path_) {
           collision_risk_ = false;
-          // In constant-speed mode skip the accel/cruise/deccel profile and
-          // follow the path at a fixed speed from the start.
-          state =
-              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
+          // Omnidirectional mode aims the camera down the path before the base
+          // translates; otherwise the unicycle controller turns the whole body
+          // to face the path anyway, so there is nothing to pre-align.
+          state = (omnidirectional_ && move_head_) ? SM_GOAL_PATH_ALIGN_HEAD
+                  : use_constant_speed_            ? SM_GOAL_PATH_CONSTANT
+                                                   : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
+          align_attempts = (int)(head_align_timeout_ * RATE);
+          align_head_goal_sent_ = false;
+          read_path_goal_orientation();
           prev_pose_idx = 0;
           next_pose_idx = 0;
           global_goal_x_ =
@@ -1058,13 +1270,61 @@ private:
         current_linear_speed = 0;
         break;
 
+      case SM_GOAL_PATH_ALIGN_HEAD: {
+        // Only the camera has to be aimed before the robot moves. The base does
+        // not yaw onto the goal orientation here: that rotation would drag the
+        // head's own target around, turning a wait for the head into a wait for
+        // the body. It starts together with the translation instead. The one
+        // yaw allowed is the catchup term, without which a travel direction
+        // outside the head's pan range could never be reached at all.
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+
+        auto head_msg = get_next_goal_head_angles(next_pose_idx);
+        if (head_msg.data.empty()) {
+          state =
+              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
+          break;
+        }
+
+        // Re-publishing every tick would restart the head trajectory 30 times a
+        // second, and each one is time-parameterized to decelerate into its
+        // goal, so the head would only ever crawl through the first slice of a
+        // profile it never finishes. Send it once and let it run.
+        float head_goal_pan = head_msg.data[0];
+        if (!align_head_goal_sent_ ||
+            fabs(wrap_to_pi(head_goal_pan - align_head_goal_pan_)) > 0.05f) {
+          pub_head_goal_pose_->publish(head_msg);
+          align_head_goal_pan_ = head_goal_pan;
+          align_head_goal_sent_ = true;
+        }
+
+        geometry_msgs::msg::Twist cmd;
+        cmd.angular.z = clamp_yaw(
+            pan_catchup_yaw_speed(wrap_to_pi(
+                atan2(goal_y_ - robot_y_, goal_x_ - robot_x_) - robot_t_)),
+            max_angular_speed_);
+        pub_cmd_vel_->publish(cmd);
+
+        bool aligned = head_pose_received_ &&
+                       fabs(wrap_to_pi(head_goal_pan - head_current_pan_)) <
+                           head_align_tolerance_;
+        if (!aligned && --align_attempts > 0)
+          break;
+
+        if (!aligned)
+          std::cout << "SimpleMove.-> Head did not reach the path heading in "
+                       "time; starting to move anyway."
+                    << std::endl;
+        state =
+            use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
+        break;
+      }
+
       case SM_GOAL_PATH_ACCEL: {
         get_robot_position_wrt_map();
         get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-        auto cmd = calculate_speeds(
-            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-            move_lat_, use_pot_fields_, rejection_force_.y);
+        auto cmd = path_tracking_speeds();
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
@@ -1105,10 +1365,7 @@ private:
       case SM_GOAL_PATH_CRUISE: {
         get_robot_position_wrt_map();
         get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-        auto cmd = calculate_speeds(
-            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-            move_lat_, use_pot_fields_, rejection_force_.y);
+        auto cmd = path_tracking_speeds();
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
@@ -1154,10 +1411,7 @@ private:
         if (current_linear_speed < min_linear_speed_)
           current_linear_speed = min_linear_speed_;
 
-        auto cmd = calculate_speeds(
-            robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-            current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-            move_lat_, use_pot_fields_, rejection_force_.y);
+        auto cmd = path_tracking_speeds();
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
@@ -1191,10 +1445,7 @@ private:
           get_next_goal_from_path(prev_pose_idx, next_pose_idx);
           current_linear_speed = constant_speed_;
 
-          auto cmd = calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y);
+          auto cmd = path_tracking_speeds();
 
           if (collision_blocks_tracking(cmd)) {
             state = SM_GOAL_PATH_FAILED;

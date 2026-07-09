@@ -1668,6 +1668,13 @@ private:
 
         path_.header.frame_id = "map";
         path_.header.stamp = this->now();
+        // Hand the goal orientation over on the last path pose. In
+        // omnidirectional mode simple_move yaws onto it while following the
+        // path, so SM_CORRECT_FINAL_ANGLE has little left to turn. The path
+        // planner leaves every pose orientation zeroed, so this is the only one
+        // set and simple_move can tell it apart from "no yaw requested".
+        if (!path_.poses.empty())
+          path_.poses.back().pose.orientation = global_goal_.orientation;
         pub_goal_path_->publish(path_);
 
         // modified by ry0hei-kobayashi, 2025/8/23

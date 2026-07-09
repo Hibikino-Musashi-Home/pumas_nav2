@@ -24,6 +24,23 @@
   <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
   <arg name="use_constant_speed" default="False"/>
   <arg name="constant_speed" default="0.3"/>
+  <!-- Omnidirectional path following: when True, simple_move aims the head down
+       the path before the base translates, then translates along the path while
+       the base yaws onto the goal orientation at yaw_gain, instead of arriving
+       and turning in place. pan_catchup_gain pushes back whenever that yaw would
+       swing the travel direction out of the head's pan range. -->
+  <arg name="omnidirectional" default="True"/>
+  <arg name="yaw_gain" default="0.6"/>
+  <arg name="pan_catchup_gain" default="1.5"/>
+  <!-- Head pan range. Shared by head_controller and simple_move so the yaw
+       controller knows exactly how far the camera can actually pan. -->
+  <arg name="head_pan_min" default="-3.14"/>
+  <arg name="head_pan_max" default="1.74"/>
+  <!-- How far down the path the camera looks, in path points (one per map cell,
+       so x resolution for metres). Raise it to anticipate turns earlier. -->
+  <arg name="head_lookahead_points" default="5"/>
+  <!-- Neck slew rate [rad/s] used to time-parameterize head trajectories. -->
+  <arg name="head_default_speed" default="1.0"/>
 
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
@@ -162,6 +179,12 @@
     <param name="max_angular_speed" value="1.25"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="omnidirectional" value="$(var omnidirectional)"/>
+    <param name="yaw_gain" value="$(var yaw_gain)"/>
+    <param name="pan_catchup_gain" value="$(var pan_catchup_gain)"/>
+    <param name="head_pan_min" value="$(var head_pan_min)"/>
+    <param name="head_pan_max" value="$(var head_pan_max)"/>
+    <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="linear_acceleration" value="0.2"/>
     <param name="control_alpha" value="0.35"/>
     <param name="control_beta" value="0.8"/>
@@ -251,8 +274,9 @@
         pkg="hardware_controller"
         exec="head_node"
         output="screen">
-        <param name="pan_min" value="-3.14" />
-        <param name="pan_max" value="1.74" />
+        <param name="pan_min" value="$(var head_pan_min)" />
+        <param name="pan_max" value="$(var head_pan_max)" />
+        <param name="head_default_speed" value="$(var head_default_speed)" />
         <param name="tilt_min" value="-0.7" />
         <param name="tilt_max" value="0.47" />
   </node>
