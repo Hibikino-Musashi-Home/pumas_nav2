@@ -74,6 +74,24 @@ public:
     // before the base translates at all, and the base then yaws onto the goal
     // orientation while it moves, instead of arriving and turning in place.
     this->declare_parameter<bool>("omnidirectional", false);
+    // Last-mile omni. With omnidirectional false the unicycle controller
+    // drives the path (body naturally faces the travel direction); once the
+    // goal is closer than yaw_correction_omni_distance [m] the tracking
+    // switches to the holonomic controller, which slides onto the goal
+    // while yawing onto its orientation instead of arriving and turning in
+    // place. Ignored when omnidirectional is already true.
+    this->declare_parameter<bool>("yaw_correction_omni_behavior", false);
+    this->declare_parameter<float>("yaw_correction_omni_distance", 1.0f);
+    // Yaw gain used only while the last-mile omni drives. Deliberately much
+    // stronger than yaw_gain: the goal is to arrive with so little yaw error
+    // that mvn_pln's final-angle correction has nothing left to do.
+    this->declare_parameter<float>("yaw_correction_omni_gain", 2.5f);
+    // Ignore collision_risk and the pot-fields rejection during the last
+    // mile. The goal usually sits right next to furniture, so the front
+    // detection box and the rejection force fight the convergence exactly
+    // when the robot is closing the final, slow stretch. If the way is
+    // truly blocked the attempts timeout still aborts.
+    this->declare_parameter<bool>("yaw_correction_ignore_obstacles", true);
     // Gradual yaw toward the goal orientation. Small enough that the base
     // trails the head rather than dragging it.
     this->declare_parameter<float>("yaw_gain", 0.6f);
@@ -113,6 +131,13 @@ public:
     this->get_parameter("use_constant_speed", use_constant_speed_);
     this->get_parameter("constant_speed", constant_speed_);
     this->get_parameter("omnidirectional", omnidirectional_);
+    this->get_parameter("yaw_correction_omni_behavior",
+                        yaw_correction_omni_behavior_);
+    this->get_parameter("yaw_correction_omni_distance",
+                        yaw_correction_omni_distance_);
+    this->get_parameter("yaw_correction_omni_gain", yaw_correction_omni_gain_);
+    this->get_parameter("yaw_correction_ignore_obstacles",
+                        yaw_correction_ignore_obstacles_);
     this->get_parameter("yaw_gain", yaw_gain_);
     this->get_parameter("head_pan_min", head_pan_min_);
     this->get_parameter("head_pan_max", head_pan_max_);
@@ -271,6 +296,10 @@ private:
   bool use_constant_speed_ = false;
   float constant_speed_;
   bool omnidirectional_ = false;
+  bool yaw_correction_omni_behavior_ = false;
+  float yaw_correction_omni_distance_;
+  float yaw_correction_omni_gain_;
+  bool yaw_correction_ignore_obstacles_ = true;
   float yaw_gain_;
   float head_pan_min_;
   float head_pan_max_;
@@ -372,6 +401,14 @@ private:
         constant_speed_ = param.as_double();
       else if (param.get_name() == "omnidirectional")
         omnidirectional_ = param.as_bool();
+      else if (param.get_name() == "yaw_correction_omni_behavior")
+        yaw_correction_omni_behavior_ = param.as_bool();
+      else if (param.get_name() == "yaw_correction_omni_distance")
+        yaw_correction_omni_distance_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_omni_gain")
+        yaw_correction_omni_gain_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_ignore_obstacles")
+        yaw_correction_ignore_obstacles_ = param.as_bool();
       else if (param.get_name() == "yaw_gain")
         yaw_gain_ = param.as_double();
       else if (param.get_name() == "head_pan_min")
@@ -828,17 +865,47 @@ private:
     float yaw_error =
         path_goal_t_valid_ ? wrap_to_pi(path_goal_t_ - robot_t_) : heading;
 
+    // Last-mile omni turns hard onto the goal yaw with its own, stronger
+    // gain, and without the pan-catchup term: the camera is aimed at the
+    // goal yaw here (see publish_path_head_goal), not at the path, so there
+    // is no pan range to protect and nothing should dilute the rotation.
+    if (last_mile_omni_active())
+      return clamp_yaw(yaw_correction_omni_gain_ * yaw_error,
+                       max_angular_speed);
+
     return clamp_yaw(yaw_gain_ * yaw_error + pan_catchup_yaw_speed(heading),
                      max_angular_speed);
   }
 
+  // Last-mile omni: unicycle tracking has handed over to the holonomic
+  // controller for the final stretch to the goal.
+  bool last_mile_omni_active() const {
+    if (omnidirectional_ || !yaw_correction_omni_behavior_)
+      return false;
+    return std::hypot(global_goal_x_ - robot_x_, global_goal_y_ - robot_y_) <
+           yaw_correction_omni_distance_;
+  }
+
+  // True while the holonomic path controller should drive: always in full
+  // omni mode, or during the last-mile omni.
+  bool omni_tracking_active() const {
+    return omnidirectional_ || last_mile_omni_active();
+  }
+
+  // Obstacle interference (collision_risk abort + pot-fields rejection) is
+  // suspended while the last-mile omni converges onto a goal that usually
+  // sits right against furniture.
+  bool obstacles_suspended() const {
+    return yaw_correction_ignore_obstacles_ && last_mile_omni_active();
+  }
+
   geometry_msgs::msg::Twist path_tracking_speeds() {
-    if (omnidirectional_)
+    if (omni_tracking_active())
       return calculate_speeds_omni(robot_x_, robot_y_, robot_t_, goal_x_,
                                    goal_y_, min_linear_speed_,
                                    current_linear_speed, max_angular_speed_,
-                                   use_pot_fields_, rejection_force_.x,
-                                   rejection_force_.y);
+                                   use_pot_fields_ && !obstacles_suspended(),
+                                   rejection_force_.x, rejection_force_.y);
     return calculate_speeds(robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
                             min_linear_speed_, current_linear_speed,
                             max_angular_speed_, alpha_, beta_, false, move_lat_,
@@ -846,11 +913,11 @@ private:
   }
 
   bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) const {
-    if (!collision_risk_)
+    if (!collision_risk_ || obstacles_suspended())
       return false;
 
     const bool translating =
-        omnidirectional_
+        omni_tracking_active()
             ? (cmd.linear.x != 0.0 || cmd.linear.y != 0.0)
             : (move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0));
     if (translating)
@@ -1008,6 +1075,21 @@ private:
     msg.data.push_back(angle);
     msg.data.push_back(-1.0);
     return msg;
+  }
+
+  // Head target during path following. While the last-mile omni drives, the
+  // base no longer travels the way it faces and the goal is at arm's reach,
+  // so the camera turns to where the robot will end up facing (the goal
+  // yaw) instead of chasing the last few path points.
+  void publish_path_head_goal(int idx) {
+    if (last_mile_omni_active() && path_goal_t_valid_) {
+      std_msgs::msg::Float32MultiArray msg;
+      msg.data.push_back(wrap_to_pi(path_goal_t_ - robot_t_));
+      msg.data.push_back(-1.0);
+      pub_head_goal_pose_->publish(msg);
+      return;
+    }
+    pub_head_goal_pose_->publish(get_next_goal_head_angles(idx));
   }
 
   // ############
@@ -1356,8 +1438,7 @@ private:
         }
         pub_cmd_vel_->publish(cmd);
         if (move_head_)
-          pub_head_goal_pose_->publish(
-              get_next_goal_head_angles(next_pose_idx));
+          publish_path_head_goal(next_pose_idx);
         current_linear_speed += linear_acceleration_ / RATE;
         break;
       }
@@ -1393,8 +1474,7 @@ private:
         }
         pub_cmd_vel_->publish(cmd);
         if (move_head_)
-          pub_head_goal_pose_->publish(
-              get_next_goal_head_angles(next_pose_idx));
+          publish_path_head_goal(next_pose_idx);
         break;
       }
 
@@ -1431,8 +1511,7 @@ private:
         }
         pub_cmd_vel_->publish(cmd);
         if (move_head_)
-          pub_head_goal_pose_->publish(
-              get_next_goal_head_angles(next_pose_idx));
+          publish_path_head_goal(next_pose_idx);
         break;
       }
 
@@ -1468,8 +1547,7 @@ private:
           }
           pub_cmd_vel_->publish(cmd);
           if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+            publish_path_head_goal(next_pose_idx);
         }
         break;
 

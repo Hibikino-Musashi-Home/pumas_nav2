@@ -30,7 +30,20 @@
        and turning in place. pan_catchup_gain pushes back whenever that yaw would
        swing the travel direction out of the head's pan range. -->
   <arg name="omnidirectional" default="False"/>
-  <arg name="yaw_gain" default="0.8"/>
+  <!-- Last one mile omni: omnidirectional=False のまま，ゴール残距離が
+       yaw_correction_omni_distance[m] を切ったらパス追従をomni制御に切替え，
+       並進しながらgoal姿勢へ回り込む(到着後のその場旋回をなくす)．
+       パスの大半はunicycle制御なので体は自然に進行方向を向く． -->
+  <arg name="yaw_correction_omni_behavior" default="True"/>
+  <arg name="yaw_correction_omni_distance" default="1.0"/>
+  <!-- last one mile専用の強めyawゲイン．到着時にはmvn_plnの最終yaw補正が
+       ほぼ空になるくらい回り切る．首もこの区間はgoal yaw方向を向く． -->
+  <arg name="yaw_correction_omni_gain" default="4.5"/>
+  <!-- last one mile中はcollision_riskによる停止とpot_fieldsの反発を無効化．
+       ゴールは家具のすぐ手前にあることが多く，検知が収束を邪魔するため．
+       完全に塞がれた場合はattemptsタイムアウトでabortする． -->
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+  <arg name="yaw_gain" default="1.5"/>
   <arg name="pan_catchup_gain" default="1.5"/>
   <!-- Head pan range. Shared by head_controller and simple_move so the yaw
        controller knows exactly how far the camera can actually pan. -->
@@ -67,8 +80,8 @@
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.45"/>
-  <arg name="cloud_max_x" default="0.70"/>
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.50"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.25"/>
   <arg name="cloud_max_y" default="0.25"/>
@@ -164,6 +177,10 @@
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
     <param name="omnidirectional" value="$(var omnidirectional)"/>
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
     <param name="yaw_gain" value="$(var yaw_gain)"/>
     <param name="pan_catchup_gain" value="$(var pan_catchup_gain)"/>
     <param name="head_pan_min" value="$(var head_pan_min)"/>
