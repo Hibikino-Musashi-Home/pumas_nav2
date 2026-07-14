@@ -67,7 +67,8 @@
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
   <arg name="add_static_obstacles" default="True"/>
-  <arg name="env_furniture_pkg" default="hma_env_manage2"/>
+  <!--arg name="env_furniture_pkg" default="hma_env_manage2"/-->
+  <arg name="env_furniture_pkg" default="navigation_start"/>
   <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
   <arg name="move_head" default="True"/>
 
