@@ -209,8 +209,11 @@ public:
         rclcpp_action::create_client<MotionSynthesis>(this, "/motion_synth");
     if (!motion_synth_client_->wait_for_action_server(
             std::chrono::seconds(5))) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "MotionPlanner.-> MotionSynth action server not available.");
+      RCLCPP_WARN(this->get_logger(),
+                  "MotionPlanner.-> MotionSynth action server not available "
+                  "(expected if this robot has no arm/motion_synth_server "
+                  "running); navigation goals with use_arm will be rejected, "
+                  "everything else is unaffected.");
     } else {
       RCLCPP_INFO(this->get_logger(),
                   "MotionPlanner.-> MotionSynth action server is ready.");
