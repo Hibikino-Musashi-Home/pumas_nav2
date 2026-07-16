@@ -24,15 +24,9 @@
   <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
   <arg name="use_constant_speed" default="False"/>
   <arg name="constant_speed" default="0.2"/>
-  <!-- Omnidirectional path following: when True, simple_move aims the head down
-       the path before the base translates, then translates along the path while
-       the base yaws onto the goal orientation at yaw_gain, instead of arriving
-       and turning in place. pan_catchup_gain pushes back whenever that yaw would
-       swing the travel direction out of the head's pan range. -->
-  <arg name="omnidirectional" default="False"/>
-  <!-- Last one mile omni: omnidirectional=False のまま，ゴール残距離が
-       yaw_correction_omni_distance[m] を切ったらパス追従をomni制御に切替え，
-       並進しながらgoal姿勢へ回り込む(到着後のその場旋回をなくす)．
+  <!-- Last one mile omni: unicycle制御でパスを追従し，ゴール残距離が
+       yaw_correction_omni_distance[m] を切ったらパス追従をomni(holonomic)制御へ
+       切替え，並進しながらgoal姿勢へ回り込む(到着後のその場旋回をなくす)．
        パスの大半はunicycle制御なので体は自然に進行方向を向く． -->
   <arg name="yaw_correction_omni_behavior" default="True"/>
   <arg name="yaw_correction_omni_distance" default="1.0"/>
@@ -43,8 +37,9 @@
        ゴールは家具のすぐ手前にあることが多く，検知が収束を邪魔するため．
        完全に塞がれた場合はattemptsタイムアウトでabortする． -->
   <arg name="yaw_correction_ignore_obstacles" default="True"/>
-  <arg name="yaw_gain" default="1.5"/>
-  <arg name="pan_catchup_gain" default="1.5"/>
+  <!-- last one mile開始時に体と一緒に首もgoal_yaw方向を向く．Falseなら首は
+       通常どおりゴール(進行)方向を向いたまま頭部トラッキングを続ける． -->
+  <arg name="yaw_correction_align_head" default="True"/>
   <!-- Head pan range. Shared by head_controller and simple_move so the yaw
        controller knows exactly how far the camera can actually pan. -->
   <arg name="head_pan_min" default="-3.14"/>
@@ -176,15 +171,11 @@
     <param name="max_angular_speed" value="1.25"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
-    <param name="omnidirectional" value="$(var omnidirectional)"/>
     <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
     <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
     <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
     <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
-    <param name="yaw_gain" value="$(var yaw_gain)"/>
-    <param name="pan_catchup_gain" value="$(var pan_catchup_gain)"/>
-    <param name="head_pan_min" value="$(var head_pan_min)"/>
-    <param name="head_pan_max" value="$(var head_pan_max)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
     <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="linear_acceleration" value="0.2"/>
     <param name="control_alpha" value="0.3"/>

@@ -48,7 +48,6 @@
 #define SM_COLLISION_RISK 9
 #define SM_GOAL_REL_POSE 13
 #define SM_GOAL_PATH_CONSTANT 14
-#define SM_GOAL_PATH_ALIGN_HEAD 15
 
 class SimpleMoveNode : public rclcpp::Node {
 public:
@@ -67,24 +66,16 @@ public:
     // constant_speed [m/s] (still attenuated on sharp turns by the controller).
     this->declare_parameter<bool>("use_constant_speed", false);
     this->declare_parameter<float>("constant_speed", 0.3f);
-    // Omnidirectional path following. When true the base translates straight
-    // along the path whatever its yaw is, and the head pan (which simple_move
-    // already commands, base-relative) is what points the camera along the
-    // travel direction. The camera leads: the head is aimed down the path
-    // before the base translates at all, and the base then yaws onto the goal
-    // orientation while it moves, instead of arriving and turning in place.
-    this->declare_parameter<bool>("omnidirectional", false);
-    // Last-mile omni. With omnidirectional false the unicycle controller
-    // drives the path (body naturally faces the travel direction); once the
-    // goal is closer than yaw_correction_omni_distance [m] the tracking
-    // switches to the holonomic controller, which slides onto the goal
-    // while yawing onto its orientation instead of arriving and turning in
-    // place. Ignored when omnidirectional is already true.
+    // Last-mile omni. The unicycle controller drives the path (the body
+    // naturally faces the travel direction); once the goal is closer than
+    // yaw_correction_omni_distance [m] the tracking switches to the holonomic
+    // controller, which slides onto the goal while yawing onto its orientation
+    // instead of arriving and turning in place.
     this->declare_parameter<bool>("yaw_correction_omni_behavior", false);
     this->declare_parameter<float>("yaw_correction_omni_distance", 1.0f);
-    // Yaw gain used only while the last-mile omni drives. Deliberately much
-    // stronger than yaw_gain: the goal is to arrive with so little yaw error
-    // that mvn_pln's final-angle correction has nothing left to do.
+    // Yaw gain used only while the last-mile omni drives. Deliberately strong:
+    // the goal is to arrive with so little yaw error that mvn_pln's final-angle
+    // correction has nothing left to do.
     this->declare_parameter<float>("yaw_correction_omni_gain", 2.5f);
     // Ignore collision_risk and the pot-fields rejection during the last
     // mile. The goal usually sits right next to furniture, so the front
@@ -92,20 +83,11 @@ public:
     // when the robot is closing the final, slow stretch. If the way is
     // truly blocked the attempts timeout still aborts.
     this->declare_parameter<bool>("yaw_correction_ignore_obstacles", true);
-    // Gradual yaw toward the goal orientation. Small enough that the base
-    // trails the head rather than dragging it.
-    this->declare_parameter<float>("yaw_gain", 0.6f);
-    // Head pan range, which must match head_node's pan_min / pan_max. It is
-    // asymmetric on the HSR. Once the travel direction falls outside it the
-    // camera can no longer be aimed down the path, so the base gets an extra
-    // yaw term to bring the direction back into reach.
-    this->declare_parameter<float>("head_pan_min", -3.14f);
-    this->declare_parameter<float>("head_pan_max", 1.74f);
-    this->declare_parameter<float>("pan_catchup_gain", 1.5f);
-    // Head-leads-the-body startup: hold the base still (yaw only) until the
-    // head pan has reached the travel direction, or this timeout expires.
-    this->declare_parameter<float>("head_align_tolerance", 0.15f);
-    this->declare_parameter<float>("head_align_timeout", 3.0f);
+    // Aim the head at the goal orientation during the last mile, so it turns
+    // onto the goal yaw together with the body. When false the head keeps its
+    // normal path tracking (looking toward the goal/travel direction) the whole
+    // way in. The base still yaws onto the goal orientation either way.
+    this->declare_parameter<bool>("yaw_correction_align_head", true);
     // How far down the path the camera looks, in path points. The planner emits
     // one point per map cell, so this is (points x resolution) metres ahead.
     // Raising it makes the head anticipate turns earlier.
@@ -130,7 +112,6 @@ public:
     this->get_parameter("max_angular_speed", max_angular_speed_);
     this->get_parameter("use_constant_speed", use_constant_speed_);
     this->get_parameter("constant_speed", constant_speed_);
-    this->get_parameter("omnidirectional", omnidirectional_);
     this->get_parameter("yaw_correction_omni_behavior",
                         yaw_correction_omni_behavior_);
     this->get_parameter("yaw_correction_omni_distance",
@@ -138,12 +119,8 @@ public:
     this->get_parameter("yaw_correction_omni_gain", yaw_correction_omni_gain_);
     this->get_parameter("yaw_correction_ignore_obstacles",
                         yaw_correction_ignore_obstacles_);
-    this->get_parameter("yaw_gain", yaw_gain_);
-    this->get_parameter("head_pan_min", head_pan_min_);
-    this->get_parameter("head_pan_max", head_pan_max_);
-    this->get_parameter("pan_catchup_gain", pan_catchup_gain_);
-    this->get_parameter("head_align_tolerance", head_align_tolerance_);
-    this->get_parameter("head_align_timeout", head_align_timeout_);
+    this->get_parameter("yaw_correction_align_head",
+                        yaw_correction_align_head_);
     this->get_parameter("head_lookahead_points", head_lookahead_points_);
     this->get_parameter("control_alpha", alpha_);
     this->get_parameter("control_beta", beta_);
@@ -222,14 +199,6 @@ public:
             std::bind(&SimpleMoveNode::callback_goal_rel_pose, this,
                       std::placeholders::_1));
 
-    //// head feedback, used to hold the base still until the camera is aimed
-    //// down the path (omnidirectional mode only).
-    sub_headCurrentPose_ =
-        this->create_subscription<std_msgs::msg::Float32MultiArray>(
-            make_name("/hardware/head/current_pose"), rclcpp::QoS(10).reliable(),
-            std::bind(&SimpleMoveNode::callback_head_current_pose, this,
-                      std::placeholders::_1));
-
     sub_collisionRisk_ = this->create_subscription<std_msgs::msg::Bool>(
         make_name("/navigation/potential_fields/collision_risk"),
         rclcpp::SensorDataQoS(),
@@ -295,17 +264,11 @@ private:
   float max_angular_speed_;
   bool use_constant_speed_ = false;
   float constant_speed_;
-  bool omnidirectional_ = false;
   bool yaw_correction_omni_behavior_ = false;
   float yaw_correction_omni_distance_;
   float yaw_correction_omni_gain_;
   bool yaw_correction_ignore_obstacles_ = true;
-  float yaw_gain_;
-  float head_pan_min_;
-  float head_pan_max_;
-  float pan_catchup_gain_;
-  float head_align_tolerance_;
-  float head_align_timeout_;
+  bool yaw_correction_align_head_ = true;
   int head_lookahead_points_;
   float alpha_;
   float beta_;
@@ -328,13 +291,7 @@ private:
   int next_pose_idx = 0;
   float temp_k = 0;
   int attempts = 0;
-  int align_attempts = 0;
   float global_error = 0;
-
-  float head_current_pan_ = 0;
-  bool head_pose_received_ = false;
-  float align_head_goal_pan_ = 0;
-  bool align_head_goal_sent_ = false;
 
   // Goal orientation, carried on the last path pose by mvn_pln. Absent when the
   // path comes from somewhere that does not request a final yaw.
@@ -366,8 +323,6 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sub_moveLateral_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
       sub_goalRelPose_;
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr
-      sub_headCurrentPose_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_collisionRisk_;
   rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr
       sub_rejectionForce_;
@@ -399,8 +354,6 @@ private:
         use_constant_speed_ = param.as_bool();
       else if (param.get_name() == "constant_speed")
         constant_speed_ = param.as_double();
-      else if (param.get_name() == "omnidirectional")
-        omnidirectional_ = param.as_bool();
       else if (param.get_name() == "yaw_correction_omni_behavior")
         yaw_correction_omni_behavior_ = param.as_bool();
       else if (param.get_name() == "yaw_correction_omni_distance")
@@ -409,18 +362,8 @@ private:
         yaw_correction_omni_gain_ = param.as_double();
       else if (param.get_name() == "yaw_correction_ignore_obstacles")
         yaw_correction_ignore_obstacles_ = param.as_bool();
-      else if (param.get_name() == "yaw_gain")
-        yaw_gain_ = param.as_double();
-      else if (param.get_name() == "head_pan_min")
-        head_pan_min_ = param.as_double();
-      else if (param.get_name() == "head_pan_max")
-        head_pan_max_ = param.as_double();
-      else if (param.get_name() == "pan_catchup_gain")
-        pan_catchup_gain_ = param.as_double();
-      else if (param.get_name() == "head_align_tolerance")
-        head_align_tolerance_ = param.as_double();
-      else if (param.get_name() == "head_align_timeout")
-        head_align_timeout_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_align_head")
+        yaw_correction_align_head_ = param.as_bool();
       else if (param.get_name() == "head_lookahead_points")
         head_lookahead_points_ = param.as_int();
       else if (param.get_name() == "control_alpha")
@@ -671,21 +614,6 @@ private:
     }
   }
 
-  void callback_head_current_pose(
-      const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
-    try {
-      if (msg->data.size() < 1)
-        return;
-      head_current_pan_ = msg->data[0];
-      head_pose_received_ = true;
-    } catch (const std::exception &e) {
-      RCLCPP_ERROR(
-          this->get_logger(),
-          "SimpleMove.-> Error processing callback_head_current_pose: %s",
-          e.what());
-    }
-  }
-
   void callback_collision_risk(const std_msgs::msg::Bool::SharedPtr msg) {
     try {
       collision_risk_ = msg->data;
@@ -841,55 +769,24 @@ private:
     return std::max(-max_angular_speed, std::min(max_angular_speed, w));
   }
 
-  // Yaw by however far the travel direction has left the range the head can
-  // actually pan to. Below that it returns zero, which is what lets the base
-  // hold still while the head is being aimed.
-  float pan_catchup_yaw_speed(float heading) const {
-    float excess = 0;
-    if (heading > head_pan_max_)
-      excess = heading - head_pan_max_;
-    else if (heading < head_pan_min_)
-      excess = heading - head_pan_min_;
-    return pan_catchup_gain_ * excess;
-  }
-
-  // The base yaws onto the goal orientation gradually while it translates, so
-  // it arrives already facing the right way instead of turning in place at the
-  // end. Wanting a yaw that is not the travel direction is exactly what makes
-  // this worth doing holonomically -- but it can swing the path out of the
-  // head's pan range, and then the camera could no longer watch where the robot
-  // is going. The catchup term is what forbids that: the base settles at
-  // whatever yaw trades the two off. Without a goal orientation there is nothing
-  // to trade against and the base simply follows the path.
+  // The base turns hard onto the goal yaw during the last-mile omni. The
+  // camera is aimed at the goal yaw here (see publish_path_head_goal), not at
+  // the path, so there is no pan range to protect: the whole rotation goes
+  // toward the goal orientation. Without a goal orientation on the path there
+  // is nothing to converge onto and the base simply yaws down the path.
   float omni_yaw_speed(float heading, float max_angular_speed) const {
     float yaw_error =
         path_goal_t_valid_ ? wrap_to_pi(path_goal_t_ - robot_t_) : heading;
-
-    // Last-mile omni turns hard onto the goal yaw with its own, stronger
-    // gain, and without the pan-catchup term: the camera is aimed at the
-    // goal yaw here (see publish_path_head_goal), not at the path, so there
-    // is no pan range to protect and nothing should dilute the rotation.
-    if (last_mile_omni_active())
-      return clamp_yaw(yaw_correction_omni_gain_ * yaw_error,
-                       max_angular_speed);
-
-    return clamp_yaw(yaw_gain_ * yaw_error + pan_catchup_yaw_speed(heading),
-                     max_angular_speed);
+    return clamp_yaw(yaw_correction_omni_gain_ * yaw_error, max_angular_speed);
   }
 
   // Last-mile omni: unicycle tracking has handed over to the holonomic
   // controller for the final stretch to the goal.
   bool last_mile_omni_active() const {
-    if (omnidirectional_ || !yaw_correction_omni_behavior_)
+    if (!yaw_correction_omni_behavior_)
       return false;
     return std::hypot(global_goal_x_ - robot_x_, global_goal_y_ - robot_y_) <
            yaw_correction_omni_distance_;
-  }
-
-  // True while the holonomic path controller should drive: always in full
-  // omni mode, or during the last-mile omni.
-  bool omni_tracking_active() const {
-    return omnidirectional_ || last_mile_omni_active();
   }
 
   // Obstacle interference (collision_risk abort + pot-fields rejection) is
@@ -900,7 +797,7 @@ private:
   }
 
   geometry_msgs::msg::Twist path_tracking_speeds() {
-    if (omni_tracking_active())
+    if (last_mile_omni_active())
       return calculate_speeds_omni(robot_x_, robot_y_, robot_t_, goal_x_,
                                    goal_y_, min_linear_speed_,
                                    current_linear_speed, max_angular_speed_,
@@ -917,7 +814,7 @@ private:
       return false;
 
     const bool translating =
-        omni_tracking_active()
+        last_mile_omni_active()
             ? (cmd.linear.x != 0.0 || cmd.linear.y != 0.0)
             : (move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0));
     if (translating)
@@ -1077,12 +974,13 @@ private:
     return msg;
   }
 
-  // Head target during path following. While the last-mile omni drives, the
-  // base no longer travels the way it faces and the goal is at arm's reach,
-  // so the camera turns to where the robot will end up facing (the goal
-  // yaw) instead of chasing the last few path points.
+  // Head target during path following. When yaw_correction_align_head is set,
+  // the last-mile omni turns the camera to where the robot will end up facing
+  // (the goal yaw) as the base yaws onto it, instead of chasing the last few
+  // path points; otherwise the head keeps its normal path tracking.
   void publish_path_head_goal(int idx) {
-    if (last_mile_omni_active() && path_goal_t_valid_) {
+    if (yaw_correction_align_head_ && last_mile_omni_active() &&
+        path_goal_t_valid_) {
       std_msgs::msg::Float32MultiArray msg;
       msg.data.push_back(wrap_to_pi(path_goal_t_ - robot_t_));
       msg.data.push_back(-1.0);
@@ -1131,15 +1029,9 @@ private:
         }
         if (new_path_) {
           collision_risk_ = false;
-          // Omnidirectional mode aims the camera down the path before the base
-          // translates; otherwise the unicycle controller turns the whole body
-          // to face the path anyway, so there is nothing to pre-align.
-          state = (omnidirectional_ && move_head_) ? SM_GOAL_PATH_ALIGN_HEAD
-                  : use_constant_speed_            ? SM_GOAL_PATH_CONSTANT
-                                                   : SM_GOAL_PATH_ACCEL;
+          state =
+              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
-          align_attempts = (int)(head_align_timeout_ * RATE);
-          align_head_goal_sent_ = false;
           read_path_goal_orientation();
           prev_pose_idx = 0;
           next_pose_idx = 0;
@@ -1351,57 +1243,6 @@ private:
         pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
         current_linear_speed = 0;
         break;
-
-      case SM_GOAL_PATH_ALIGN_HEAD: {
-        // Only the camera has to be aimed before the robot moves. The base does
-        // not yaw onto the goal orientation here: that rotation would drag the
-        // head's own target around, turning a wait for the head into a wait for
-        // the body. It starts together with the translation instead. The one
-        // yaw allowed is the catchup term, without which a travel direction
-        // outside the head's pan range could never be reached at all.
-        get_robot_position_wrt_map();
-        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-
-        auto head_msg = get_next_goal_head_angles(next_pose_idx);
-        if (head_msg.data.empty()) {
-          state =
-              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
-          break;
-        }
-
-        // Re-publishing every tick would restart the head trajectory 30 times a
-        // second, and each one is time-parameterized to decelerate into its
-        // goal, so the head would only ever crawl through the first slice of a
-        // profile it never finishes. Send it once and let it run.
-        float head_goal_pan = head_msg.data[0];
-        if (!align_head_goal_sent_ ||
-            fabs(wrap_to_pi(head_goal_pan - align_head_goal_pan_)) > 0.05f) {
-          pub_head_goal_pose_->publish(head_msg);
-          align_head_goal_pan_ = head_goal_pan;
-          align_head_goal_sent_ = true;
-        }
-
-        geometry_msgs::msg::Twist cmd;
-        cmd.angular.z = clamp_yaw(
-            pan_catchup_yaw_speed(wrap_to_pi(
-                atan2(goal_y_ - robot_y_, goal_x_ - robot_x_) - robot_t_)),
-            max_angular_speed_);
-        pub_cmd_vel_->publish(cmd);
-
-        bool aligned = head_pose_received_ &&
-                       fabs(wrap_to_pi(head_goal_pan - head_current_pan_)) <
-                           head_align_tolerance_;
-        if (!aligned && --align_attempts > 0)
-          break;
-
-        if (!aligned)
-          std::cout << "SimpleMove.-> Head did not reach the path heading in "
-                       "time; starting to move anyway."
-                    << std::endl;
-        state =
-            use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
-        break;
-      }
 
       case SM_GOAL_PATH_ACCEL: {
         get_robot_position_wrt_map();
