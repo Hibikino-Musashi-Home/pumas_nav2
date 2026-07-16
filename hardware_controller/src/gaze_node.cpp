@@ -3,6 +3,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 #include <algorithm>
 
 #include <tf2_ros/buffer.h>
@@ -42,6 +43,12 @@ public:
     this->declare_parameter<double>(      "max_pan_vel",    1.0);   // [rad/s]
     this->declare_parameter<double>(      "max_tilt_vel",   0.7);   // [rad/s]
     this->declare_parameter<int>(         "gaze_period_ms", 100);   // loop period
+    // Joint names to look up (by name, not position) in the /hardware/head/
+    // current_pose JointState. Configurable so this node isn't hardcoded to
+    // one robot's specific joint names; keep in sync with head_node's own
+    // head_default_names parameter.
+    this->declare_parameter<std::vector<std::string>>(
+        "head_default_names", {"head_pan_joint", "head_tilt_joint"});
 
     this->get_parameter("use_namespace",  use_namespace_);
     this->get_parameter("gaze_tf_name",   gaze_tf_name_);
@@ -50,6 +57,15 @@ public:
     this->get_parameter("max_pan_vel",    max_pan_vel_);
     this->get_parameter("max_tilt_vel",   max_tilt_vel_);
     this->get_parameter("gaze_period_ms", gaze_period_ms_);
+    this->get_parameter("head_default_names", head_default_names_);
+
+    if (head_default_names_.size() != 2) {
+      RCLCPP_ERROR(this->get_logger(),
+          "GazeController.-> head_default_names must have exactly 2 entries "
+          "(got %zu); falling back to built-in defaults.",
+          head_default_names_.size());
+      head_default_names_ = {"head_pan_joint", "head_tilt_joint"};
+    }
 
     pub_head_goal_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
       make_name("/hardware/head/goal_pose"),
@@ -57,7 +73,7 @@ public:
 
     // Track the actual head pose so the smoother can seed cmd_* at goal start
     // (prevents an initial snap from a stale 0,0).
-    sub_head_current_pose_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
+    sub_head_current_pose_ = this->create_subscription<sensor_msgs::msg::JointState>(
       make_name("/hardware/head/current_pose"),
       rclcpp::QoS(10).reliable(),
       std::bind(&GazeController::head_current_pose_callback, this,
@@ -86,12 +102,13 @@ private:
   double      max_pan_vel_    = 1.0;
   double      max_tilt_vel_   = 0.7;
   int         gaze_period_ms_ = 100;
+  std::vector<std::string> head_default_names_{"head_pan_joint", "head_tilt_joint"};
 
   tf2_ros::Buffer            tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
 
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr pub_head_goal_pose_;
-  rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr sub_head_current_pose_;
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr sub_head_current_pose_;
   rclcpp_action::Server<GazeHead>::SharedPtr action_server_;
 
   // Latest measured head pose (pan, tilt). Updated by head_current_pose_callback.
@@ -104,14 +121,33 @@ private:
   // this, and any older execute() loop exits as soon as it notices the change.
   std::atomic<uint64_t> active_gen_{0};
 
-  void head_current_pose_callback(
-    const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+  // Look up `joint_name`'s position in a JointState by name (not index), so
+  // this stays correct regardless of the publisher's field ordering.
+  static bool find_joint_position(
+    const sensor_msgs::msg::JointState &state,
+    const std::string &joint_name, float &out)
   {
-    if (msg->data.size() < 2)
+    auto it = std::find(state.name.begin(), state.name.end(), joint_name);
+    if (it == state.name.end())
+      return false;
+    const size_t idx = std::distance(state.name.begin(), it);
+    if (idx >= state.position.size())
+      return false;
+    out = static_cast<float>(state.position[idx]);
+    return true;
+  }
+
+  void head_current_pose_callback(
+    const sensor_msgs::msg::JointState::SharedPtr msg)
+  {
+    float pan, tilt;
+    if (!find_joint_position(*msg, head_default_names_[0], pan) ||
+        !find_joint_position(*msg, head_default_names_[1], tilt))
       return;
+
     std::lock_guard<std::mutex> lock(head_pose_mtx_);
-    cur_pan_  = msg->data[0];
-    cur_tilt_ = msg->data[1];
+    cur_pan_  = pan;
+    cur_tilt_ = tilt;
     head_pose_valid_ = true;
   }
 
