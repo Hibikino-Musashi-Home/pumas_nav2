@@ -32,7 +32,7 @@
   <arg name="mvn_pln_patience" default="False"/>
 
   <arg name="use_online" default="False"/>
-  <arg name="memory_all_obstacles" default="False"/>
+  <arg name="remember_all_obstacles" default="False"/>
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
@@ -118,7 +118,7 @@
     <param name="inflation_radius" value="0.22"/> <!--[m]通行不可，黒領域の膨張，環境依存なので基本的にはこれを調整する．すくなくともfootprintの半径分は指定する-->
     <param name="cost_radius" value="0.45"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
     <param name="use_online" value="$(var use_online)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
     <param name="laser_max_y" value="$(var laser_max_y)"/>
@@ -190,9 +190,8 @@
 
   <!-- Motion Planner -->
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
-    <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="goal_relocation_report_threshold" value="0.5"/> <!--[m]計画経路の終端が要求ゴールからこの距離以上離れていたら「ゴール貼り直し」とみなし，abortせずnear_goal＋メッセージで報告-->
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>

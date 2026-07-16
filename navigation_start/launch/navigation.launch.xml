@@ -31,7 +31,7 @@
   <arg name="mvn_pln_patience" default="False"/>
 
   <arg name="use_online" default="False"/>
-  <arg name="memory_all_obstacles" default="False"/>
+  <arg name="remember_all_obstacles" default="False"/>
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
@@ -69,6 +69,13 @@
   <arg name="env_furniture_pkg" default="hma_env_manage2"/>
   <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
   <arg name="move_head" default="True"/>
+
+  <!-- Which per-robot preset to load for human-follow-mode potential-fields
+       tuning (see navigation_tools/config/*_pot_fields_updator.yaml).
+       Previously selected via $(env ROBOT_NAME hsrb), which silently fails to
+       resolve to a real preset file for any ROBOT_NAME without one (e.g.
+       hsrc26) — defaults to the neutral "default" preset instead. -->
+  <arg name="human_follow_pot_fields_preset" default="default"/>
 
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
@@ -140,7 +147,7 @@
     <param name="inflation_radius" value="0.12"/>
     <param name="cost_radius" value="0.17"/>
     <param name="use_online" value="$(var use_online)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
     <param name="laser_max_y" value="$(var laser_max_y)"/>
@@ -210,9 +217,8 @@
 
   <!-- Motion Planner -->
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
-    <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
     <param name="use_online" value="$(var use_online)"/>
@@ -228,7 +234,7 @@
   </node>
 
   <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
-    <param from="$(find-pkg-share navigation_tools)/config/$(env ROBOT_NAME hsrb)_pot_fields_updator.yaml"/>
+    <param from="$(find-pkg-share navigation_tools)/config/$(var human_follow_pot_fields_preset)_pot_fields_updator.yaml"/>
   </node>
 
   <arg name="arm_default_pose"

@@ -91,9 +91,9 @@ class NavModule:
         self.param_rw_client = self.create_client(
             ParamReadWrite, '/param_read_write')
 
-        # pumasnav action cli
+        # pumas_nav action cli
         self.nav_action_client = ActionClient(
-            self._node, PumasNav, '/pumasnav')
+            self._node, PumasNav, '/pumas_nav')
         self._goal_handle = None
         self._result_future = None
         self._send_goal_future = None

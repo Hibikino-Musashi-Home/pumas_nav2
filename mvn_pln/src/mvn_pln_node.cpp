@@ -99,7 +99,7 @@ public:
     this->declare_parameter<bool>("patience", true);
     this->declare_parameter<float>("proximity_criterion", 2.0f);
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
-    this->declare_parameter<bool>("memory_all_obstacles", false);
+    this->declare_parameter<bool>("remember_all_obstacles", false);
 
     // If the planned path ends farther than this [m] from the requested goal,
     // treat it as a goal relocation (the goal was enclosed/unreachable and the
@@ -118,7 +118,7 @@ public:
     this->get_parameter("patience", patience_);
     this->get_parameter("proximity_criterion", proximity_criterion_);
     this->get_parameter("base_link_name", base_link_name_);
-    this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
+    this->get_parameter("remember_all_obstacles", remember_all_obstacles_);
     this->get_parameter("goal_relocation_report_threshold",
                         goal_relocation_report_threshold_);
     this->get_parameter("collision_recovery_trigger_count",
@@ -218,7 +218,7 @@ public:
 
     // pumas nav action
     nav_action_server_ = rclcpp_action::create_server<PumasNav>(
-        this, "/pumasnav",
+        this, "/pumas_nav",
         std::bind(&MotionPlannerNode::handle_goal, this, std::placeholders::_1,
                   std::placeholders::_2),
         std::bind(&MotionPlannerNode::handle_cancel, this,
@@ -374,9 +374,9 @@ private:
       2.0f * M_PI; // total rotation before giving up [rad]
   float recovery_rotated_total_ = 0.0f;
 
-  // Memory obstacle clear flow (used when memory_all_obstacles is enabled and
+  // Memory obstacle clear flow (used when remember_all_obstacles is enabled and
   // path planning has just failed — we wipe accumulated memory then retry)
-  bool memory_all_obstacles_ = false;
+  bool remember_all_obstacles_ = false;
   bool clear_memory_request_sent_ = false;
   bool clear_memory_response_received_ = false;
   bool clear_memory_success_ = false;
@@ -438,7 +438,7 @@ private:
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_are_there_obs_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr clt_is_in_obstacles_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr
-      clt_clear_memory_all_obstacles_;
+      clt_clear_obstacle_memory_;
 
   std::vector<std::thread> threads_;
 
@@ -501,8 +501,8 @@ private:
         proximity_criterion_ = param.as_double();
       else if (param.get_name() == "base_link_name")
         base_link_name_ = param.as_string();
-      else if (param.get_name() == "memory_all_obstacles")
-        memory_all_obstacles_ = param.as_bool();
+      else if (param.get_name() == "remember_all_obstacles")
+        remember_all_obstacles_ = param.as_bool();
       else if (param.get_name() == "goal_relocation_report_threshold")
         goal_relocation_report_threshold_ = param.as_double();
       else if (param.get_name() == "collision_recovery_trigger_count")
@@ -607,9 +607,9 @@ private:
         make_name("/map_augmenter/are_there_obstacles"));
     clt_is_in_obstacles_ = this->create_client<std_srvs::srv::Trigger>(
         make_name("/map_augmenter/is_inside_obstacles"));
-    clt_clear_memory_all_obstacles_ =
+    clt_clear_obstacle_memory_ =
         this->create_client<std_srvs::srv::Trigger>(
-            make_name("/map_augmenter/clear_memory_all_obstacles"));
+            make_name("/map_augmenter/clear_obstacle_memory"));
 
     service_check_timer_ =
         this->create_wall_timer(std::chrono::seconds(1), [this]() {
@@ -621,7 +621,7 @@ private:
               clt_get_aug_costmap_->wait_for_service(std::chrono::seconds(0)) &&
               clt_are_there_obs_->wait_for_service(std::chrono::seconds(0)) &&
               clt_is_in_obstacles_->wait_for_service(std::chrono::seconds(0)) &&
-              clt_clear_memory_all_obstacles_->wait_for_service(
+              clt_clear_obstacle_memory_->wait_for_service(
                   std::chrono::seconds(0))) {
             RCLCPP_INFO(this->get_logger(),
                         "MotionPlanner.-> All motion planner clients are now "
@@ -1126,7 +1126,7 @@ private:
     motion_synth_client_->async_send_goal(goal_msg, send_goal_options);
   }
 
-  void request_clear_memory_all_obstacles() {
+  void request_clear_obstacle_memory() {
     if (clear_memory_request_sent_) {
       return;
     }
@@ -1138,7 +1138,7 @@ private:
 
     auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
 
-    clt_clear_memory_all_obstacles_->async_send_request(
+    clt_clear_obstacle_memory_->async_send_request(
         request,
         [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
           try {
@@ -1147,7 +1147,7 @@ private:
           } catch (const std::exception &e) {
             RCLCPP_ERROR(this->get_logger(),
                          "MotionPlanner.-> Failed to call "
-                         "clear_memory_all_obstacles: %s",
+                         "clear_obstacle_memory: %s",
                          e.what());
             clear_memory_failed_ = true;
           }
@@ -1365,16 +1365,16 @@ private:
                     << std::endl;
           pub_simple_move_stop_->publish(std_msgs::msg::Empty());
 
-          if (memory_all_obstacles_) {
-            if (!clt_clear_memory_all_obstacles_->wait_for_service(
+          if (remember_all_obstacles_) {
+            if (!clt_clear_obstacle_memory_->wait_for_service(
                     std::chrono::seconds(1))) {
               RCLCPP_ERROR(this->get_logger(),
-                           "MotionPlanner.-> clear_memory_all_obstacles "
+                           "MotionPlanner.-> clear_obstacle_memory "
                            "service not available; falling back.");
               state = patience_ ? SM_CHECK_IF_OBSTACLES
                                 : SM_CHECK_IF_INSIDE_OBSTACLES;
             } else {
-              request_clear_memory_all_obstacles();
+              request_clear_obstacle_memory();
               state = SM_WAIT_FOR_CLEAR_MEMORY_RESPONSE;
             }
           } else {
@@ -1400,7 +1400,7 @@ private:
         if (clear_memory_failed_) {
           RCLCPP_WARN(
               this->get_logger(),
-              "MotionPlanner.-> clear_memory_all_obstacles call failed.");
+              "MotionPlanner.-> clear_obstacle_memory call failed.");
         } else if (clear_memory_success_) {
           RCLCPP_WARN(this->get_logger(),
                       "MotionPlanner.-> Cleared memory obstacles due to path "
@@ -1408,7 +1408,7 @@ private:
         } else {
           RCLCPP_WARN(
               this->get_logger(),
-              "MotionPlanner.-> clear_memory_all_obstacles returned false.");
+              "MotionPlanner.-> clear_obstacle_memory returned false.");
         }
 
         state = SM_CALCULATE_PATH;

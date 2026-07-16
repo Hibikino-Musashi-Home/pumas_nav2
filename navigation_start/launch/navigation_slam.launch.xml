@@ -32,7 +32,7 @@
   <arg name="use_online" default="True"/>
   <arg name="mvn_pln_patience" default="False"/>
   <arg name="proximity_criterion" default="0.8"/>
-  <arg name="memory_all_obstacles" default="True"/>
+  <arg name="remember_all_obstacles" default="True"/>
   <arg name="collision_recovery_trigger_count" default="3"/>
   <arg name="disable_rear_path_plan" default="True"/>
   <arg name="online_behind_clearance" default="1.0"/>
@@ -133,7 +133,7 @@
     <param name="cost_radius" value="0.35"/> 
 
     <param name="use_online" value="$(var use_online)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
 
     <param name="laser_max_x" value="$(var laser_max_x)"/>
     <param name="laser_min_x" value="$(var laser_min_x)"/>
@@ -240,10 +240,9 @@
         exec="mvn_pln_node"
         output="screen"
         respawn="true">
-    <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
-    <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
     <param name="use_online" value="$(var use_online)"/>
   </node>

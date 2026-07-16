@@ -70,7 +70,7 @@ public:
     this->declare_parameter("prohibition_map_server",
                             "/prohibition_map_server/map");
     this->declare_parameter("base_link_name", "base_footprint");
-    this->declare_parameter("memory_all_obstacles", false);
+    this->declare_parameter("remember_all_obstacles", false);
     this->declare_parameter("cloud_wait_timeout", 0.5);
 
     // Initialize internal variables from declared parameters
@@ -106,7 +106,7 @@ public:
     this->get_parameter("static_map_server", static_map_server_);
     this->get_parameter("prohibition_map_server", prohibition_map_server_);
     this->get_parameter("base_link_name", base_link_name_);
-    this->get_parameter("memory_all_obstacles", memory_all_obstacles_);
+    this->get_parameter("remember_all_obstacles", remember_all_obstacles_);
     this->get_parameter("cloud_wait_timeout", cloud_wait_timeout_);
 
     cloud_cb_group_ =
@@ -185,10 +185,10 @@ public:
         std::bind(&MapAugmenterNode::callback_is_inside_obstacles, this,
                   std::placeholders::_1, std::placeholders::_2));
 
-    srv_clear_memory_all_obstacles_ =
+    srv_clear_obstacle_memory_ =
         this->create_service<std_srvs::srv::Trigger>(
-            make_name("/map_augmenter/clear_memory_all_obstacles"),
-            std::bind(&MapAugmenterNode::callback_clear_memory_all_obstacles,
+            make_name("/map_augmenter/clear_obstacle_memory"),
+            std::bind(&MapAugmenterNode::callback_clear_obstacle_memory,
                       this, std::placeholders::_1, std::placeholders::_2));
 
     // ############
@@ -250,9 +250,9 @@ private:
   std::string base_link_name_;
 
   // Persistent "memory" of every cell ever observed as obstacle.
-  // /map_augmenter/clear_memory_all_obstacles.
+  // /map_augmenter/clear_obstacle_memory.
   //
-  bool memory_all_obstacles_ = false;
+  bool remember_all_obstacles_ = false;
   std::set<std::pair<int, int>> memory_cells_;
   std::mutex memory_mutex_;
 
@@ -309,7 +309,7 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_are_there_obstacles_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_is_inside_obstacles_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr
-      srv_clear_memory_all_obstacles_;
+      srv_clear_obstacle_memory_;
 
   // ############
   //  Parameter callback handle
@@ -399,9 +399,9 @@ private:
       else if (param.get_name() == "cloud_wait_timeout")
         cloud_wait_timeout_ = param.as_double();
 
-      else if (param.get_name() == "memory_all_obstacles") {
-        memory_all_obstacles_ = param.as_bool();
-        if (!memory_all_obstacles_) {
+      else if (param.get_name() == "remember_all_obstacles") {
+        remember_all_obstacles_ = param.as_bool();
+        if (!remember_all_obstacles_) {
           std::lock_guard<std::mutex> lock(memory_mutex_);
           memory_cells_.clear();
         }
@@ -1043,7 +1043,7 @@ private:
   }
 
   void apply_memory_obstacles() {
-    if (!memory_all_obstacles_)
+    if (!remember_all_obstacles_)
       return;
     std::lock_guard<std::mutex> lock(memory_mutex_);
     const double res = obstacles_map_.info.resolution;
@@ -1058,7 +1058,7 @@ private:
     }
   }
 
-  void callback_clear_memory_all_obstacles(
+  void callback_clear_obstacle_memory(
       const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     (void)request;
@@ -1099,7 +1099,7 @@ private:
           yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
 
         v = robot_to_map * v;
-        if (memory_all_obstacles_)
+        if (remember_all_obstacles_)
           add_memory_obstacle(v);
 
         int cell = 0;
@@ -1173,7 +1173,7 @@ private:
           v.y() > laser_min_y_ && v.y() < laser_max_y_ &&
           v.z() > laser_min_z_ && v.z() < laser_max_z_) {
         v = robot_to_map * v;
-        if (memory_all_obstacles_)
+        if (remember_all_obstacles_)
           add_memory_obstacle(v);
 
         int cell = 0;
@@ -1335,7 +1335,7 @@ private:
     obstacles_map_with_sensors();
 
     // Include remembered obstacles in the map handed to the path planner
-    // (no-op unless memory_all_obstacles is enabled).
+    // (no-op unless remember_all_obstacles is enabled).
     apply_memory_obstacles();
 
     obstacles_inflated_map_ = inflate_map(obstacles_map_, inflation_radius_);
@@ -1400,7 +1400,7 @@ private:
       obstacles_map_with_sensors();
 
       apply_memory_obstacles();
-      if (memory_all_obstacles_) {
+      if (remember_all_obstacles_) {
         std::lock_guard<std::mutex> lock(memory_mutex_);
         are_there_obstacles_ = are_there_obstacles_ || !memory_cells_.empty();
       }

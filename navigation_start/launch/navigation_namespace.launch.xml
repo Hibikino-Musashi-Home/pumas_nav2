@@ -286,7 +286,6 @@
     <param name="base_link_name" value="$(var base_link_name)"/>
     <param name="use_online" value="$(var use_online)"/>
 
-    <remap from="/nav_control/goal" to="$(var goal_topic)"/>
   </node>
 
   <arg name="arm_default_pose"
