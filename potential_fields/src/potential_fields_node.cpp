@@ -588,7 +588,13 @@ private:
 
   void callback_cmd_vel(const geometry_msgs::msg::Twist::SharedPtr msg) {
     try {
-      current_speed_linear_ = msg->linear.x;
+      // Translation magnitude, not linear.x alone: an omni base sliding
+      // sideways (linear.x ~ 0, linear.y != 0) must still arm the collision
+      // checks. Backward motion stays "stopped" though — the boxes only cover
+      // the front, and mvn_pln's recovery back-up would otherwise re-trigger
+      // on the very obstacle it is escaping.
+      current_speed_linear_ =
+          std::hypot(std::max(0.0, msg->linear.x), msg->linear.y);
       current_speed_angular_ = msg->angular.z;
     } catch (const std::exception &e) {
       RCLCPP_ERROR(this->get_logger(),

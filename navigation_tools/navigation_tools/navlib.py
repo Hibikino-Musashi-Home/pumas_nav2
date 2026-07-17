@@ -308,6 +308,21 @@ class NavModule:
 
         self.get_logger().info(f'NavModule.->use_point_cloud set to {value}')
 
+    def _set_omni_goal_yaw_align(self, enabled: bool):
+        # Toggle simple_move's last-mile omni (yaw_correction_omni_behavior) at
+        # runtime, the same way _set_move_head toggles move_head. When enabled
+        # the robot slides onto the goal pose while yawing onto its orientation
+        # over the final yaw_correction_omni_distance metres, instead of arriving
+        # and turning in place.
+        value = 'true' if enabled else 'false'
+        self.call_param_rw(
+            node_name='simple_move',
+            param_name='yaw_correction_omni_behavior',
+            param_value=value,
+            write=True,
+        )
+        self.get_logger().info(f'NavModule.->omni_goal_yaw_align set to {value}')
+
     def callback_stop(self, msg):
         self.robot_stop = True
 
@@ -567,6 +582,7 @@ class NavModule:
         goal_distance=None,
         motion_synth=False,
         near_goal_callback=None,
+        omni_goal_yaw_align=None,
     ) -> bool:
         self.get_logger().info(
             f'NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}'
@@ -574,6 +590,11 @@ class NavModule:
 
         self.robot_stop = False
         self._near_goal_callback = near_goal_callback
+
+        # Per-goal opt-in/out of the last-mile omni goal-yaw alignment. None
+        # leaves the simple_move launch default untouched.
+        if omni_goal_yaw_align is not None:
+            self._set_omni_goal_yaw_align(bool(omni_goal_yaw_align))
 
         if not motion_synth:
             self.motion_synth_start_pose = None
@@ -678,6 +699,7 @@ class NavModule:
         gaze_point=False,
         via_points=None,
         near_goal_callback=None,
+        omni_goal_yaw_align=None,
     ):
         self.initialize_before_new_goal(send_stop=True)
 
@@ -721,6 +743,7 @@ class NavModule:
             goal_distance,
             motion_synth=True,
             near_goal_callback=near_goal_callback,
+            omni_goal_yaw_align=omni_goal_yaw_align,
         )
 
         # Ensure gaze is cancelled and move_head restored after nav ends

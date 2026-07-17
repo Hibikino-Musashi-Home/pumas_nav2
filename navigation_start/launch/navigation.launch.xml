@@ -23,6 +23,31 @@
        profile. Can also be toggled at runtime via param_rw. -->
   <arg name="use_constant_speed" default="False"/>
   <arg name="constant_speed" default="0.3"/>
+  <!-- Last one mile omni: unicycle制御でパスを追従し，ゴール残距離が
+       yaw_correction_omni_distance[m] を切ったらパス追従をomni(holonomic)制御へ
+       切替え，並進しながらgoal姿勢へ回り込む(到着後のその場旋回をなくす)．
+       パスの大半はunicycle制御なので体は自然に進行方向を向く． -->
+  <arg name="yaw_correction_omni_behavior" default="True"/>
+  <arg name="yaw_correction_omni_distance" default="1.0"/>
+  <!-- last one mile専用の強めyawゲイン．到着時にはmvn_plnの最終yaw補正が
+       ほぼ空になるくらい回り切る．首もこの区間はgoal yaw方向を向く． -->
+  <arg name="yaw_correction_omni_gain" default="4.5"/>
+  <!-- last one mile中はcollision_riskによる停止とpot_fieldsの反発を無効化．
+       ゴールは家具のすぐ手前にあることが多く，検知が収束を邪魔するため．
+       完全に塞がれた場合はattemptsタイムアウトでabortする． -->
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+  <!-- last one mile開始時に体と一緒に首もgoal_yaw方向を向く．Falseなら首は
+       通常どおりゴール(進行)方向を向いたまま頭部トラッキングを続ける． -->
+  <arg name="yaw_correction_align_head" default="True"/>
+  <!-- Head pan range. Shared by head_controller and simple_move so the yaw
+       controller knows exactly how far the camera can actually pan. -->
+  <arg name="head_pan_min" default="-3.14"/>
+  <arg name="head_pan_max" default="1.74"/>
+  <!-- How far down the path the camera looks, in path points (one per map cell,
+       so x resolution for metres). Raise it to anticipate turns earlier. -->
+  <arg name="head_lookahead_points" default="5"/>
+  <!-- Neck slew rate [rad/s] used to time-parameterize head trajectories. -->
+  <arg name="head_default_speed" default="1.0"/>
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
@@ -175,6 +200,12 @@
     <param name="max_angular_speed" value="1.25"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
+    <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
     <param name="move_head" value="$(var move_head)"/>
@@ -247,8 +278,9 @@
     <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
-    <param name="pan_min" value="-3.14"/>
-    <param name="pan_max" value="1.74"/>
+    <param name="pan_min" value="$(var head_pan_min)"/>
+    <param name="pan_max" value="$(var head_pan_max)"/>
+    <param name="head_default_speed" value="$(var head_default_speed)"/>
     <param name="tilt_min" value="-0.7"/>
     <param name="tilt_max" value="0.47"/>
   </node>
