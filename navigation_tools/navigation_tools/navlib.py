@@ -586,7 +586,8 @@ class NavModule:
         # client only forwards the value and waits for the action result.
         self.send_nav_action_goal(
             goal,
-            goal_distance=(goal_distance if goal_distance and goal_distance > 0 else 0.0),
+            goal_distance=(
+                goal_distance if goal_distance and goal_distance > 0 else 0.0),
         )
 
         if not self._external_node:
@@ -769,14 +770,15 @@ if __name__ == '__main__':
     gaze_tf = False
 
     via_points = [
-        Pose2D(x=2.6, y=3.9, theta=0.0),
-        Pose2D(x=0.0, y=1.0, theta=0.0),
+        # Pose2D(x=2.6, y=3.9, theta=0.0),
+        Pose2D(x=0.9, y=0.9, theta=0.0),
+        # Pose2D(x=0.0, y=1.0, theta=0.0),
     ]
-    via_points = None
+    # via_points = None
 
     goal = Pose2D(x=0.5, y=3.6, theta=0.0)
+    goal = Pose2D(x=0.0, y=2.67, theta=3.14)
     goal = Pose2D(x=0.0, y=0.0, theta=0.0)
-    goal = Pose2D(x=2.58, y=2.0, theta=0.0)
     success = nav.nav_goal(
         goal,
         motion_synth_pose=ms_config,

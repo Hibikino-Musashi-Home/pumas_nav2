@@ -35,7 +35,7 @@
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
-  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <!--[m] On A* failure, fill white (0) within this radius around the robot and replan (escape). Precedes backing up. Disabled if <= 0-->
   <arg name="escape_clear_radius" default="0.6"/>
 
   <!--depth-->
@@ -58,10 +58,10 @@
   <arg name="cloud_min_z" default="0.1"/>
   <arg name="cloud_max_z" default="1.0"/>
 
-  <!--near goal sentのしきい値-->
+  <!--near_goal send threshold-->
   <arg name="proximity_criterion" default="0.2"/>
 
-  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <!--Number of collision_risk aborts to detect before triggering recovery (back up / shrink detection box)-->
   <arg name="collision_recovery_trigger_count" default="3"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
@@ -237,14 +237,13 @@
     <param from="$(find-pkg-share navigation_tools)/config/$(var human_follow_pot_fields_preset)_pot_fields_updator.yaml"/>
   </node>
 
+  <!--in hsr, arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
   <arg name="arm_default_pose"
-  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
-             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
-    <param name="torso_default_pose" value="0.1"/>
-    <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
     <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
