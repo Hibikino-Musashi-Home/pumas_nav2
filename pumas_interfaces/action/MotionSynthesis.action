@@ -6,9 +6,9 @@ bool apply_goal_pose
 pumas_interfaces/Joints goal_pose
 string[] exec_from_first
 geometry_msgs/Point goal_tolerance
-# time_from_start (sec) for arm/head trajectory commands during this motion.
-# Leave 0.0 (unset) to use the motion_synth_server default (0.5 s).
+# time_from_start (sec) for arm/head trajectory commands during this motion
 float32 motion_execution_time
+
 ---
 # Result
 bool result

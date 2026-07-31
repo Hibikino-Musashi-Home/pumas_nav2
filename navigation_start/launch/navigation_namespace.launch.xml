@@ -1,6 +1,8 @@
 <launch>
 
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
+  <arg name="use_online" default="False"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="namespace" default="my_robot"/>
   <arg name="use_namespace" default="false"/>
@@ -36,6 +38,9 @@
   <arg name="use_point_cloud" default="True"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
+  <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
 
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
@@ -48,7 +53,8 @@
   <arg name="laser_max_x" default="0.50"/>
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
-  <arg name="laser_min_z" default="0.025"/>
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
   <arg name="cloud_min_x" default="0.30"/>
   <arg name="cloud_max_x" default="0.80"/>
@@ -194,6 +200,8 @@
     
     <param name="max_linear_speed" value="0.8"/>
     <param name="max_angular_speed" value="1.25"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
 
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
@@ -273,9 +281,14 @@
     
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="base_link_name" value="$(var base_link_name)"/>
-    
+    <param name="use_online" value="$(var use_online)"/>
+
     <remap from="/nav_control/goal" to="$(var goal_topic)"/>
   </node>
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller"
@@ -285,7 +298,7 @@
         respawn="true">
         <param name="torso_default_pose" value="0.15"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
+        <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
 
   <node name="head_controller"

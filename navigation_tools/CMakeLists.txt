@@ -68,10 +68,20 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  ${PROJECT_NAME}/gaze_tf_broadcaster.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Ensure both are included
 #install(TARGETS
 #_node
 #  DESTINATION lib/${PROJECT_NAME}
 #)
+
+install(DIRECTORY
+  config
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()

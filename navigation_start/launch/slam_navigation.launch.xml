@@ -1,6 +1,7 @@
 <launch>
 
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
 
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
@@ -18,29 +19,41 @@
   <arg name="use_point_cloud" default="True"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
+  <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
 
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
   <arg name="lidar_points_threshold" default="20"/>
 
-  <arg name="mvn_pln_patience" default="False"/>
+
+  <!--for online-->
   <arg name="use_online" default="True"/>
+  <arg name="mvn_pln_patience" default="False"/>
+  <arg name="proximity_criterion" default="0.8"/>
   <arg name="memory_all_obstacles" default="True"/>
+  <arg name="collision_recovery_trigger_count" default="3"/>
+  <arg name="disable_rear_path_plan" default="True"/>
+  <arg name="online_behind_clearance" default="1.0"/>
+
+  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <arg name="escape_clear_radius" default="0.6"/>
 
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.50"/>
-  <arg name="laser_min_y" default="-0.25"/>
-  <arg name="laser_max_y" default="0.25"/>
-  <arg name="laser_min_z" default="0.025"/> <!-- hsrc -->
-  <!--arg name="laser_min_z" default="0.022"/--> <!-- hsrc ex-->
+  <arg name="laser_min_y" default="-0.2"/>
+  <arg name="laser_max_y" default="0.2"/>
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.00"/>
-  <arg name="cloud_min_x" default="0.35"/>
-  <arg name="cloud_max_x" default="0.65"/>
-  <arg name="cloud_min_y" default="-0.30"/>
-  <arg name="cloud_max_y" default="0.30"/>
-  <arg name="cloud_min_z" default="0.05"/>
-  <arg name="cloud_max_z" default="1.20"/>
+  <arg name="cloud_min_x" default="0.40"/>
+  <arg name="cloud_max_x" default="0.55"/>
+  <arg name="cloud_min_y" default="-0.25"/>
+  <arg name="cloud_max_y" default="0.25"/>
+  <arg name="cloud_min_z" default="0.1"/>
+  <arg name="cloud_max_z" default="1.0"/>
 
   <!-- Map servers -->
   <node name="prohibition_map_server" 
@@ -95,8 +108,8 @@
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     
     <param name="decay_factor" value="20"/>    
-    <param name="inflation_radius" value="0.18"/>
-    <param name="cost_radius" value="0.20"/> 
+    <param name="inflation_radius" value="0.22"/>
+    <param name="cost_radius" value="0.35"/> 
 
     <param name="use_online" value="$(var use_online)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
@@ -132,7 +145,10 @@
         output="screen"
         respawn="true">
     <param name="use_online" value="$(var use_online)"/>
+    <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
+    <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="diagonal_paths" value="True"/>
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
   </node>
 
   <node name="simple_move"  
@@ -141,8 +157,10 @@
         output="screen">
     <param name="max_linear_speed" value="1.0"/>
     <param name="max_angular_speed" value="1.25"/>
-
-    <param name="control_alpha" value="0.2"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="linear_acceleration" value="0.2"/>
+    <param name="control_alpha" value="0.35"/>
     <param name="control_beta" value="0.8"/>
 
     <param name="move_head" value="True"/>
@@ -177,10 +195,10 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
-    <param name="laser_pot_fields_d0" value="0.50"/>
+    <param name="laser_pot_fields_d0" value="0.60"/>
     <param name="laser_pot_fields_k_rej" value="0.30"/>
 
-    <param name="cloud_pot_fields_d0" value="0.70"/>
+    <param name="cloud_pot_fields_d0" value="0.80"/>
     <param name="cloud_pot_fields_k_rej" value="0.30"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
@@ -205,17 +223,24 @@
         output="screen">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="use_online" value="$(var use_online)"/>
   </node>
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller"
         pkg="hardware_controller"
         exec="arm_node"
         output="screen">
-        <param name="torso_default_pose" value="0.15"/>
+        <param name="torso_default_pose" value="0.0"/>
         <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-        <param name="arm_default_pose" value="[-0.26, -1.57, -1.57, 0.0]"/>
+        <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
 
   <node name="head_controller"
@@ -225,7 +250,7 @@
         <param name="pan_min" value="-3.14" />
         <param name="pan_max" value="1.74" />
         <param name="tilt_min" value="-0.7" />
-        <param name="tilt_max" value="0.47" />
+        <param name="tilt_max" value="0.6" />
   </node>
 
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">

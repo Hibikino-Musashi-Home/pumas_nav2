@@ -1,4 +1,5 @@
 #include "PathPlanner.h"
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -8,7 +9,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
                         const geometry_msgs::msg::Pose &start_pose,
                         const geometry_msgs::msg::Pose &goal_pose,
                         bool diagonal_paths, nav_msgs::msg::Path &result_path,
-                        bool use_online) {
+                        bool use_online, double max_goal_relocation_dist) {
 
   std::cout << "PathCalculator.-> Calculating by A* from "
             << start_pose.position.x << "  ";
@@ -37,9 +38,6 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   idx_goal_x = (int)((goal_pose.position.x - map.info.origin.position.x) /
                      map.info.resolution);
   int idx_goal = idx_goal_y * map.info.width + idx_goal_x;
-
-  // double distance = 0.1;
-  // double angle = 1.414213562;
 
   int best_idx = -1;
   double best_distance = 1e9;
@@ -106,6 +104,14 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
       idx_goal_x = idx_goal % map.info.width;
       std::cout << "PathPlanner.-> Goal updated to nearest free cell: "
                 << idx_goal_x << ", " << idx_goal_y << std::endl;
+    } else {
+      // reloaction faile: restore the original goal so the checks below, fix
+      // bug by r.k
+      idx_goal_x = _idx_goal_x;
+      idx_goal_y = _idx_goal_y;
+      idx_goal = idx_goal_y * map.info.width + idx_goal_x;
+      std::cout << "PathPlanner.-> Could not relocate to a free cell."
+                << std::endl;
     }
   }
 
@@ -139,9 +145,22 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   }
 
   if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
-    std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
-              << std::endl;
-    return false;
+    // The goal cell itself is non-free (buried in an obstacle outline or on
+    // unknown space) and the spiral above could not nudge it onto a free cell
+    // within its small search ring (radius <= 10 cells ~= 0.5 m). When goal
+    // relocation is enabled, do NOT fail here: fall through to A*, which floods
+    // the reachable free space and relocates to the nearest reachable cell
+    // within max_goal_relocation_dist of the requested goal (handled after the
+    // search loop below, keyed off the original _idx_goal). With relocation
+    // disabled keep the original fail-fast behavior. fix by r.k
+    if (max_goal_relocation_dist <= 0.0) {
+      std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
+                << std::endl;
+      return false;
+    }
+    std::cout << "PathPlanner.-> Goal is inside non-free space; relocating to "
+                 "the nearest reachable cell (within "
+              << max_goal_relocation_dist << " m)." << std::endl;
   }
   if (!allow_unknown_space_to_navigate(map.data[idx_start])) {
     std::cout << "PathPlanner.->Start point is inside non-free space!!!!"
@@ -167,11 +186,31 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   current_node->in_open_list = true;
   open_list.push(current_node);
 
+  // Track the reachable (closed) cell nearest the ORIGINALLY requested goal
+  // (_idx_goal_x/_idx_goal_y, before any spiral relocation) so we can fall back
+  // to it when the goal itself is unreachable, e.g. a person inside a furniture
+  // outline. Distances are kept in cells (squared) for the comparison.
+  int closest_idx = idx_start;
+  long long closest_d2 =
+      (long long)(idx_start_x - _idx_goal_x) * (idx_start_x - _idx_goal_x) +
+      (long long)(idx_start_y - _idx_goal_y) * (idx_start_y - _idx_goal_y);
+
   while (!open_list.empty() && current_node->index != idx_goal) {
 
     current_node = open_list.top();
     open_list.pop();
     current_node->in_closed_list = true;
+
+    {
+      int cx = current_node->index % (int)map.info.width;
+      int cy = current_node->index / (int)map.info.width;
+      long long d2 = (long long)(cx - _idx_goal_x) * (cx - _idx_goal_x) +
+                     (long long)(cy - _idx_goal_y) * (cy - _idx_goal_y);
+      if (d2 < closest_d2) {
+        closest_d2 = d2;
+        closest_idx = current_node->index;
+      }
+    }
 
     node_neighbors[0] = current_node->index + map.info.width;
     node_neighbors[1] = current_node->index + 1;
@@ -188,6 +227,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
       int ni = node_neighbors[i];
       if (ni < 0 ||
           ni >= static_cast<int>(map.data.size())) // check out of range
+        continue;
+
+      int w = static_cast<int>(map.info.width);
+      if (std::abs((ni % w) - (current_node->index % w)) >
+          1) // reject horizontal wrap-around to the opposite side map edge, fix
+             // bug r.k
         continue;
 
       if (!allow_unknown_space_to_navigate(map.data[node_neighbors[i]]) ||
@@ -223,8 +268,35 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
             << std::endl;
 
   if (current_node->index != idx_goal) {
-    std::cout << "PathPlanner.-> current_node->index != idx_goal " << std::endl;
-    return false;
+    // Goal is unreachable (the open list was exhausted without reaching it),
+    // e.g. it sits inside a free pocket enclosed by furniture outlines. If
+    // relocation is enabled, fall back to the nearest reachable cell (the
+    // closed node closest to the requested goal) as long as it is within the
+    // allowed distance; otherwise fail as before.
+    if (max_goal_relocation_dist > 0.0) {
+      int cx = closest_idx % (int)map.info.width;
+      int cy = closest_idx / (int)map.info.width;
+      double dist_m = std::hypot((double)(cx - _idx_goal_x),
+                                 (double)(cy - _idx_goal_y)) *
+                      map.info.resolution;
+      if (dist_m <= max_goal_relocation_dist) {
+        std::cout << "PathPlanner.-> Goal unreachable (enclosed). Relocated to "
+                     "nearest reachable cell "
+                  << dist_m << " m from requested goal." << std::endl;
+        current_node = &nodes[closest_idx];
+        // fall through to path reconstruction below
+      } else {
+        std::cout << "PathPlanner.-> Goal unreachable; nearest reachable cell "
+                     "is "
+                  << dist_m << " m away (> " << max_goal_relocation_dist
+                  << " m). Giving up." << std::endl;
+        return false;
+      }
+    } else {
+      std::cout << "PathPlanner.-> current_node->index != idx_goal "
+                << std::endl;
+      return false;
+    }
   }
 
   result_path.header.frame_id = "map";
@@ -240,6 +312,14 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
         map.info.origin.position.y;
     result_path.poses.insert(result_path.poses.begin(), p);
     current_node = current_node->parent;
+  }
+
+  if (result_path.poses.empty()) {
+    // Degenerate relocation: the robot's own cell is already the nearest
+    // reachable point to the goal. Return a single-point path at the start (as
+    // the start==goal branch does) so callers treat it as a valid trivial plan.
+    p.pose = start_pose;
+    result_path.poses.push_back(p);
   }
 
   std::cout << "PathCalculator.->Resulting path by A* has "
@@ -281,6 +361,75 @@ nav_msgs::msg::Path PathPlanner::SmoothPath(const nav_msgs::msg::Path &path,
   std::cout << "PathCalculator.->Smoothing finished after " << attempts
             << " attempts" << std::endl;
   return newPath;
+}
+
+// Lower the cost of every cell within `radius` [m] of `via` by `cost_bias`
+// (clamped at 0), making that region attractive to A*.
+void PathPlanner::addViaPointBias(nav_msgs::msg::OccupancyGrid &cost_map,
+                                  const geometry_msgs::msg::Pose &via,
+                                  double radius, int cost_bias) {
+  int width = cost_map.info.width;
+  int height = cost_map.info.height;
+  double resolution = cost_map.info.resolution;
+  double origin_x = cost_map.info.origin.position.x;
+  double origin_y = cost_map.info.origin.position.y;
+
+  int center_x = (int)((via.position.x - origin_x) / resolution);
+  int center_y = (int)((via.position.y - origin_y) / resolution);
+  int cell_radius = (int)(radius / resolution);
+
+  for (int dy = -cell_radius; dy <= cell_radius; ++dy) {
+    for (int dx = -cell_radius; dx <= cell_radius; ++dx) {
+      int x = center_x + dx;
+      int y = center_y + dy;
+      if (x >= 0 && x < width && y >= 0 && y < height) {
+        int idx = y * width + x;
+        double dist = std::sqrt(dx * dx + dy * dy) * resolution;
+        if (dist <= radius) {
+          cost_map.data[idx] = static_cast<int8_t>(
+              std::max(0, static_cast<int>(cost_map.data[idx]) - cost_bias));
+        }
+      }
+    }
+  }
+}
+
+bool PathPlanner::AStarWithViaPoints(
+    const nav_msgs::msg::OccupancyGrid &map,
+    const nav_msgs::msg::OccupancyGrid &cost_map,
+    const geometry_msgs::msg::Pose &start_pose,
+    const std::vector<geometry_msgs::msg::Pose> &via_poses,
+    const geometry_msgs::msg::Pose &goal_pose, bool diagonal_paths,
+    nav_msgs::msg::Path &result_path, bool use_online,
+    double max_goal_relocation_dist) {
+  result_path.poses.clear();
+  nav_msgs::msg::Path partial_path;
+  geometry_msgs::msg::Pose current_start = start_pose;
+
+  for (const auto &via : via_poses) {
+    nav_msgs::msg::OccupancyGrid biased_cost_map = cost_map;
+    PathPlanner::addViaPointBias(biased_cost_map, via, 0.5,
+                                 400); // via costs radius, bias
+    partial_path.poses.clear();
+    if (!PathPlanner::AStar(map, biased_cost_map, current_start, via,
+                            diagonal_paths, partial_path, use_online))
+      return false;
+    result_path.poses.insert(result_path.poses.end(),
+                             partial_path.poses.begin(),
+                             partial_path.poses.end());
+    current_start = via;
+  }
+
+  // Only the final goal segment may relocate to the nearest reachable cell;
+  // via points are still planned strictly (passing 0.0 above).
+  partial_path.poses.clear();
+  if (!PathPlanner::AStar(map, cost_map, current_start, goal_pose,
+                          diagonal_paths, partial_path, use_online,
+                          max_goal_relocation_dist))
+    return false;
+  result_path.poses.insert(result_path.poses.end(), partial_path.poses.begin(),
+                           partial_path.poses.end());
+  return true;
 }
 
 Node::Node() {

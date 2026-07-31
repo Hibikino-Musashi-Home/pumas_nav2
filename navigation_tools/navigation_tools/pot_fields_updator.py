@@ -20,7 +20,7 @@ _TARGET_PARAMS = (
     # "cloud_max_x",
 )
 _RW_SERVICE = '/param_read_write'
-_RW_CALL_TIMEOUT_SEC = 5.0
+_RW_CALL_TIMEOUT_SEC = 12.0
 _RW_WAIT_SEC = 2.0
 
 # Watchdog: if no True message is received for this long, fall back to
@@ -40,7 +40,7 @@ class PotFieldsUpdator(Node):
         # Fixed values used while following a human. Exposed as node parameters
         # so they can be tuned from the launch file without code edits.
         self.declare_parameter('human_follow.laser_pot_fields_d0', 0.50)
-        self.declare_parameter('human_follow.laser_pot_fields_k_rej', 2.00)
+        self.declare_parameter('human_follow.laser_pot_fields_k_rej', 1.00)
         # self.declare_parameter("human_follow.cloud_pot_fields_d0",    0.50)
         # self.declare_parameter("human_follow.cloud_pot_fields_k_rej", 2.00)
         self.declare_parameter('human_follow.laser_max_x', 0.70)

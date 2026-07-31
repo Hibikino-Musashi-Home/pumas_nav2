@@ -8,6 +8,7 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/range.hpp"
+#include "std_msgs/msg/bool.hpp"
 
 #include "nav_msgs/srv/get_map.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -28,6 +29,7 @@
 #include <cmath>
 #include <mutex>
 #include <set>
+#include <utility>
 
 class MapAugmenterNode : public rclcpp::Node {
 public:
@@ -123,16 +125,21 @@ public:
             std::bind(&MapAugmenterNode::callback_point_obstacle, this,
                       std::placeholders::_1));
 
-    sub_point_cloud_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-        point_cloud_topic_, rclcpp::SensorDataQoS(),
-        std::bind(&MapAugmenterNode::callback_point_cloud, this,
+    // Cloud subscriptions are created on demand
+    sub_enable_ = this->create_subscription<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable"),
+        rclcpp::QoS(1).transient_local(),
+        std::bind(&MapAugmenterNode::callback_enable, this,
                   std::placeholders::_1));
 
-    sub_point_cloud2_ =
-        this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            point_cloud_topic2_, rclcpp::SensorDataQoS(),
-            std::bind(&MapAugmenterNode::callback_point_cloud2, this,
-                      std::placeholders::_1));
+    sub_enable_cloud_ = this->create_subscription<std_msgs::msg::Bool>(
+        make_name("/navigation/map_augmenter/enable_cloud"),
+        rclcpp::QoS(1).transient_local(),
+        std::bind(&MapAugmenterNode::callback_enable_cloud, this,
+                  std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(),
+                "MapAugmenter.-> Point-cloud gating enabled; subscribing to "
+                "the cloud only while navigating.");
 
     sub_laser_scan_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         laser_scan_topic_, rclcpp::SensorDataQoS(),
@@ -235,12 +242,10 @@ private:
   std::string base_link_name_;
 
   // Persistent "memory" of every cell ever observed as obstacle.
-  // When memory_all_obstacles_ is true, sensor hits are also recorded in
-  // memory_cells_, and the periodic publisher re-stamps those cells after
-  // decay so they never disappear until
   // /map_augmenter/clear_memory_all_obstacles.
+  //
   bool memory_all_obstacles_ = false;
-  std::set<int> memory_cells_;
+  std::set<std::pair<int, int>> memory_cells_;
   std::mutex memory_mutex_;
 
   // ############
@@ -251,6 +256,11 @@ private:
   //  Subscribers
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr
       sub_clicked_point_;
+
+  // Episode-level gate for the on-demand point-cloud subscriptions.
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_;
+  // Cloud-only override (recovery), independent of the episode-level enable.
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_enable_cloud_;
 
   // PointCloud
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr
@@ -553,15 +563,95 @@ private:
     }
   }
 
+  // ############
+  //  On-demand point-cloud subscription management
+  void create_cloud_subscriptions() {
+    if (use_cloud_ && !sub_point_cloud_) {
+      point_cloud_received_ = false;
+      sub_point_cloud_ =
+          this->create_subscription<sensor_msgs::msg::PointCloud2>(
+              point_cloud_topic_, rclcpp::SensorDataQoS(),
+              std::bind(&MapAugmenterNode::callback_point_cloud, this,
+                        std::placeholders::_1));
+    }
+    if (use_cloud2_ && !sub_point_cloud2_) {
+      point_cloud2_received_ = false;
+      sub_point_cloud2_ =
+          this->create_subscription<sensor_msgs::msg::PointCloud2>(
+              point_cloud_topic2_, rclcpp::SensorDataQoS(),
+              std::bind(&MapAugmenterNode::callback_point_cloud2, this,
+                        std::placeholders::_1));
+    }
+  }
+
+  void destroy_cloud_subscriptions() {
+    if (sub_point_cloud_) {
+      sub_point_cloud_.reset();
+      point_cloud_received_ = false;
+    }
+    if (sub_point_cloud2_) {
+      sub_point_cloud2_.reset();
+      point_cloud2_received_ = false;
+    }
+  }
+
+  void callback_enable(const std_msgs::msg::Bool::SharedPtr msg) {
+    if (msg->data) {
+      if ((use_cloud_ && !sub_point_cloud_) ||
+          (use_cloud2_ && !sub_point_cloud2_)) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Navigation active; subscribing to point "
+                    "cloud.");
+        create_cloud_subscriptions();
+      }
+    } else {
+      if (sub_point_cloud_ || sub_point_cloud2_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Navigation idle; unsubscribing from point "
+                    "cloud to save bandwidth.");
+        destroy_cloud_subscriptions();
+      }
+    }
+  }
+
+  void callback_enable_cloud(const std_msgs::msg::Bool::SharedPtr msg) {
+    if (msg->data) {
+      if ((use_cloud_ && !sub_point_cloud_) ||
+          (use_cloud2_ && !sub_point_cloud2_)) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Cloud re-enabled; subscribing to point "
+                    "cloud.");
+        create_cloud_subscriptions();
+      }
+    } else {
+      if (sub_point_cloud_ || sub_point_cloud2_) {
+        RCLCPP_INFO(this->get_logger(),
+                    "MapAugmenter.-> Cloud disabled (recovery); unsubscribing "
+                    "from point cloud.");
+        destroy_cloud_subscriptions();
+      }
+    }
+  }
+
   // Sensor callbacks
   void
   callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    if (!use_cloud_) {
+      point_cloud_received_ = false;
+      return;
+    }
     latest_point_cloud_ = msg;
     point_cloud_received_ = true;
   }
 
   void
   callback_point_cloud2(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+    // See callback_point_cloud(): use_point_cloud2 is the single source of
+    // truth.
+    if (!use_cloud2_) {
+      point_cloud2_received_ = false;
+      return;
+    }
     latest_point_cloud2_ = msg;
     point_cloud2_received_ = true;
   }
@@ -622,19 +712,59 @@ private:
   nav_msgs::msg::OccupancyGrid
   merge_maps(const nav_msgs::msg::OccupancyGrid &a,
              const nav_msgs::msg::OccupancyGrid &b) {
-    if (a.info.width != b.info.width || a.info.height != b.info.height) {
-      RCLCPP_WARN(
-          this->get_logger(),
-          "MapAugmenter.-> WARNING!!! Cannot merge maps of different sizes!");
-      return a;
+    // Overlay semantics: the overlay map `b` (prohibition / sensor obstacles)
+    // contributes ONLY obstacle (positive) cells; everywhere else keep the base
+    // map `a`. This preserves unknown (-1) in the base map instead of turning
+    // -1 into 0 (free) via max(-1, 0). Preserving -1 lets the path planner
+    // decide via use_online whether unknown space is navigable (use_online=true:
+    // -1 reachable for SLAM; use_online=false: -1 blocked because entering
+    // unknown space is dangerous in a known environment).
+
+    // Fast path: identical geometry -> direct index-wise overlay.
+    if (a.info.width == b.info.width && a.info.height == b.info.height &&
+        a.info.resolution == b.info.resolution &&
+        a.info.origin.position.x == b.info.origin.position.x &&
+        a.info.origin.position.y == b.info.origin.position.y) {
+      nav_msgs::msg::OccupancyGrid c = a;
+      for (size_t i = 0; i < c.data.size(); ++i) {
+        if (b.data[i] > 0)
+          c.data[i] = std::max(a.data[i], b.data[i]);
+      }
+      return c;
     }
+
+    //fixed map size is different by ry0hei-kobayashi
+    if (a.info.resolution <= 0.0 || b.info.resolution <= 0.0 || b.data.empty())
+      return a;
 
     nav_msgs::msg::OccupancyGrid c = a;
-    for (size_t i = 0; i < c.data.size(); ++i) {
-      c.data[i] = static_cast<int8_t>(std::max(
-          static_cast<uint8_t>(a.data[i]), static_cast<uint8_t>(b.data[i])));
+    const double ax0 = a.info.origin.position.x;
+    const double ay0 = a.info.origin.position.y;
+    const double bx0 = b.info.origin.position.x;
+    const double by0 = b.info.origin.position.y;
+    const double ares = a.info.resolution;
+    const double bres = b.info.resolution;
+    const int aw = static_cast<int>(a.info.width);
+    const int ah = static_cast<int>(a.info.height);
+    const int bw = static_cast<int>(b.info.width);
+    const int bh = static_cast<int>(b.info.height);
+    for (int by = 0; by < bh; ++by) {
+      for (int bx = 0; bx < bw; ++bx) {
+        const int8_t v = b.data[static_cast<size_t>(by) * bw + bx];
+        if (v <= 0)
+          continue;
+        // Overlay cell center -> world -> base cell index.
+        const double wx = bx0 + (bx + 0.5) * bres;
+        const double wy = by0 + (by + 0.5) * bres;
+        const int ax = static_cast<int>((wx - ax0) / ares);
+        const int ay = static_cast<int>((wy - ay0) / ares);
+        if (ax < 0 || ay < 0 || ax >= aw || ay >= ah)
+          continue;
+        const size_t idx = static_cast<size_t>(ay) * aw + ax;
+        if (c.data[idx] < v)
+          c.data[idx] = v;
+      }
     }
-
     return c;
   }
 
@@ -656,7 +786,10 @@ private:
 
     for (int k = lower_limit; k < upper_limit; ++k) {
       if (map.data[k] > 0) {
+        int col = k % static_cast<int>(map.info.width);
         for (int i = -n; i <= n; ++i) {
+          if (col + i < 0 || col + i >= static_cast<int>(map.info.width))
+            continue; // skip horizontal wrap_around path
           for (int j = -n; j <= n; ++j) {
             int idx = k + j * map.info.width + i;
             if (idx >= 0 && idx < static_cast<int>(new_map.data.size())) {
@@ -677,16 +810,47 @@ private:
 
     nav_msgs::msg::OccupancyGrid cost_map = map;
     int steps = static_cast<int>(cost_radius / map.info.resolution);
+
+    if (steps < 1)
+      return cost_map; // cost radius (black inflation) smaller than one cell;
+                       // no inflation cost
+
+    const int NearnessToObstacle = 6;
+    // add by ry0hei-kobayashi 2026/6/5, original impl made by Marco Negrete.
+    // This function calculates the "nearness to obstacles", e.g., for the
+    // following grid:
+    /*
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0
+      0 0 x x x 0 0 0 0 0 0 0 0 0
+      0 0 x x 0 0 0 0 0 0 0 0 0 0
+      0 0 x x 0 0 0 0 0 0 0 0 x x
+      0 0 0 0 0 0 0 0 0 0 0 0 x x
+      0 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+      // the resulting nearness values would be:
+
+      2 3 3 3 3 3 2 1 0 1 1 1 1 1
+      2 3 x x x 3 2 1 0 1 2 2 2 2
+      2 3 x x 3 3 2 1 0 1 2 3 3 3
+      2 3 x x 3 2 2 1 0 1 2 3 x x
+      2 3 3 3 3 2 1 1 0 1 2 3 x x
+      2 2 2 2 2 2 1 0 0 1 2 3 3 3
+
+      Max nearness value will depend on the distance of influence.
+     */
+
     int box_size = (steps * 2 + 1) * (steps * 2 + 1);
     std::vector<int> cell_costs(box_size);
     std::vector<int> neighbors(box_size);
-
     int counter = 0;
     for (int i = -steps; i <= steps; ++i) {
       for (int j = -steps; j <= steps; ++j) {
         neighbors[counter] = i * map.info.width + j;
-        cell_costs[counter] =
-            (steps - std::max(std::abs(i), std::abs(j)) + 1) * 2;
+
+        int d = std::max(std::abs(i), std::abs(j)); // Chebyshev distance [cell]
+        cell_costs[counter] = NearnessToObstacle * (steps - d) / steps;
+        // cell_costs[counter] =
+        //     (steps - std::max(std::abs(i), std::abs(j)) + 1) * 2; // old impl
         ++counter;
       }
     }
@@ -699,11 +863,18 @@ private:
       if (map.data[i] > 0) {
         for (int j = 0; j < box_size; ++j) {
           int neighbor_idx = i + neighbors[j];
-          if (neighbor_idx >= 0 &&
-              neighbor_idx < static_cast<int>(cost_map.data.size())) {
-            if (cost_map.data[neighbor_idx] < cell_costs[j]) {
-              cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
-            }
+          if (neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue; // skip horizontal wrap_around path, fix by r.k
+          // if (neighbor_idx >= 0 &&
+          //     neighbor_idx < static_cast<int>(cost_map.data.size())) {
+          if (neighbor_idx < 0 ||
+              neighbor_idx >= static_cast<int>(cost_map.data.size()))
+            continue;
+          if (std::abs((neighbor_idx % static_cast<int>(map.info.width)) -
+                       (i % static_cast<int>(map.info.width))) > steps)
+            continue;
+          if (cost_map.data[neighbor_idx] < cell_costs[j]) {
+            cost_map.data[neighbor_idx] = static_cast<int8_t>(cell_costs[j]);
           }
         }
       }
@@ -712,21 +883,51 @@ private:
     return cost_map;
   }
 
-  // Insert one cell into the persistent memory set (map-frame point -> cell
-  // idx). No-op when the point falls outside the static map bounds.
+  // Insert one cell into the persistent memory set. The point is quantized to a
+  // map-frame METRIC grid key anchored at the world origin, so the key is
+  // independent of the current map's width/origin (which drift under online
+  // SLAM). The corresponding array index is recomputed at re-apply time.
   void add_memory_obstacle(const Eigen::Vector3d &point) {
-    int x = static_cast<int>((point.x() - static_map_.info.origin.position.x) /
-                             static_map_.info.resolution);
-    int y = static_cast<int>((point.y() - static_map_.info.origin.position.y) /
-                             static_map_.info.resolution);
-
-    if (x < 0 || y < 0 || x >= static_cast<int>(static_map_.info.width) ||
-        y >= static_cast<int>(static_map_.info.height))
+    const double res = static_map_.info.resolution;
+    if (res <= 0.0)
       return;
 
-    int idx = y * static_map_.info.width + x;
+    int mx = static_cast<int>(std::floor(point.x() / res));
+    int my = static_cast<int>(std::floor(point.y() / res));
+
     std::lock_guard<std::mutex> lock(memory_mutex_);
-    memory_cells_.insert(idx);
+    memory_cells_.insert(std::make_pair(mx, my));
+  }
+
+  // Stamp every remembered obstacle cell onto obstacles_map_ (=100), recomputing
+  // each cell against the CURRENT grid geometry so the obstacle stays at its true
+  // map-frame position even after the online SLAM map has grown / shifted its
+  // origin since the cell was recorded. Must be applied in BOTH the periodic
+  // processing (published /augmented_map) AND the augmented-map SERVICE used for
+  // path planning: the service rebuilds obstacles_map_ from current sensors only
+  // (and, in online, process_maps() zeroes it on every request), so without this
+  // the remembered obstacles never reach the planner -> memory_all_obstacles has
+  // no effect on path planning.
+  void apply_memory_obstacles() {
+    if (!memory_all_obstacles_)
+      return;
+    std::lock_guard<std::mutex> lock(memory_mutex_);
+    const double res = obstacles_map_.info.resolution;
+    if (res <= 0.0)
+      return;
+    const double ox = obstacles_map_.info.origin.position.x;
+    const double oy = obstacles_map_.info.origin.position.y;
+    const int width = static_cast<int>(obstacles_map_.info.width);
+    const int height = static_cast<int>(obstacles_map_.info.height);
+    for (const auto &key : memory_cells_) {
+      double wx = (key.first + 0.5) * res;
+      double wy = (key.second + 0.5) * res;
+      int cx = static_cast<int>((wx - ox) / res);
+      int cy = static_cast<int>((wy - oy) / res);
+      if (cx < 0 || cy < 0 || cx >= width || cy >= height)
+        continue;
+      obstacles_map_.data[cy * width + cx] = 100;
+    }
   }
 
   void callback_clear_memory_all_obstacles(
@@ -744,9 +945,13 @@ private:
     // cloud from topic: %s", point_cloud_topic_.c_str());
 
     if (!point_cloud_received_) {
-      RCLCPP_WARN(this->get_logger(),
-                  "MapAugmenter.-> No new point cloud available.");
-      return false;
+      // The cloud subscription is (re)created per navigation episode, so the
+      // first frame may not have arrived yet. Treat this as "no cloud obstacles
+      // this round" instead of failing the whole augmented map — lidar and the
+      // reactive potential_fields layer still cover obstacles, and the cloud is
+      // folded in on the next planning cycle once a frame arrives. (Once
+      // received the flag latches for the episode.)
+      return true;
     }
 
     const unsigned char *p = latest_point_cloud_->data.data();
@@ -759,6 +964,14 @@ private:
     Eigen::Affine3d robot_to_map =
         get_relative_position("map", base_link_name_);
 
+    // Head-follow: rotated cloud detect
+    const Eigen::Vector3d view =
+        cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
+    const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
+                               ? std::atan2(view.y(), view.x())
+                               : 0.0;
+    const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
+
     for (size_t i = 0;
          i < latest_point_cloud_->width * latest_point_cloud_->height;
          i += cloud_downsampling_) {
@@ -768,9 +981,10 @@ private:
 
       v = cam_to_robot * v;
 
-      if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
-          v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
-          v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
+      const double xr = cyaw * v.x() + syaw * v.y();
+      const double yr = -syaw * v.x() + cyaw * v.y();
+      if (xr > cloud_min_x_ && xr < cloud_max_x_ && yr > cloud_min_y_ &&
+          yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
 
         v = robot_to_map * v;
         if (memory_all_obstacles_)
@@ -803,9 +1017,7 @@ private:
     // cloud from topic: %s", point_cloud_topic2_.c_str());
 
     if (!point_cloud2_received_) {
-      RCLCPP_WARN(this->get_logger(),
-                  "MapAugmenter.-> No new point cloud2 available.");
-      return false;
+      return true;
     }
 
     const unsigned char *p = latest_point_cloud2_->data.data();
@@ -818,6 +1030,15 @@ private:
     Eigen::Affine3d robot_to_map =
         get_relative_position("map", base_link_name_);
 
+    // Head-follow: rotate the cloud box to the camera's horizontal viewing yaw
+    // (see obstacles_map_with_cloud()).
+    const Eigen::Vector3d view =
+        cam_to_robot.linear() * Eigen::Vector3d::UnitZ();
+    const double cam_yaw = (std::hypot(view.x(), view.y()) > 0.1)
+                               ? std::atan2(view.y(), view.x())
+                               : 0.0;
+    const double cyaw = std::cos(cam_yaw), syaw = std::sin(cam_yaw);
+
     for (size_t i = 0;
          i < latest_point_cloud2_->width * latest_point_cloud2_->height;
          i += cloud_downsampling2_) {
@@ -827,9 +1048,10 @@ private:
 
       v = cam_to_robot * v;
 
-      if (v.x() > cloud_min_x_ && v.x() < cloud_max_x_ &&
-          v.y() > cloud_min_y_ && v.y() < cloud_max_y_ &&
-          v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
+      const double xr = cyaw * v.x() + syaw * v.y();
+      const double yr = -syaw * v.x() + cyaw * v.y();
+      if (xr > cloud_min_x_ && xr < cloud_max_x_ && yr > cloud_min_y_ &&
+          yr < cloud_max_y_ && v.z() > cloud_min_z_ && v.z() < cloud_max_z_) {
 
         v = robot_to_map * v;
         if (memory_all_obstacles_)
@@ -1053,6 +1275,10 @@ private:
       return;
     }
 
+    // Include remembered obstacles in the map handed to the path planner
+    // (no-op unless memory_all_obstacles is enabled).
+    apply_memory_obstacles();
+
     obstacles_inflated_map_ = inflate_map(obstacles_map_, inflation_radius_);
     augmented_map_ = merge_maps(static_map_, obstacles_inflated_map_);
     response->map = augmented_map_;
@@ -1116,13 +1342,9 @@ private:
       are_there_obstacles_ =
           decay_map_and_check_if_obstacles(obstacles_map_, decay_factor_);
 
+      apply_memory_obstacles();
       if (memory_all_obstacles_) {
         std::lock_guard<std::mutex> lock(memory_mutex_);
-        for (int idx : memory_cells_) {
-          if (idx >= 0 && idx < static_cast<int>(obstacles_map_.data.size())) {
-            obstacles_map_.data[idx] = 100;
-          }
-        }
         are_there_obstacles_ = are_there_obstacles_ || !memory_cells_.empty();
       }
 

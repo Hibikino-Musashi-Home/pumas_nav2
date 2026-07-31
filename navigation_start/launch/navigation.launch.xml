@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <launch>
   <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
   <arg name="map_name" default="rc26_3330"/>
   <arg name="static_map_file" default="$(find-pkg-share navigation_start)/maps/maps/$(var map_name)/map.yaml"/>
@@ -17,6 +18,11 @@
   <arg name="use_point_cloud" default="True"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
+  <!-- Constant-speed path following: when True, simple_move follows the path
+       at a fixed constant_speed [m/s] instead of the accel/cruise/deccel
+       profile. Can also be toggled at runtime via param_rw. -->
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
@@ -27,6 +33,11 @@
   <arg name="use_online" default="False"/>
   <arg name="memory_all_obstacles" default="False"/>
 
+  <arg name="disable_rear_path_plan" default="False"/>
+  <arg name="online_behind_clearance" default="1.0"/>
+  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <arg name="escape_clear_radius" default="0.6"/>
+
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
   <arg name="laser_max_x" default="0.5"/>
@@ -34,7 +45,8 @@
   <arg name="laser_min_y" default="-0.25"/>
   <arg name="laser_max_y" default="0.25"/>
   <!--height-->
-  <arg name="laser_min_z" default="0.022"/>
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
   <arg name="cloud_min_x" default="0.40"/>
@@ -49,14 +61,14 @@
   <!--near goal sentのしきい値-->
   <arg name="proximity_criterion" default="0.2"/>
 
+  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <arg name="collision_recovery_trigger_count" default="3"/>
+
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
-  <!-- When add_static_obstacles is True, map_enhancer loads
-       <share(hma_env_manage2)>/io/config/<env_furniture_file>.yaml
-       (resolved at runtime via ament_index_cpp) and stamps each entry's
-       `plane` polygon as obstacle cells. -->
   <arg name="add_static_obstacles" default="True"/>
   <arg name="env_furniture_pkg" default="hma_env_manage2"/>
   <arg name="env_furniture_file" default="env_furniture_$(var map_name)"/> <!--change your env_furniture-->
+  <arg name="move_head" default="True"/>
 
   <!-- Map servers -->
   <node name="static_map_server" pkg="nav2_map_server" exec="map_server" output="screen" respawn="true">
@@ -81,9 +93,7 @@
     <param name="debug" value="True"/>
     <param name="input_map" value="/fixed_prohibition_layer_map"/>
     <param name="map_name" value="$(var map_name)"/>
-    <!-- Static furniture obstacles. The node skips the loader entirely when
-         add_static_obstacles is false, so the env_furniture_pkg package only
-         needs to exist at runtime when add_static_obstacles is true. -->
+
     <param name="add_static_obstacles" value="$(var add_static_obstacles)"/>
     <param name="furniture_pkg" value="$(var env_furniture_pkg)"/>
     <param name="furniture_path" value="$(var env_furniture_file)"/>
@@ -149,13 +159,18 @@
   <node name="path_planner" pkg="path_planner" exec="path_planner_node" output="screen" respawn="true">
     <param name="diagonal_paths" value="True"/>
     <param name="use_online" value="$(var use_online)"/>
+    <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
+    <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
   </node>
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="0.8"/>
     <param name="max_angular_speed" value="1.25"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
-    <param name="move_head" value="True"/>
+    <param name="move_head" value="$(var move_head)"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
@@ -192,13 +207,15 @@
   </node>
 
   <node name="publish_enable" pkg="potential_fields" exec="publish_enable.py" output="screen" respawn="true"/>
-  <!-- Motion Planner -->
 
+  <!-- Motion Planner -->
   <node name="mvn_pln" pkg="mvn_pln" exec="mvn_pln_node" output="screen" respawn="true">
     <remap from="/nav_control/goal" to="/move_base_simple/goal"/>
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="memory_all_obstacles" value="$(var memory_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="use_online" value="$(var use_online)"/>
   </node>
 
   <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
@@ -211,19 +228,31 @@
   </node>
 
   <node pkg="navigation_tools" exec="pot_fields_updator.py" name="pot_fields_updator" output="screen">
+    <param from="$(find-pkg-share navigation_tools)/config/$(env ROBOT_NAME hsrb)_pot_fields_updator.yaml"/>
   </node>
+
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
-    <param name="torso_default_pose" value="0.0"/>
+    <param name="torso_default_pose" value="0.1"/>
     <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
-    <param name="arm_default_pose" value="[-0.16, -1.57, -1.57, 0.0]"/>
+    <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
     <param name="pan_min" value="-3.14"/>
     <param name="pan_max" value="1.74"/>
     <param name="tilt_min" value="-0.7"/>
     <param name="tilt_max" value="0.47"/>
+  </node>
+  <node name="gaze_controller" pkg="hardware_controller" exec="gaze_node" output="screen" respawn="true">
+    <param name="gaze_tf_name"   value="gaze_point"/>
+    <param name="base_link_name" value="base_footprint"/>
+    <param name="head_height"    value="1.1"/>
+    <param name="max_pan_vel"    value="1.0"/>
+    <param name="max_tilt_vel"   value="0.7"/>
   </node>
 
   <!-- RVIZ2 -->

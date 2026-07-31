@@ -46,7 +46,6 @@ public:
     this->get_parameter("furniture_path", furniture_path_);
     this->get_parameter("furniture_yaml_file", furniture_yaml_file_);
 
-    // Load furniture polygons up front so they are ready when a map arrives.
     load_furniture_polygons();
 
     // Subscribers
@@ -110,7 +109,6 @@ private:
   nav_msgs::msg::MapMetaData map_metadata_;
   std::vector<geometry_msgs::msg::Point> obstacles_;
 
-  // Furniture obstacles loaded from YAML; stamped on every (re)load of the map
   std::vector<FurniturePolygon> furniture_polygons_;
 
   // ############
@@ -209,7 +207,6 @@ private:
       stamp_obstacle_to_map(pt);
     }
 
-    // Apply furniture polygons loaded from env_furniture.yaml.
     apply_furniture_obstacles();
 
     pub_map_->publish(enhanced_map_);
@@ -246,8 +243,6 @@ private:
     enhanced_map_ = original_map_;
     obstacles_.clear();
 
-    // Furniture obstacles must persist across clears (they are environment, not
-    // transient).
     apply_furniture_obstacles();
 
     RCLCPP_INFO(this->get_logger(),
@@ -343,7 +338,6 @@ private:
   }
 
   // ===== Furniture obstacles (thin wrappers over furniture_loader.hpp) =====
-
   void load_furniture_polygons() {
     furniture_polygons_.clear();
     if (!add_static_obstacles_) {
