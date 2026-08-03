@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import threading
+import time
 from typing import Optional, Union
 
 import numpy as np
@@ -122,6 +123,18 @@ class NavModule:
         self.tf_listener = tf2_ros.TransformListener(
             self.tf_buffer, self._node)
 
+        # A private node is nobody else's responsibility, so spin it here.
+        # Without this the TF listener and the goal_reached subscription never
+        # receive anything outside of the blocking calls below.
+        self._executor = None
+        self._spin_thread = None
+        if not self._external_node:
+            self._executor = SingleThreadedExecutor()
+            self._executor.add_node(self._node)
+            self._spin_thread = threading.Thread(
+                target=self._executor.spin, daemon=True, name='nav_module_spin')
+            self._spin_thread.start()
+
         self._load_default_arm_pose()  # call once here -> arm moves default pose
 
         self.get_logger().info('NavModule.->initialized')
@@ -145,24 +158,11 @@ class NavModule:
 
         future = self.param_rw_client.call_async(req)
 
-        if self._external_node:
-            done = threading.Event()
-            future.add_done_callback(lambda _f: done.set())
-            if not done.wait(timeout=timeout_sec):
-                self.get_logger().error('NavModule.->param_read_write call timed out')
-                return None
-        else:
-            executor = SingleThreadedExecutor()
-            executor.add_node(self._node)
-            try:
-                executor.spin_until_future_complete(
-                    future, timeout_sec=timeout_sec)
-            finally:
-                executor.remove_node(self._node)
-                executor.shutdown()
-            if not future.done():
-                self.get_logger().error('NavModule.->param_read_write call timed out')
-                return None
+        done = threading.Event()
+        future.add_done_callback(lambda _f: done.set())
+        if not done.wait(timeout=timeout_sec):
+            self.get_logger().error('NavModule.->param_read_write call timed out')
+            return None
 
         if future.result() is not None:
             return future.result().param_value
@@ -365,14 +365,9 @@ class NavModule:
             req.names = ['torso_default_pose', 'arm_default_pose']
             future = cli.call_async(req)
 
-            if self._external_node:
-                done = threading.Event()
-                future.add_done_callback(lambda _f: done.set())
-                ok = done.wait(timeout=timeout_sec)
-            else:
-                rclpy.spin_until_future_complete(
-                    self._node, future, timeout_sec=timeout_sec)
-                ok = future.done()
+            done = threading.Event()
+            future.add_done_callback(lambda _f: done.set())
+            ok = done.wait(timeout=timeout_sec)
 
             res = future.result() if ok else None
             if res is not None and len(res.values) >= 2:
@@ -589,17 +584,10 @@ class NavModule:
             goal_distance=(goal_distance if goal_distance and goal_distance > 0 else 0.0),
         )
 
-        if not self._external_node:
-            executor = SingleThreadedExecutor()
-            executor.add_node(self._node)
-        else:
-            executor = None
-
         result = False
 
         while rclpy.ok() and not self.robot_stop and attempts >= 0:
-            if executor is not None:
-                executor.spin_once(timeout_sec=0.1)
+            time.sleep(0.1)
 
             if self._action_done:
                 result = self._action_success
@@ -640,16 +628,9 @@ class NavModule:
 
         attempts = int(timeout * 10) if timeout != 0 else float('inf')
 
-        if not self._external_node:
-            executor = SingleThreadedExecutor()
-            executor.add_node(self._node)
-        else:
-            executor = None
-
         result = False
         while rclpy.ok() and not self.robot_stop and attempts >= 0:
-            if executor is not None:
-                executor.spin_once(timeout_sec=0.1)
+            time.sleep(0.1)
 
             if self._move_done:
                 result = self._move_success
