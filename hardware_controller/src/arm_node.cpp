@@ -7,14 +7,19 @@
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <control_msgs/msg/joint_trajectory_controller_state.hpp>
 
 #include <actionlib_msgs/msg/goal_status.hpp>
 
+#include <pumas_interfaces/msg/motion_pose.hpp>
+
 #include <string>
 #include <cmath>
+#include <algorithm>
+#include <sstream>
 
 class ArmController : public rclcpp::Node
 {
@@ -27,27 +32,41 @@ public:
     this->declare_parameter<bool>(        "use_namespace",   false);
     this->declare_parameter<std::string>( "arm_cmd_topic",   "/arm_trajectory_controller/joint_trajectory");
     this->declare_parameter<std::string>( "arm_state_topic", "/arm_trajectory_controller/controller_state");
-    this->declare_parameter("torso_default_pose", 0.0);
-    this->declare_parameter<std::vector<double>>("arm_default_pose", {0.0, -1.57, -1.57, 0.0});
+    // Joint names in controller order — index 0 is the torso/lift joint,
+    // indices 1-4 are the arm joints. Configurable so this node isn't
+    // hardcoded to one robot's specific joint names.
+    this->declare_parameter<std::vector<std::string>>("arm_default_names",
+        {"arm_lift_joint", "arm_flex_joint", "arm_roll_joint", "wrist_flex_joint", "wrist_roll_joint"});
+    this->declare_parameter<std::vector<double>>("arm_default_pose", {0.0, 0.0, -1.57, -1.57, 0.0});
 
 
     // Initialize internal variables from declared parameters
-    this->get_parameter("use_namespace",    use_namespace_);
-    this->get_parameter("arm_cmd_topic",    arm_cmd_topic_);
-    this->get_parameter("arm_state_topic",  arm_state_topic_);
-    this->get_parameter("torso_default_pose", torso_default_pose_);
-    this->get_parameter("arm_default_pose", arm_default_pose_);
+    this->get_parameter("use_namespace",     use_namespace_);
+    this->get_parameter("arm_cmd_topic",     arm_cmd_topic_);
+    this->get_parameter("arm_state_topic",   arm_state_topic_);
+    this->get_parameter("arm_default_names", arm_default_names_);
+    this->get_parameter("arm_default_pose",  arm_default_pose_);
+
+    if (arm_default_names_.size() != 5 || arm_default_pose_.size() != 5) {
+      RCLCPP_ERROR(this->get_logger(),
+          "arm_node.-> arm_default_names/arm_default_pose must both have exactly 5 entries "
+          "(got %zu names, %zu values); falling back to built-in defaults.",
+          arm_default_names_.size(), arm_default_pose_.size());
+      arm_default_names_ = {"arm_lift_joint", "arm_flex_joint", "arm_roll_joint", "wrist_flex_joint", "wrist_roll_joint"};
+      arm_default_pose_  = {0.0, 0.0, -1.57, -1.57, 0.0};
+    }
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
       std::bind(&ArmController::on_parameter_change, this, std::placeholders::_1));
 
     // Publishers
-    pub_torso_current_pose_ = this->create_publisher<std_msgs::msg::Float32>(
-          make_name("/hardware/torso/current_pose"), 
-          rclcpp::QoS(10).reliable());
-    pub_arm_current_pose_ = this->create_publisher<std_msgs::msg::Float32MultiArray>(
-          make_name("/hardware/arm/current_pose"), 
+    // Single JointState covering all 5 joints (torso lift + arm), replacing
+    // the old split torso/arm current-pose topics — nothing in this repo
+    // subscribed to either of those, so there was no compatibility reason to
+    // keep them fragmented.
+    pub_arm_current_pose_ = this->create_publisher<sensor_msgs::msg::JointState>(
+          make_name("/hardware/arm/current_pose"),
           rclcpp::QoS(10).reliable());
     pub_arm_goal_pose_ = this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
       arm_cmd_topic_, 
@@ -61,14 +80,22 @@ public:
 
     // Subscribers
     sub_arm_goal_pose_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-        make_name("/hardware/arm/goal_pose"), 
+        make_name("/hardware/arm/goal_pose"),
         rclcpp::QoS(10).reliable(),
         std::bind(&ArmController::armGoalPoseCallback, this, std::placeholders::_1));
 
     sub_torso_goal_pose_ = this->create_subscription<std_msgs::msg::Float32>(
-        make_name("/hardware/torso/goal_pose"), 
+        make_name("/hardware/torso/goal_pose"),
         rclcpp::QoS(10).reliable(),
         std::bind(&ArmController::torsoGoalPoseCallback, this, std::placeholders::_1));
+
+    // motion_synth publishes a MotionPose (full Joints + motion_execution_time)
+    // on a single topic shared with head_controller. We pick up the lift/arm
+    // fields and ignore the head fields.
+    sub_motion_pose_ = this->create_subscription<pumas_interfaces::msg::MotionPose>(
+        "/hardware/motion_pose",
+        rclcpp::QoS(10).reliable(),
+        std::bind(&ArmController::motionPoseCallback, this, std::placeholders::_1));
 
     sub_arm_state_ = this->create_subscription<control_msgs::msg::JointTrajectoryControllerState>(
         arm_state_topic_, 
@@ -95,15 +122,21 @@ private:
   std::string arm_cmd_topic_;
   std::string arm_state_topic_;
 
-  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr                pub_torso_current_pose_;
-  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr      pub_arm_current_pose_;
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr          pub_arm_current_pose_;
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr pub_arm_goal_pose_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                   pub_arm_goal_reached_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                   pub_torso_goal_reached_;
 
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr   sub_arm_goal_pose_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr             sub_torso_goal_pose_;
+  rclcpp::Subscription<pumas_interfaces::msg::MotionPose>::SharedPtr  sub_motion_pose_;
   rclcpp::Subscription<control_msgs::msg::JointTrajectoryControllerState>::SharedPtr sub_arm_state_;
+
+  // Default time_from_start for trajectories. Used when the caller does not
+  // override (legacy simple_move path). motion_synth provides its own value
+  // via ArmGoalPose.motion_execution_time.
+  static constexpr double kDefaultArmTimeFromStart = 0.2;
+  double arm_time_from_start_{kDefaultArmTimeFromStart};
 
   float torso_goal_pose_{0.0f};
   float torso_current_pose_{0.0f};
@@ -113,10 +146,19 @@ private:
   bool msg_arm_received_{false};
   bool msg_torso_received_{false};
 
-  double torso_default_pose_{0.0};
-  std::vector<double> arm_default_pose_{0.0, -1.57, -1.57, 0.0};
+  std::vector<std::string> arm_default_names_{
+      "arm_lift_joint", "arm_flex_joint", "arm_roll_joint", "wrist_flex_joint", "wrist_roll_joint"};
+  std::vector<double> arm_default_pose_{0.0, 0.0, -1.57, -1.57, 0.0};
 
-  bool init_sent_once_{false};
+  // Startup default-pose handshake. The default pose must not be published
+  // until the trajectory controller has actually connected to our command
+  // publisher; a trajectory sent before discovery completes is silently
+  // dropped (reliable but volatile QoS), which is why the arm sometimes never
+  // moved to the default pose at startup. Once the subscription is matched a
+  // single reliable publish is delivered (the protocol retransmits on loss),
+  // so one send after connection is enough.
+  bool init_done_{false};
+  bool external_goal_received_{false};
 
   // Parameter callback handle
   OnSetParametersCallbackHandle::SharedPtr param_callback_handle_;
@@ -173,29 +215,66 @@ private:
     return name;
   }
 
+  // Find `joint_name`'s value in the parallel `names`/`positions` arrays by
+  // name, not by a fixed index — so this doesn't assume any particular
+  // ordering from the trajectory controller. Returns false if not found.
+  static bool findJointPosition(const std::vector<std::string> &names,
+                                const std::vector<double> &positions,
+                                const std::string &joint_name, float &out)
+  {
+    auto it = std::find(names.begin(), names.end(), joint_name);
+    if (it == names.end())
+      return false;
+    const size_t idx = std::distance(names.begin(), it);
+    if (idx >= positions.size())
+      return false;
+    out = static_cast<float>(positions[idx]);
+    return true;
+  }
+
   void armCurrentPoseCallback(const control_msgs::msg::JointTrajectoryControllerState::SharedPtr msg)
   {
-  
-    torso_current_pose_ = static_cast<float>(msg->feedback.positions[0]); // arm_lift_joint
-  
-    if (arm_current_pose_.size() != 4) arm_current_pose_.assign(4, 0.0f);
-    arm_current_pose_[0] = static_cast<float>(msg->feedback.positions[1]); // arm_flex_joint
-    arm_current_pose_[1] = static_cast<float>(msg->feedback.positions[2]); // arm_roll_joint
-    arm_current_pose_[2] = static_cast<float>(msg->feedback.positions[3]); // wrist_flex_joint
-    arm_current_pose_[3] = static_cast<float>(msg->feedback.positions[4]); // wrist_roll_joint
-  
-    // Publish current
-    std_msgs::msg::Float32 torso_msg; torso_msg.data = torso_current_pose_;
-    pub_torso_current_pose_->publish(torso_msg);
-  
-    std_msgs::msg::Float32MultiArray arm_msg; arm_msg.data = arm_current_pose_;
-    pub_arm_current_pose_->publish(arm_msg);
+    if (arm_default_names_.empty())
+      return;
 
-    if (!init_sent_once_) {
-      publish_default_pose();
-      init_sent_once_ = true;
-      RCLCPP_WARN(this->get_logger(), "arm_node.-> Sent default pose after first controller_state.");
+    // arm_default_names_[0] is the torso/lift joint; the rest are the arm
+    // joints. Looked up by name in msg->joint_names rather than assumed to be
+    // at fixed indices, since the controller (not this node) owns that order.
+    float value = 0.0f;
+    if (findJointPosition(msg->joint_names, msg->feedback.positions, arm_default_names_[0], value)) {
+      torso_current_pose_ = value;
+    }
 
+    const size_t n_arm = arm_default_names_.size() - 1;
+    arm_current_pose_.assign(n_arm, 0.0f);
+    for (size_t i = 0; i < n_arm; ++i) {
+      findJointPosition(msg->joint_names, msg->feedback.positions,
+                        arm_default_names_[i + 1], arm_current_pose_[i]);
+    }
+
+    // Publish current pose as a single JointState covering all 5 joints.
+    sensor_msgs::msg::JointState state_msg;
+    state_msg.header.stamp = this->now();
+    state_msg.name = arm_default_names_;
+    state_msg.position = {
+        torso_current_pose_,
+        arm_current_pose_[0], arm_current_pose_[1],
+        arm_current_pose_[2], arm_current_pose_[3]};
+    pub_arm_current_pose_->publish(state_msg);
+
+    if (!init_done_) {
+      if (external_goal_received_) {
+        // A real goal already took over; skip the startup default pose.
+        init_done_ = true;
+      } else if (pub_arm_goal_pose_->get_subscription_count() > 0) {
+        // Trajectory controller is connected now: a reliable publish will be
+        // delivered. (Before the match completes the sample would be dropped.)
+        publish_default_pose();
+        init_done_ = true;
+        RCLCPP_WARN(this->get_logger(),
+                    "arm_node.-> Sent default pose (controller connected).");
+      }
+      // else: controller not connected yet — wait for the next controller_state.
     }
   }
 
@@ -211,7 +290,7 @@ private:
     RCLCPP_INFO(this->get_logger(), "arm_node.->Received arm goal pose: [%f, %f, %f, %f]",
                  arm_goal_pose_[0], arm_goal_pose_[1], arm_goal_pose_[2], arm_goal_pose_[3]);
     msg_arm_received_ = true;
-    RCLCPP_INFO(this->get_logger(), "arm_node.->Received arm goal pose.");
+    external_goal_received_ = true;
     sendArmGoalTrajectory();
   }
 
@@ -220,6 +299,45 @@ private:
     torso_goal_pose_ = msg->data;
     msg_torso_received_ = true;
     RCLCPP_INFO(this->get_logger(), "arm_node.->Received torso goal pose.");
+  }
+
+  void motionPoseCallback(const pumas_interfaces::msg::MotionPose::SharedPtr msg)
+  {
+    if (arm_default_names_.empty())
+      return;
+
+    // msg->joints is a name-keyed JointState (see MotionPose.msg) — look up
+    // each configured joint by name instead of a fixed field layout.
+    float value = 0.0f;
+    if (findJointPosition(msg->joints.name, msg->joints.position, arm_default_names_[0], value)) {
+      torso_goal_pose_ = value;
+    }
+
+    const size_t n_arm = arm_default_names_.size() - 1;
+    arm_goal_pose_.resize(n_arm);
+    for (size_t i = 0; i < n_arm; ++i) {
+      findJointPosition(msg->joints.name, msg->joints.position,
+                        arm_default_names_[i + 1], arm_goal_pose_[i]);
+    }
+
+    arm_time_from_start_ = (msg->motion_execution_time > 0.0f)
+        ? static_cast<double>(msg->motion_execution_time)
+        : kDefaultArmTimeFromStart;
+
+    msg_arm_received_   = true;
+    msg_torso_received_ = true;
+    external_goal_received_ = true;
+
+    std::ostringstream arm_str;
+    for (size_t i = 0; i < arm_goal_pose_.size(); ++i) {
+      if (i) arm_str << ", ";
+      arm_str << arm_goal_pose_[i];
+    }
+    RCLCPP_INFO(this->get_logger(),
+                "arm_node.->Received motion pose: lift=%.3f arm=[%s] time=%.3f s",
+                torso_goal_pose_, arm_str.str().c_str(), arm_time_from_start_);
+
+    sendArmGoalTrajectory();
   }
 
   void timerCallback()
@@ -247,12 +365,13 @@ private:
 
   void publish_default_pose()
   {
-    torso_goal_pose_ = static_cast<float>(torso_default_pose_);
+    // arm_default_pose_[0] is the torso/lift joint; [1..4] are the arm joints.
+    torso_goal_pose_ = static_cast<float>(arm_default_pose_[0]);
     arm_goal_pose_.resize(4);
-    arm_goal_pose_[0] = static_cast<float>(arm_default_pose_[0]);
-    arm_goal_pose_[1] = static_cast<float>(arm_default_pose_[1]);
-    arm_goal_pose_[2] = static_cast<float>(arm_default_pose_[2]);
-    arm_goal_pose_[3] = static_cast<float>(arm_default_pose_[3]);
+    arm_goal_pose_[0] = static_cast<float>(arm_default_pose_[1]);
+    arm_goal_pose_[1] = static_cast<float>(arm_default_pose_[2]);
+    arm_goal_pose_[2] = static_cast<float>(arm_default_pose_[3]);
+    arm_goal_pose_[3] = static_cast<float>(arm_default_pose_[4]);
 
     sendArmGoalTrajectory();
 
@@ -266,9 +385,7 @@ private:
   {
   
     trajectory_msgs::msg::JointTrajectory traj;
-    traj.joint_names = {
-      "arm_lift_joint","arm_flex_joint","arm_roll_joint","wrist_flex_joint","wrist_roll_joint"
-    };
+    traj.joint_names = arm_default_names_;
     traj.points.resize(1);
     auto &pt = traj.points[0];
     pt.positions.resize(5);
@@ -276,12 +393,16 @@ private:
     pt.positions[0] = static_cast<double>(torso_goal_pose_);  // arm_lift_joint
     pt.positions[1] = static_cast<double>(arm_goal_pose_[0]); // arm_flex_joint
     pt.positions[2] = static_cast<double>(arm_goal_pose_[1]); // arm_roll_joint
-    pt.positions[3] = static_cast<double>(arm_goal_pose_[2]); // wrist_flex_joint   
+    pt.positions[3] = static_cast<double>(arm_goal_pose_[2]); // wrist_flex_joint
     pt.positions[4] = static_cast<double>(arm_goal_pose_[3]); // wrist_roll_joint
-    pt.time_from_start = rclcpp::Duration::from_seconds(0.2); 
-  
+    pt.time_from_start = rclcpp::Duration::from_seconds(arm_time_from_start_);
+
     pub_arm_goal_pose_->publish(traj);
-  
+
+    // Reset to default after consuming so the override does not bleed into
+    // subsequent commands from other publishers.
+    arm_time_from_start_ = kDefaultArmTimeFromStart;
+
     msg_arm_received_   = false;
     msg_torso_received_ = false;
   

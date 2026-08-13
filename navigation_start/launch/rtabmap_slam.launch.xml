@@ -1,0 +1,366 @@
+<launch>
+
+  <!-- Arguments -->
+  <arg name="robot_name" default="$(env ROBOT_NAME)"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <arg name="static_map_server" default="/rtabmap/rtabmap/get_map"/>
+
+  <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
+
+  <arg name="odom_topic" default="/odom"/>
+  <arg name="pose_topic" default="/pose"/>
+  <arg name="cmd_vel_topic" default="/omni_base_controller/cmd_vel"/>
+  <arg name="laser_scan_topic" default="/scan"/>
+  <arg name="point_cloud_topic" default="/head_rgbd_sensor/reconsted/points"/>
+
+  <arg name="bumper_f_topic" default="/base_f_bumper_sensor"/>
+
+  <arg name="use_lidar" default="True"/>
+  <arg name="use_sonars" default="False"/>
+  <arg name="use_point_cloud" default="True"/>
+  <arg name="use_bumper" default="False"/>
+  <arg name="use_pot_fields" default="True"/>
+  <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
+  <!-- Last one mile omni: follow the path with unicycle control; once the
+       remaining distance to the goal drops below yaw_correction_omni_distance[m],
+       switch path following to omni (holonomic) control and swing into the goal
+       pose while translating (removes the in-place turn after arrival). Most of
+       the path uses unicycle control, so the body naturally faces the direction
+       of travel. -->
+  <arg name="yaw_correction_omni_behavior" default="False"/>
+  <arg name="yaw_correction_omni_distance" default="1.0"/>
+  <!-- Stronger yaw gain used only during last one mile: turns far enough that
+       mvn_pln's final yaw correction is nearly a no-op on arrival. The head also
+       faces the goal yaw direction during this segment. -->
+  <arg name="yaw_correction_omni_gain" default="4.5"/>
+  <!-- During last one mile, disable collision_risk stops and pot_fields
+       repulsion: the goal is often right in front of furniture, where detection
+       would prevent convergence. If fully blocked, abort via the attempts
+       timeout. -->
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+  <!-- At the start of last one mile, the head turns to face goal_yaw together
+       with the body. If False, the head keeps tracking as usual, facing the
+       goal (travel) direction. -->
+  <arg name="yaw_correction_align_head" default="True"/>
+  <!-- Neck slew speed [rad/s] while aligning the head onto the goal yaw during
+       the last one mile. Higher than head_default_speed so the camera snaps
+       onto the body heading quickly instead of lagging the strong base yaw. -->
+  <arg name="yaw_correction_align_head_speed" default="4.0"/>
+  <!-- Head pan range. Shared by head_controller and simple_move so the yaw
+       controller knows exactly how far the camera can actually pan. -->
+  <arg name="head_pan_min" default="-3.14"/>
+  <arg name="head_pan_max" default="1.74"/>
+  <!-- How far down the path the camera looks, in path points (one per map cell,
+       so x resolution for metres). Raise it to anticipate turns earlier. -->
+  <arg name="head_lookahead_points" default="5"/>
+  <!-- Neck slew rate [rad/s] used to time-parameterize head trajectories. -->
+  <arg name="head_default_speed" default="1.0"/>
+
+  <arg name="cloud_downsampling" default="5"/>
+  <arg name="lidar_downsampling" default="1"/>
+  <arg name="cloud_points_threshold" default="100"/>
+  <arg name="lidar_points_threshold" default="20"/>
+
+
+  <arg name="use_online" default="True"/>
+  <arg name="mvn_pln_patience" default="False"/>
+
+  <!-- mvn_pln: goal-convergence monitor. Independent of collision recovery;
+       it catches the case where the planner keeps returning a good path but
+       the robot never gets closer to the goal. -->
+  <!-- [m] Improvement in distance-to-goal that counts as progress. -->
+  <arg name="convergence_epsilon" default="0.20"/>
+  <!-- [s] Time without such an improvement before escalating. -->
+  <arg name="convergence_timeout" default="45.0"/>
+  <!-- Replan-thrash detector: this many replans inside replan_window_sec,
+       all starting within replan_spread_radius of each other. -->
+  <arg name="replan_window_sec" default="30.0"/>
+  <arg name="replan_window_max" default="5"/>
+  <arg name="replan_spread_radius" default="2.0"/>
+  <!-- Absolute backstop on replans per task, geometry ignored. -->
+  <arg name="replan_max_per_task" default="40"/>
+  <!-- [m] If the robot got at least this close before stalling, accept that
+       best position as arrival instead of looping (tier 1). -->
+  <arg name="goal_relax_max" default="1.5"/>
+  <arg name="enable_goal_relax" default="True"/>
+  <!-- False = warn only: log and keep retrying instead of aborting (tier 2). -->
+  <arg name="enable_stuck_abort" default="True"/>
+  <!-- [m] Radius searched for a free cell to plan from when the robot is
+       found sitting inside an obstacle. Falls back to backing up. -->
+  <arg name="free_point_search_radius" default="2.0"/>
+
+  <!-- [m] Near-goal replan suppression: when a REPLAN would start from within
+       this distance of the goal, stop instead. Nothing useful is left to plan
+       there, and a goal placed ON an obstacle otherwise loops forever (the
+       planner keeps relocating it a few cm away). The relocation distance is
+       added to this radius when the goal is on an obstacle. Default 0 = off:
+       set it per goal via the PumasNav goal field min_reach_goal_dist (a goal
+       value of 0 means "unset" and falls back to this one). -->
+  <arg name="min_reach_goal_dist" default="0.0"/>
+  <!-- True = treat that point as the goal (SUCCEEDED, near_goal set),
+       False = abort the task instead. -->
+  <arg name="near_goal_accept_as_goal" default="True"/>
+
+  <!-- simple_move: active rotate-in-place on collision risk. Off by default;
+       flickering obstacle reports can make the base oscillate, so enable it
+       per environment (narrow passages). -->
+  <arg name="allow_rotation_on_collision" default="False"/>
+  <arg name="rotation_collision_angle_threshold" default="0.35"/>
+  <arg name="rotation_collision_angular_speed" default="0.4"/>
+  <arg name="rotation_collision_max_time" default="3.0"/>
+  <arg name="proximity_criterion" default="0.2"/>
+  <arg name="remember_all_obstacles" default="False"/>
+  <arg name="collision_recovery_trigger_count" default="3"/>
+  <arg name="disable_rear_path_plan" default="True"/>
+  <arg name="online_behind_clearance" default="1.0"/>
+
+  <!--[m] On A* failure, fill white (0) within this radius around the robot and replan (escape). Precedes backing up. Disabled if <= 0-->
+  <arg name="escape_clear_radius" default="0.6"/>
+
+  <arg name="laser_min_x" default="0.17"/>
+  <arg name="laser_max_x" default="0.50"/>
+  <arg name="laser_min_y" default="-0.2"/>
+  <arg name="laser_max_y" default="0.2"/>
+  <arg name="laser_min_z"
+     default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
+  <arg name="laser_max_z" default="1.00"/>
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.60"/>
+  <arg name="cloud_min_y" default="-0.23"/>
+  <arg name="cloud_max_y" default="0.23"/>
+  <arg name="cloud_min_z" default="0.1"/>
+  <arg name="cloud_max_z" default="1.0"/>
+
+  <!-- Map servers -->
+  <node name="prohibition_map_server"
+        pkg="nav2_map_server"
+        exec="map_server"
+        output="screen">
+    <param name="yaml_filename" value="$(var prohibition_map_file)"/>
+    <remap from="/map" to="/fixed_prohibition_layer_map"/>
+  </node>
+
+  <node name="lifecycle_manager_map"
+        pkg="nav2_lifecycle_manager"
+        exec="lifecycle_manager"
+        output="screen">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="autostart" value="true"/>
+    <param name="node_names" value="['prohibition_map_server']"/>
+  </node>
+
+  <!-- Map Enhancer -->
+  <node name="map_enhancer"
+        pkg="augment_gridmap_online"
+        exec="augment_gridmap_online_node"
+        output="screen">
+
+    <remap from="point_obstacle" to="/clicked_point"/>
+    <param name="obstacle_radius" value="0.05"/>
+    <param name="debug" value="True"/>
+
+    <param name="input_map" value="/fixed_prohibition_layer_map"/>
+    <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
+    <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
+  </node>
+
+  <!-- Map Augmenters -->
+  <node name="map_augmenter"
+        pkg="map_augmenter"
+        exec="map_augmenter_node"
+        output="screen">
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <!--param name="static_map_server" value="/static_map"/-->
+    <!-- RTAB-Map live grid (replaces slam_toolbox's /slam_toolbox/dynamic_map). -->
+    <param name="static_map_server" value="$(var static_map_server)"/>
+    <param name="prohibition_map_server" value="/prohibition_map"/>
+
+    <remap from="point_obstacle" to="/clicked_point"/>
+
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_sonars" value="$(var use_sonars)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+
+    <param name="decay_factor" value="10"/>
+    <param name="inflation_radius" value="0.22"/> <!--default 0.22 (hsr)-->
+    <param name="cost_radius" value="0.35"/>
+
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
+
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
+
+  </node>
+
+  <!-- Path Planner -->
+  <node name="path_planner"
+        pkg="path_planner"
+        exec="path_planner_node"
+        output="screen"
+        respawn="true">
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
+    <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
+    <param name="diagonal_paths" value="True"/>
+    <param name="escape_clear_radius" value="0.6"/> <!--[m] On planning failure, free (0) this radius around the robot and replan once. Escape when boxed in by obstacles. Disabled if <= 0-->
+    <!--param name="goal_relocation_radius" value="1.0"/--> <!--[m] If the goal is unreachable (boxed in by obstacles), snap it to the nearest reachable cell and continue. Only within this distance of the requested goal (last resort). Disabled if <= 0-->
+  </node>
+
+  <node name="simple_move"
+        pkg="simple_move"
+        exec="simple_move_node"
+        output="screen">
+    <param name="max_linear_speed" value="1.0"/>
+    <param name="max_angular_speed" value="1.25"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
+    <param name="yaw_correction_align_head_speed" value="$(var yaw_correction_align_head_speed)"/>
+    <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
+    <param name="linear_acceleration" value="0.2"/>
+    <param name="control_alpha" value="0.35"/>
+    <param name="control_beta" value="0.8"/>
+
+    <param name="move_head" value="True"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
+    <param name="allow_rotation_on_collision" value="$(var allow_rotation_on_collision)"/>
+    <param name="rotation_collision_angle_threshold" value="$(var rotation_collision_angle_threshold)"/>
+    <param name="rotation_collision_angular_speed" value="$(var rotation_collision_angular_speed)"/>
+    <param name="rotation_collision_max_time" value="$(var rotation_collision_max_time)"/>
+  </node>
+
+  <!-- Potential Fields -->
+  <node name="potential_fields"
+        pkg="potential_fields"
+        exec="potential_fields_node"
+        output="screen">
+    <param name="debug" value="False"/>
+    <param name="show_image" value="True"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
+
+    <param name="laser_pot_fields_d0" value="0.60"/>
+    <param name="laser_pot_fields_k_rej" value="0.30"/>
+
+    <param name="cloud_pot_fields_d0" value="0.80"/>
+    <param name="cloud_pot_fields_k_rej" value="0.30"/>
+
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+    <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
+    <param name="lidar_points_threshold" value="$(var lidar_points_threshold)"/>
+
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
+  </node>
+
+  <node name="publish_enable"
+        pkg="potential_fields"
+        exec="publish_enable.py"
+        output="screen"/>
+
+  <!-- Motion Planner -->
+  <node name="mvn_pln"
+        pkg="mvn_pln"
+        exec="mvn_pln_node"
+        output="screen">
+    <param name="proximity_criterion" value="$(var proximity_criterion)"/>
+    <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="goal_relocation_report_threshold" value="0.3"/> <!--[m] If the path endpoint is farther than this from the requested goal, treat as goal relocation and report via near_goal + message instead of aborting-->
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="convergence_epsilon" value="$(var convergence_epsilon)"/>
+    <param name="convergence_timeout" value="$(var convergence_timeout)"/>
+    <param name="replan_window_sec" value="$(var replan_window_sec)"/>
+    <param name="replan_window_max" value="$(var replan_window_max)"/>
+    <param name="replan_spread_radius" value="$(var replan_spread_radius)"/>
+    <param name="replan_max_per_task" value="$(var replan_max_per_task)"/>
+    <param name="goal_relax_max" value="$(var goal_relax_max)"/>
+    <param name="enable_goal_relax" value="$(var enable_goal_relax)"/>
+    <param name="enable_stuck_abort" value="$(var enable_stuck_abort)"/>
+    <param name="free_point_search_radius" value="$(var free_point_search_radius)"/>
+    <param name="min_reach_goal_dist" value="$(var min_reach_goal_dist)"/>
+    <param name="near_goal_accept_as_goal" value="$(var near_goal_accept_as_goal)"/>
+  </node>
+
+  <!--arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
+  <arg name="arm_default_pose"
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+
+  <!-- Hardware Controller -->
+  <node name="arm_controller"
+        pkg="hardware_controller"
+        exec="arm_node"
+        output="screen">
+        <param name="arm_default_pose" value="$(var arm_default_pose)"/>
+  </node>
+
+  <node name="head_controller"
+        pkg="hardware_controller"
+        exec="head_node"
+        output="screen">
+        <param name="pan_min" value="$(var head_pan_min)" />
+        <param name="pan_max" value="$(var head_pan_max)" />
+        <param name="head_default_speed" value="$(var head_default_speed)" />
+        <param name="tilt_min" value="-0.7" />
+        <param name="tilt_max" value="0.47" />
+  </node>
+
+  <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
+  </node>
+  <node pkg="navigation_tools" exec="pumas_viz_goal_bridge.py" name="pumas_viz_goal_bridge_node" output="screen">
+  </node>
+
+  <!-- RVIZ2 -->
+  <node name="rviz2"
+        pkg="rviz2"
+        exec="rviz2"
+        args="-d $(find-pkg-share navigation_start)/rviz/config.rviz
+              --ros-args --log-level rviz2:=warn"
+        output="screen"
+        />
+
+</launch>
