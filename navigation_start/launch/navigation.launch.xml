@@ -72,6 +72,38 @@
        (back up / shrink detection box). -->
   <arg name="collision_recovery_trigger_count" default="3"/>
 
+  <!-- mvn_pln: goal-convergence monitor. Independent of collision recovery;
+       it catches the case where the planner keeps returning a good path but
+       the robot never gets closer to the goal. -->
+  <!-- [m] Improvement in distance-to-goal that counts as progress. -->
+  <arg name="convergence_epsilon" default="0.20"/>
+  <!-- [s] Time without such an improvement before escalating. -->
+  <arg name="convergence_timeout" default="45.0"/>
+  <!-- Replan-thrash detector: this many replans inside replan_window_sec,
+       all starting within replan_spread_radius of each other. -->
+  <arg name="replan_window_sec" default="30.0"/>
+  <arg name="replan_window_max" default="5"/>
+  <arg name="replan_spread_radius" default="2.0"/>
+  <!-- Absolute backstop on replans per task, geometry ignored. -->
+  <arg name="replan_max_per_task" default="40"/>
+  <!-- [m] If the robot got at least this close before stalling, accept that
+       best position as arrival instead of looping (tier 1). -->
+  <arg name="goal_relax_max" default="1.5"/>
+  <arg name="enable_goal_relax" default="True"/>
+  <!-- False = warn only: log and keep retrying instead of aborting (tier 2). -->
+  <arg name="enable_stuck_abort" default="True"/>
+  <!-- [m] Radius searched for a free cell to plan from when the robot is
+       found sitting inside an obstacle. Falls back to backing up. -->
+  <arg name="free_point_search_radius" default="2.0"/>
+
+  <!-- simple_move: active rotate-in-place on collision risk. Off by default;
+       flickering obstacle reports can make the base oscillate, so enable it
+       per environment (narrow passages). -->
+  <arg name="allow_rotation_on_collision" default="False"/>
+  <arg name="rotation_collision_angle_threshold" default="0.35"/>
+  <arg name="rotation_collision_angular_speed" default="0.4"/>
+  <arg name="rotation_collision_max_time" default="3.0"/>
+
   <!-- obstacle detector parameters -->
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
@@ -256,6 +288,11 @@
     <param name="move_head" value="$(var move_head)"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
 
+    <param name="allow_rotation_on_collision" value="$(var allow_rotation_on_collision)"/>
+    <param name="rotation_collision_angle_threshold" value="$(var rotation_collision_angle_threshold)"/>
+    <param name="rotation_collision_angular_speed" value="$(var rotation_collision_angular_speed)"/>
+    <param name="rotation_collision_max_time" value="$(var rotation_collision_max_time)"/>
+
     <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
   </node>
 
@@ -319,6 +356,16 @@
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
     <param name="use_online" value="$(var use_online)"/>
+    <param name="convergence_epsilon" value="$(var convergence_epsilon)"/>
+    <param name="convergence_timeout" value="$(var convergence_timeout)"/>
+    <param name="replan_window_sec" value="$(var replan_window_sec)"/>
+    <param name="replan_window_max" value="$(var replan_window_max)"/>
+    <param name="replan_spread_radius" value="$(var replan_spread_radius)"/>
+    <param name="replan_max_per_task" value="$(var replan_max_per_task)"/>
+    <param name="goal_relax_max" value="$(var goal_relax_max)"/>
+    <param name="enable_goal_relax" value="$(var enable_goal_relax)"/>
+    <param name="enable_stuck_abort" value="$(var enable_stuck_abort)"/>
+    <param name="free_point_search_radius" value="$(var free_point_search_radius)"/>
   </node>
 
   <!-- Arm-motion synchronization with navigation progress -->

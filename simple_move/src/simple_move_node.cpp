@@ -102,6 +102,14 @@ public:
     this->declare_parameter<bool>("move_head", true);
     this->declare_parameter<bool>("use_pot_fields", false);
 
+    // Active rotate-in-place recovery. Off by default: flickering obstacle
+    // reports can make the base oscillate, so this is opt-in per environment
+    // (narrow passages) rather than always-on.
+    this->declare_parameter<bool>("allow_rotation_on_collision", false);
+    this->declare_parameter<float>("rotation_collision_angle_threshold", 0.35f);
+    this->declare_parameter<float>("rotation_collision_angular_speed", 0.4f);
+    this->declare_parameter<float>("rotation_collision_max_time", 3.0f);
+
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
     this->declare_parameter<std::string>("odom_name", "odom");
 
@@ -131,6 +139,16 @@ public:
 
     this->get_parameter("move_head", move_head_);
     this->get_parameter("use_pot_fields", use_pot_fields_);
+
+    this->get_parameter("allow_rotation_on_collision",
+                        allow_rotation_on_collision_);
+    this->get_parameter("rotation_collision_angle_threshold",
+                        rotation_collision_angle_threshold_);
+    this->get_parameter("rotation_collision_angular_speed",
+                        rotation_collision_angular_speed_);
+    this->get_parameter("rotation_collision_max_time",
+                        rotation_collision_max_time_);
+    reset_rotation_budget();
 
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("odom_name", odom_name_);
@@ -236,6 +254,15 @@ private:
   bool collision_risk_ = false;
   bool move_lat_ = false;
   bool stop_ = false;
+
+  // Active rotate-in-place recovery (see collision_blocks_tracking).
+  bool allow_rotation_on_collision_ = false;
+  float rotation_collision_angle_threshold_ = 0.35f;
+  float rotation_collision_angular_speed_ = 0.4f;
+  float rotation_collision_max_time_ = 3.0f;
+  // Budget in control ticks, so the rotation cannot spin forever while the
+  // collision risk persists. Replenished per path, not per rotation attempt.
+  int rotation_ticks_remaining_ = 0;
 
   // for lelative move
   bool new_rel_pose_ = false;
@@ -383,6 +410,17 @@ private:
         move_head_ = param.as_bool();
       else if (param.get_name() == "use_pot_fields")
         use_pot_fields_ = param.as_bool();
+
+      else if (param.get_name() == "allow_rotation_on_collision")
+        allow_rotation_on_collision_ = param.as_bool();
+      else if (param.get_name() == "rotation_collision_angle_threshold")
+        rotation_collision_angle_threshold_ = param.as_double();
+      else if (param.get_name() == "rotation_collision_angular_speed")
+        rotation_collision_angular_speed_ = param.as_double();
+      else if (param.get_name() == "rotation_collision_max_time") {
+        rotation_collision_max_time_ = param.as_double();
+        reset_rotation_budget();
+      }
 
       else if (param.get_name() == "base_link_name")
         base_link_name_ = param.as_string();
@@ -809,9 +847,46 @@ private:
                             use_pot_fields_, rejection_force_.y);
   }
 
-  bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) const {
+  void reset_rotation_budget() {
+    rotation_ticks_remaining_ =
+        static_cast<int>(rotation_collision_max_time_ * RATE);
+  }
+
+  bool rotation_budget_remaining() const {
+    return rotation_ticks_remaining_ > 0;
+  }
+
+  bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) {
     if (!collision_risk_ || obstacles_suspended())
       return false;
+
+    // Active recovery: rather than failing the path the moment the tracking
+    // controller wants to translate into an obstacle, turn toward the next
+    // path goal first. get_next_goal_from_path() has already run this tick, so
+    // goal_x_/goal_y_ is that next goal. Only worth doing when the heading
+    // error is large enough that turning actually changes the situation.
+    // Never during the omni last mile, which is converging on a goal that
+    // normally sits right against furniture and owns the yaw itself.
+    if (allow_rotation_on_collision_ && !last_mile_omni_active() &&
+        rotation_budget_remaining()) {
+      const float angle_error =
+          wrap_to_pi(atan2(goal_y_ - robot_y_, goal_x_ - robot_x_) - robot_t_);
+      if (std::fabs(angle_error) > rotation_collision_angle_threshold_) {
+        rotation_ticks_remaining_--;
+        cmd.linear.x = 0.0;
+        cmd.linear.y = 0.0;
+        cmd.angular.z =
+            clamp_yaw(std::copysign(rotation_collision_angular_speed_,
+                                    angle_error),
+                      max_angular_speed_);
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 2000,
+            "SimpleMove.-> Collision risk: rotating in place to recover. "
+            "heading_error=%.2f, budget=%.1f s",
+            angle_error, rotation_ticks_remaining_ / float(RATE));
+        return false;
+      }
+    }
 
     const bool translating =
         last_mile_omni_active()
@@ -1033,6 +1108,7 @@ private:
               use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
           read_path_goal_orientation();
+          reset_rotation_budget();
           prev_pose_idx = 0;
           next_pose_idx = 0;
           global_goal_x_ =
@@ -1403,6 +1479,7 @@ private:
 
       case SM_GOAL_PATH_FAILED:
         std::cout << "SimpleMove.-> FAILED path traking." << std::endl;
+        reset_rotation_budget();
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
         pub_goal_reached_->publish(msg_goal_reached);
