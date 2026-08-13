@@ -21,9 +21,49 @@
   <arg name="use_point_cloud" default="True"/>
   <arg name="use_bumper" default="False"/>
   <arg name="use_pot_fields" default="True"/>
+
   <!-- Constant-speed path following (simple_move). Toggleable at runtime via param_rw. -->
   <arg name="use_constant_speed" default="False"/>
   <arg name="constant_speed" default="0.2"/>
+
+  <!-- Last one mile omni: follow the path with unicycle control; once the
+       remaining distance to the goal drops below yaw_correction_omni_distance[m],
+       switch path following to omni (holonomic) control and swing into the goal
+       pose while translating (removes the in-place turn after arrival). Most of
+       the path uses unicycle control, so the body naturally faces the direction
+       of travel. -->
+  <arg name="yaw_correction_omni_behavior" default="False"/>
+  <arg name="yaw_correction_omni_distance" default="1.0"/>
+
+  <!-- Stronger yaw gain used only during last one mile: turns far enough that
+       mvn_pln's final yaw correction is nearly a no-op on arrival. The head also
+       faces the goal yaw direction during this segment. -->
+  <arg name="yaw_correction_omni_gain" default="4.5"/>
+
+  <!-- During last one mile, disable collision_risk stops and pot_fields
+       repulsion: the goal is often right in front of furniture, where detection
+       would prevent convergence. If fully blocked, abort via the attempts
+       timeout. -->
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+
+  <!-- At the start of last one mile, the head turns to face goal_yaw together
+       with the body. If False, the head keeps tracking as usual, facing the
+       goal (travel) direction. -->
+  <arg name="yaw_correction_align_head" default="True"/>
+  <!-- Neck slew speed [rad/s] while aligning the head onto the goal yaw during
+       the last one mile. Higher than head_default_speed so the camera snaps
+       onto the body heading quickly instead of lagging the strong base yaw. -->
+  <arg name="yaw_correction_align_head_speed" default="4.0"/>
+
+  <arg name="head_pan_min" default="-3.14"/>
+  <arg name="head_pan_max" default="1.74"/>
+
+  <!-- How far down the path the camera looks, in path points (one per map cell,
+       so x resolution for metres). Raise it to anticipate turns earlier. -->
+  <arg name="head_lookahead_points" default="5"/>
+  <!-- Neck slew rate [rad/s] used to time-parameterize head trajectories. -->
+
+  <arg name="head_default_speed" default="2.0"/>
   <arg name="cloud_downsampling" default="5"/> <!--cloud_points_threshold = 1 / cloud_downsampling-->
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
@@ -36,12 +76,13 @@
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
-  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+
+  <!--A* If the attempt fails, fill the area around the robot with white (0) within this radius [m] and replan (escape).-->
   <arg name="escape_clear_radius" default="0.6"/>
 
   <!--depth-->
   <arg name="laser_min_x" default="0.17"/>
-  <arg name="laser_max_x" default="0.55"/>
+  <arg name="laser_max_x" default="0.30"/>
   <!--right/left side-->
   <arg name="laser_min_y" default="-0.2"/>
   <arg name="laser_max_y" default="0.2"/>
@@ -50,8 +91,8 @@
      default="$(eval &quot;'0.022' if '$(var robot_name)' == 'hsrb' else '0.025'&quot;)"/>
   <arg name="laser_max_z" default="1.0"/>
   <!--depth-->
-  <arg name="cloud_min_x" default="0.45"/>
-  <arg name="cloud_max_x" default="0.60"/>
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.50"/>
   <!--right/left side-->
   <arg name="cloud_min_y" default="-0.25"/>
   <arg name="cloud_max_y" default="0.25"/>
@@ -59,10 +100,10 @@
   <arg name="cloud_min_z" default="0.1"/>
   <arg name="cloud_max_z" default="1.0"/>
 
-  <!--near goal sentのしきい値-->
+  <!--near goal sent threshold (not [m])-->
   <arg name="proximity_criterion" default="0.2"/>
 
-  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <!--How many “abort” events from collision_risk must be detected before recovery (backwards /reducing the detection box) is triggered?-->
   <arg name="collision_recovery_trigger_count" default="5"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
@@ -115,8 +156,12 @@
     <param name="use_point_cloud" value="$(var use_point_cloud)"/>
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="decay_factor" value="3"/>
-    <param name="inflation_radius" value="0.22"/> <!--[m]通行不可，黒領域の膨張，環境依存なので基本的にはこれを調整する．すくなくともfootprintの半径分は指定する-->
-    <param name="cost_radius" value="0.45"/> <!--[m]通行可，A*にコストを加算して経路を中央に寄せる（大きいほど壁から離れる，ピークはNearnessToObstacle=6の定数-->
+
+    <!--[m] Inaccessible; expansion of the black area; since this depends on the environment, this value is generally adjusted. Specify a value at least equal to the radius of the footprint-->
+    <param name="inflation_radius" value="0.22"/>
+    <!--[m] Passable; adds a cost to A* to center the path (larger values move the path farther from walls; the peak is a constant when NearnessToObstacle=6-->
+    <param name="cost_radius" value="0.45"/> 
+
     <param name="use_online" value="$(var use_online)"/>
     <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="laser_max_x" value="$(var laser_max_x)"/>
@@ -139,14 +184,24 @@
     <param name="use_online" value="$(var use_online)"/>
     <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
-    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/> <!--[m]計画失敗時に自機周辺をこの半径だけ自由(0)化して1回だけ再計画．障害物に囲まれた際の脱出用．0以下で無効-->
-    <param name="goal_relocation_radius" value="1.2"/> <!--[m]ゴールが障害物に囲まれ到達不可のとき，到達可能な最近傍セルへ貼り直して継続．要求ゴールからこの距離以内のみ採用（最終手段）．0以下で無効-->
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>     
+
+    <!--[m]If the goal is surrounded by obstacles and cannot be reached, reposition it to the nearest accessible cell and continue. Only cells within this distance from the requested goal are considered (as a last resort). Invalid if the value is 0 or less-->
+    <param name="goal_relocation_radius" value="1.2"/>
   </node>
+
   <node name="simple_move" pkg="simple_move" exec="simple_move_node" output="screen" respawn="true">
     <param name="max_linear_speed" value="1.0"/>
     <param name="max_angular_speed" value="1.25"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
+    <param name="yaw_correction_align_head_speed" value="$(var yaw_correction_align_head_speed)"/>
+    <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="linear_acceleration" value="0.2"/>
     <param name="control_alpha" value="0.3"/>
     <param name="control_beta" value="0.8"/>
@@ -193,11 +248,11 @@
     <param name="patience" value="$(var mvn_pln_patience)"/>
     <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
     <param name="proximity_criterion" value="$(var proximity_criterion)"/>
-    <param name="goal_relocation_report_threshold" value="0.5"/> <!--[m]計画経路の終端が要求ゴールからこの距離以上離れていたら「ゴール貼り直し」とみなし，abortせずnear_goal＋メッセージで報告-->
+    <param name="goal_relocation_report_threshold" value="0.5"/>
     <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
   </node>
 
-  <node pkg="motion_synth" exec="motion_synth_server.py" name="motion_synth_server" output="screen">
+  <node pkg="motion_synth" exec="motion_synth_server" name="motion_synth_server" output="screen">
   </node>
 
   <node pkg="navigation_tools" exec="param_rw.py" name="dynamic_param_rw_server" output="screen">
@@ -210,19 +265,19 @@
   </node>
 
 
+    <!--in hsr, arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
   <arg name="arm_default_pose"
-  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
-             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
-    <param name="torso_default_pose" value="0.0"/>
-    <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
     <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
-    <param name="pan_min" value="-3.14"/>
-    <param name="pan_max" value="1.74"/>
+    <param name="pan_min" value="$(var head_pan_min)"/>
+    <param name="pan_max" value="$(var head_pan_max)"/>
+    <param name="head_default_speed" value="$(var head_default_speed)"/>
     <param name="tilt_min" value="-0.6"/>
     <param name="tilt_max" value="0.47"/>
   </node>

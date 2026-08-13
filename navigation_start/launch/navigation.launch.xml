@@ -23,6 +23,40 @@
        profile. Can also be toggled at runtime via param_rw. -->
   <arg name="use_constant_speed" default="False"/>
   <arg name="constant_speed" default="0.3"/>
+  <!-- Last one mile omni: follow the path with unicycle control; once the
+       remaining distance to the goal drops below yaw_correction_omni_distance[m],
+       switch path following to omni (holonomic) control and swing into the goal
+       pose while translating (removes the in-place turn after arrival). Most of
+       the path uses unicycle control, so the body naturally faces the direction
+       of travel. -->
+  <arg name="yaw_correction_omni_behavior" default="True"/>
+  <arg name="yaw_correction_omni_distance" default="1.0"/>
+  <!-- Stronger yaw gain used only during last one mile: turns far enough that
+       mvn_pln's final yaw correction is nearly a no-op on arrival. The head also
+       faces the goal yaw direction during this segment. -->
+  <arg name="yaw_correction_omni_gain" default="4.5"/>
+  <!-- During last one mile, disable collision_risk stops and pot_fields
+       repulsion: the goal is often right in front of furniture, where detection
+       would prevent convergence. If fully blocked, abort via the attempts
+       timeout. -->
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+  <!-- At the start of last one mile, the head turns to face goal_yaw together
+       with the body. If False, the head keeps tracking as usual, facing the
+       goal (travel) direction. -->
+  <arg name="yaw_correction_align_head" default="True"/>
+  <!-- Neck slew speed [rad/s] while aligning the head onto the goal yaw during
+       the last one mile. Higher than head_default_speed so the camera snaps
+       onto the body heading quickly instead of lagging the strong base yaw. -->
+  <arg name="yaw_correction_align_head_speed" default="4.0"/>
+  <!-- Head pan range. Shared by head_controller and simple_move so the yaw
+       controller knows exactly how far the camera can actually pan. -->
+  <arg name="head_pan_min" default="-3.14"/>
+  <arg name="head_pan_max" default="1.74"/>
+  <!-- How far down the path the camera looks, in path points (one per map cell,
+       so x resolution for metres). Raise it to anticipate turns earlier. -->
+  <arg name="head_lookahead_points" default="5"/>
+  <!-- Neck slew rate [rad/s] used to time-parameterize head trajectories. -->
+  <arg name="head_default_speed" default="1.0"/>
   <arg name="cloud_downsampling" default="5"/>
   <arg name="lidar_downsampling" default="1"/>
   <arg name="cloud_points_threshold" default="100"/>
@@ -35,7 +69,7 @@
 
   <arg name="disable_rear_path_plan" default="False"/>
   <arg name="online_behind_clearance" default="1.0"/>
-  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <!--[m] On A* failure, fill white (0) within this radius around the robot and replan (escape). Precedes backing up. Disabled if <= 0-->
   <arg name="escape_clear_radius" default="0.6"/>
 
   <!--depth-->
@@ -58,10 +92,10 @@
   <arg name="cloud_min_z" default="0.1"/>
   <arg name="cloud_max_z" default="1.0"/>
 
-  <!--near goal sentのしきい値-->
+  <!--near_goal send threshold-->
   <arg name="proximity_criterion" default="0.2"/>
 
-  <!--collision_risk由来のabortを何回検知したらリカバリ(後退/検知箱縮小)を発動するか-->
+  <!--Number of collision_risk aborts to detect before triggering recovery (back up / shrink detection box)-->
   <arg name="collision_recovery_trigger_count" default="3"/>
 
   <!-- Static furniture obstacles (loaded into the prohibition layer at startup) -->
@@ -175,6 +209,13 @@
     <param name="max_angular_speed" value="1.25"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
+    <param name="yaw_correction_align_head_speed" value="$(var yaw_correction_align_head_speed)"/>
+    <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="control_alpha" value="0.2"/>
     <param name="control_beta" value="0.8"/>
     <param name="move_head" value="$(var move_head)"/>
@@ -237,19 +278,19 @@
     <param from="$(find-pkg-share navigation_tools)/config/$(var human_follow_pot_fields_preset)_pot_fields_updator.yaml"/>
   </node>
 
+  <!--in hsr, arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
   <arg name="arm_default_pose"
-  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
-             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller" pkg="hardware_controller" exec="arm_node" output="screen" respawn="true">
-    <param name="torso_default_pose" value="0.1"/>
-    <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
     <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
   <node name="head_controller" pkg="hardware_controller" exec="head_node" output="screen" respawn="true">
-    <param name="pan_min" value="-3.14"/>
-    <param name="pan_max" value="1.74"/>
+    <param name="pan_min" value="$(var head_pan_min)"/>
+    <param name="pan_max" value="$(var head_pan_max)"/>
+    <param name="head_default_speed" value="$(var head_default_speed)"/>
     <param name="tilt_min" value="-0.7"/>
     <param name="tilt_max" value="0.47"/>
   </node>

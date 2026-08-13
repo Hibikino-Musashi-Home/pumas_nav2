@@ -288,9 +288,10 @@
 
   </node>
 
+  <!--arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
   <arg name="arm_default_pose"
-  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
-             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller"
@@ -298,8 +299,6 @@
         exec="arm_node"
         output="screen"
         respawn="true">
-        <param name="torso_default_pose" value="0.15"/>
-        <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
         <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
 

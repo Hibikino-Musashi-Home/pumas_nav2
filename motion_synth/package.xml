@@ -3,8 +3,11 @@
 <package format="3">
   <name>motion_synth</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Arm Motion Control while pumas_nav2 path tracking</description>
+  <author email="ono.tomohiro342@mail.kyutech.jp">Tomohiro Ono</author>
+  <author email="kobayashi.ryohei621@mail.kyutech.jp">ry0hei-kobayashi</author>
   <maintainer email="kobayashi.ryohei621@mail.kyutech.jp">ry0hei-kobayashi</maintainer>
+
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

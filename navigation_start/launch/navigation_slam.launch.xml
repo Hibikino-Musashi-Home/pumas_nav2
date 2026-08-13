@@ -37,7 +37,7 @@
   <arg name="disable_rear_path_plan" default="True"/>
   <arg name="online_behind_clearance" default="1.0"/>
 
-  <!--A*失敗時に自機周囲をこの半径[m]だけ白(0)で塗って再計画(脱出)．後退の前段．0以下で無効-->
+  <!--[m] On A* failure, fill white (0) within this radius around the robot and replan (escape). Precedes backing up. Disabled if <= 0-->
   <arg name="escape_clear_radius" default="0.6"/>
 
   <arg name="laser_min_x" default="0.17"/>
@@ -247,17 +247,16 @@
     <param name="use_online" value="$(var use_online)"/>
   </node>
 
+  <!--in hsr; arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->
   <arg name="arm_default_pose"
-  default="$(eval &quot;'[0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
-             else '[-0.16, -1.57, -1.57, 0.0]'&quot;)"/>
+  default="$(eval &quot;'[0.0, 0.0, -1.57, -1.57, 0.0]' if '$(var robot_name)' == 'hsrc_ex'
+             else '[0.0, -0.16, -1.57, -1.57, 0.0]'&quot;)"/>
 
   <!-- Hardware Controller -->
   <node name="arm_controller"
         pkg="hardware_controller"
         exec="arm_node"
         output="screen">
-        <param name="torso_default_pose" value="0.0"/>
-        <!--arm_flex, arm_roll, wrist_flex, wrist_roll-->
         <param name="arm_default_pose" value="$(var arm_default_pose)"/>
   </node>
 
