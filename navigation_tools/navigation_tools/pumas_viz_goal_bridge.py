@@ -10,7 +10,7 @@ from rclpy.node import Node
 class RvizGoalBridge(Node):
     def __init__(self):
         super().__init__("rviz_goal_bridge")
-        self.cli = ActionClient(self, PumasNav, "/pumasnav")
+        self.cli = ActionClient(self, PumasNav, "/pumas_nav")
 
         self.sub = self.create_subscription(
             PoseStamped,

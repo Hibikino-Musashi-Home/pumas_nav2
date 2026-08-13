@@ -75,6 +75,7 @@ ament_target_dependencies(gaze_node
     rclcpp_action
 
     std_msgs
+    sensor_msgs
     geometry_msgs
 
     tf2

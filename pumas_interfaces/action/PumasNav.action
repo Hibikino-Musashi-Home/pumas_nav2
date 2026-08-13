@@ -6,6 +6,12 @@ geometry_msgs/PoseArray via_points
 # Stop this many metres short of the goal (server-side, straight-line dist
 # robot->goal). <= 0 disables (full arrival via simple_move).
 float32 goal_distance
+# Near-goal replan suppression: once a REPLAN would start from within this many
+# metres of the goal, stop instead of planning again (nothing useful is left to
+# plan, and a goal placed ON an obstacle otherwise loops forever). <= 0 means
+# "not specified": the server's min_reach_goal_dist parameter is used, and
+# setting that to 0 disables the feature entirely.
+float32 min_reach_goal_dist
 
 ---
 # Result

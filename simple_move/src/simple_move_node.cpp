@@ -66,6 +66,32 @@ public:
     // constant_speed [m/s] (still attenuated on sharp turns by the controller).
     this->declare_parameter<bool>("use_constant_speed", false);
     this->declare_parameter<float>("constant_speed", 0.3f);
+    // Last-mile omni. The unicycle controller drives the path (the body
+    // naturally faces the travel direction); once the goal is closer than
+    // yaw_correction_omni_distance [m] the tracking switches to the holonomic
+    // controller, which slides onto the goal while yawing onto its orientation
+    // instead of arriving and turning in place.
+    this->declare_parameter<bool>("yaw_correction_omni_behavior", false);
+    this->declare_parameter<float>("yaw_correction_omni_distance", 1.0f);
+    // Yaw gain used only while the last-mile omni drives. Deliberately strong:
+    // the goal is to arrive with so little yaw error that mvn_pln's final-angle
+    // correction has nothing left to do.
+    this->declare_parameter<float>("yaw_correction_omni_gain", 2.5f);
+    // Ignore collision_risk and the pot-fields rejection during the last
+    // mile. The goal usually sits right next to furniture, so the front
+    // detection box and the rejection force fight the convergence exactly
+    // when the robot is closing the final, slow stretch. If the way is
+    // truly blocked the attempts timeout still aborts.
+    this->declare_parameter<bool>("yaw_correction_ignore_obstacles", true);
+    // Aim the head at the goal orientation during the last mile, so it turns
+    // onto the goal yaw together with the body. When false the head keeps its
+    // normal path tracking (looking toward the goal/travel direction) the whole
+    // way in. The base still yaws onto the goal orientation either way.
+    this->declare_parameter<bool>("yaw_correction_align_head", true);
+    // How far down the path the camera looks, in path points. The planner emits
+    // one point per map cell, so this is (points x resolution) metres ahead.
+    // Raising it makes the head anticipate turns earlier.
+    this->declare_parameter<int>("head_lookahead_points", 5);
     this->declare_parameter<float>("control_alpha", 0.6548f);
     this->declare_parameter<float>("control_beta", 0.2f);
     this->declare_parameter<float>("linear_acceleration", 0.1f);
@@ -75,6 +101,14 @@ public:
 
     this->declare_parameter<bool>("move_head", true);
     this->declare_parameter<bool>("use_pot_fields", false);
+
+    // Active rotate-in-place recovery. Off by default: flickering obstacle
+    // reports can make the base oscillate, so this is opt-in per environment
+    // (narrow passages) rather than always-on.
+    this->declare_parameter<bool>("allow_rotation_on_collision", false);
+    this->declare_parameter<float>("rotation_collision_angle_threshold", 0.35f);
+    this->declare_parameter<float>("rotation_collision_angular_speed", 0.4f);
+    this->declare_parameter<float>("rotation_collision_max_time", 3.0f);
 
     this->declare_parameter<std::string>("base_link_name", "base_footprint");
     this->declare_parameter<std::string>("odom_name", "odom");
@@ -86,6 +120,16 @@ public:
     this->get_parameter("max_angular_speed", max_angular_speed_);
     this->get_parameter("use_constant_speed", use_constant_speed_);
     this->get_parameter("constant_speed", constant_speed_);
+    this->get_parameter("yaw_correction_omni_behavior",
+                        yaw_correction_omni_behavior_);
+    this->get_parameter("yaw_correction_omni_distance",
+                        yaw_correction_omni_distance_);
+    this->get_parameter("yaw_correction_omni_gain", yaw_correction_omni_gain_);
+    this->get_parameter("yaw_correction_ignore_obstacles",
+                        yaw_correction_ignore_obstacles_);
+    this->get_parameter("yaw_correction_align_head",
+                        yaw_correction_align_head_);
+    this->get_parameter("head_lookahead_points", head_lookahead_points_);
     this->get_parameter("control_alpha", alpha_);
     this->get_parameter("control_beta", beta_);
     this->get_parameter("linear_acceleration", linear_acceleration_);
@@ -95,6 +139,16 @@ public:
 
     this->get_parameter("move_head", move_head_);
     this->get_parameter("use_pot_fields", use_pot_fields_);
+
+    this->get_parameter("allow_rotation_on_collision",
+                        allow_rotation_on_collision_);
+    this->get_parameter("rotation_collision_angle_threshold",
+                        rotation_collision_angle_threshold_);
+    this->get_parameter("rotation_collision_angular_speed",
+                        rotation_collision_angular_speed_);
+    this->get_parameter("rotation_collision_max_time",
+                        rotation_collision_max_time_);
+    reset_rotation_budget();
 
     this->get_parameter("base_link_name", base_link_name_);
     this->get_parameter("odom_name", odom_name_);
@@ -201,6 +255,15 @@ private:
   bool move_lat_ = false;
   bool stop_ = false;
 
+  // Active rotate-in-place recovery (see collision_blocks_tracking).
+  bool allow_rotation_on_collision_ = false;
+  float rotation_collision_angle_threshold_ = 0.35f;
+  float rotation_collision_angular_speed_ = 0.4f;
+  float rotation_collision_max_time_ = 3.0f;
+  // Budget in control ticks, so the rotation cannot spin forever while the
+  // collision risk persists. Replenished per path, not per rotation attempt.
+  int rotation_ticks_remaining_ = 0;
+
   // for lelative move
   bool new_rel_pose_ = false;
   float rel_x_ = 0;
@@ -228,6 +291,12 @@ private:
   float max_angular_speed_;
   bool use_constant_speed_ = false;
   float constant_speed_;
+  bool yaw_correction_omni_behavior_ = false;
+  float yaw_correction_omni_distance_;
+  float yaw_correction_omni_gain_;
+  bool yaw_correction_ignore_obstacles_ = true;
+  bool yaw_correction_align_head_ = true;
+  int head_lookahead_points_;
   float alpha_;
   float beta_;
   float linear_acceleration_;
@@ -250,6 +319,11 @@ private:
   float temp_k = 0;
   int attempts = 0;
   float global_error = 0;
+
+  // Goal orientation, carried on the last path pose by mvn_pln. Absent when the
+  // path comes from somewhere that does not request a final yaw.
+  float path_goal_t_ = 0;
+  bool path_goal_t_valid_ = false;
 
   // ############
   //  Publishers
@@ -307,6 +381,18 @@ private:
         use_constant_speed_ = param.as_bool();
       else if (param.get_name() == "constant_speed")
         constant_speed_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_omni_behavior")
+        yaw_correction_omni_behavior_ = param.as_bool();
+      else if (param.get_name() == "yaw_correction_omni_distance")
+        yaw_correction_omni_distance_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_omni_gain")
+        yaw_correction_omni_gain_ = param.as_double();
+      else if (param.get_name() == "yaw_correction_ignore_obstacles")
+        yaw_correction_ignore_obstacles_ = param.as_bool();
+      else if (param.get_name() == "yaw_correction_align_head")
+        yaw_correction_align_head_ = param.as_bool();
+      else if (param.get_name() == "head_lookahead_points")
+        head_lookahead_points_ = param.as_int();
       else if (param.get_name() == "control_alpha")
         alpha_ = param.as_double();
       else if (param.get_name() == "control_beta")
@@ -324,6 +410,17 @@ private:
         move_head_ = param.as_bool();
       else if (param.get_name() == "use_pot_fields")
         use_pot_fields_ = param.as_bool();
+
+      else if (param.get_name() == "allow_rotation_on_collision")
+        allow_rotation_on_collision_ = param.as_bool();
+      else if (param.get_name() == "rotation_collision_angle_threshold")
+        rotation_collision_angle_threshold_ = param.as_double();
+      else if (param.get_name() == "rotation_collision_angular_speed")
+        rotation_collision_angular_speed_ = param.as_double();
+      else if (param.get_name() == "rotation_collision_max_time") {
+        rotation_collision_max_time_ = param.as_double();
+        reset_rotation_budget();
+      }
 
       else if (param.get_name() == "base_link_name")
         base_link_name_ = param.as_string();
@@ -637,6 +734,173 @@ private:
     return result;
   }
 
+  // mvn_pln stamps the goal orientation onto the last path pose. The path
+  // planner zeroes every orientation it writes, and an all-zero quaternion is
+  // not a rotation, so its norm tells a requested yaw from an absent one.
+  void read_path_goal_orientation() {
+    path_goal_t_valid_ = false;
+    if (goal_path_.poses.empty())
+      return;
+
+    const auto &q = goal_path_.poses.back().pose.orientation;
+    if (q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w < 1e-6)
+      return;
+
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(tf2::Quaternion(q.x, q.y, q.z, q.w)).getRPY(roll, pitch, yaw);
+    path_goal_t_ = static_cast<float>(yaw);
+    path_goal_t_valid_ = true;
+  }
+
+  static float wrap_to_pi(float angle) {
+    while (angle > M_PI)
+      angle -= 2 * M_PI;
+    while (angle <= -M_PI)
+      angle += 2 * M_PI;
+    return angle;
+  }
+
+  // Holonomic path tracking. The base translates straight at the lookahead
+  // point whatever its yaw is, so the exp(-angle_error^2/alpha) attenuation of
+  // the unicycle controller -- which is what makes the robot turn its body
+  // before it can move -- is gone. Heading the camera is left to the head pan,
+  // which get_next_goal_head_angles() already commands as this same angle.
+  geometry_msgs::msg::Twist
+  calculate_speeds_omni(float robot_x, float robot_y, float robot_t,
+                        float goal_x, float goal_y, float min_linear_speed,
+                        float linear_speed, float max_angular_speed,
+                        bool use_pot_fields, double rejection_force_x,
+                        double rejection_force_y) {
+    float heading =
+        wrap_to_pi(atan2(goal_y - robot_y, goal_x - robot_x) - robot_t);
+
+    float vx = linear_speed * cos(heading);
+    float vy = linear_speed * sin(heading);
+
+    // The deadzone is on the magnitude, not per axis: a diagonal command whose
+    // two components are each below min_linear_speed is still a valid move.
+    if (sqrt(vx * vx + vy * vy) < min_linear_speed) {
+      vx = 0;
+      vy = 0;
+    } else if (use_pot_fields) {
+      // Both axes are free here, so the rejection force adds to the tracking
+      // velocity rather than overwriting the lateral one as in the unicycle
+      // controller. It is only applied while translating, which keeps the
+      // "rotating in place" case of collision_blocks_tracking() exact.
+      vx += rejection_force_x;
+      vy += rejection_force_y;
+      float mag = sqrt(vx * vx + vy * vy);
+      if (mag > max_linear_speed_) {
+        vx *= max_linear_speed_ / mag;
+        vy *= max_linear_speed_ / mag;
+      }
+    }
+
+    geometry_msgs::msg::Twist result;
+    result.linear.x = vx;
+    result.linear.y = vy;
+    result.angular.z = omni_yaw_speed(heading, max_angular_speed);
+    return result;
+  }
+
+  float clamp_yaw(float w, float max_angular_speed) const {
+    return std::max(-max_angular_speed, std::min(max_angular_speed, w));
+  }
+
+  // The base turns hard onto the goal yaw during the last-mile omni. The
+  // camera is aimed at the goal yaw here (see publish_path_head_goal), not at
+  // the path, so there is no pan range to protect: the whole rotation goes
+  // toward the goal orientation. Without a goal orientation on the path there
+  // is nothing to converge onto and the base simply yaws down the path.
+  float omni_yaw_speed(float heading, float max_angular_speed) const {
+    float yaw_error =
+        path_goal_t_valid_ ? wrap_to_pi(path_goal_t_ - robot_t_) : heading;
+    return clamp_yaw(yaw_correction_omni_gain_ * yaw_error, max_angular_speed);
+  }
+
+  // Last-mile omni: unicycle tracking has handed over to the holonomic
+  // controller for the final stretch to the goal.
+  bool last_mile_omni_active() const {
+    if (!yaw_correction_omni_behavior_)
+      return false;
+    return std::hypot(global_goal_x_ - robot_x_, global_goal_y_ - robot_y_) <
+           yaw_correction_omni_distance_;
+  }
+
+  // Obstacle interference (collision_risk abort + pot-fields rejection) is
+  // suspended while the last-mile omni converges onto a goal that usually
+  // sits right against furniture.
+  bool obstacles_suspended() const {
+    return yaw_correction_ignore_obstacles_ && last_mile_omni_active();
+  }
+
+  geometry_msgs::msg::Twist path_tracking_speeds() {
+    if (last_mile_omni_active())
+      return calculate_speeds_omni(robot_x_, robot_y_, robot_t_, goal_x_,
+                                   goal_y_, min_linear_speed_,
+                                   current_linear_speed, max_angular_speed_,
+                                   use_pot_fields_ && !obstacles_suspended(),
+                                   rejection_force_.x, rejection_force_.y);
+    return calculate_speeds(robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
+                            min_linear_speed_, current_linear_speed,
+                            max_angular_speed_, alpha_, beta_, false, move_lat_,
+                            use_pot_fields_, rejection_force_.y);
+  }
+
+  void reset_rotation_budget() {
+    rotation_ticks_remaining_ =
+        static_cast<int>(rotation_collision_max_time_ * RATE);
+  }
+
+  bool rotation_budget_remaining() const {
+    return rotation_ticks_remaining_ > 0;
+  }
+
+  bool collision_blocks_tracking(geometry_msgs::msg::Twist &cmd) {
+    if (!collision_risk_ || obstacles_suspended())
+      return false;
+
+    // Active recovery: rather than failing the path the moment the tracking
+    // controller wants to translate into an obstacle, turn toward the next
+    // path goal first. get_next_goal_from_path() has already run this tick, so
+    // goal_x_/goal_y_ is that next goal. Only worth doing when the heading
+    // error is large enough that turning actually changes the situation.
+    // Never during the omni last mile, which is converging on a goal that
+    // normally sits right against furniture and owns the yaw itself.
+    if (allow_rotation_on_collision_ && !last_mile_omni_active() &&
+        rotation_budget_remaining()) {
+      const float angle_error =
+          wrap_to_pi(atan2(goal_y_ - robot_y_, goal_x_ - robot_x_) - robot_t_);
+      if (std::fabs(angle_error) > rotation_collision_angle_threshold_) {
+        rotation_ticks_remaining_--;
+        cmd.linear.x = 0.0;
+        cmd.linear.y = 0.0;
+        cmd.angular.z =
+            clamp_yaw(std::copysign(rotation_collision_angular_speed_,
+                                    angle_error),
+                      max_angular_speed_);
+        RCLCPP_WARN_THROTTLE(
+            this->get_logger(), *this->get_clock(), 2000,
+            "SimpleMove.-> Collision risk: rotating in place to recover. "
+            "heading_error=%.2f, budget=%.1f s",
+            angle_error, rotation_ticks_remaining_ / float(RATE));
+        return false;
+      }
+    }
+
+    const bool translating =
+        last_mile_omni_active()
+            ? (cmd.linear.x != 0.0 || cmd.linear.y != 0.0)
+            : (move_lat_ ? (cmd.linear.y != 0.0) : (cmd.linear.x != 0.0));
+    if (translating)
+      return true;
+
+    // Rotating in place: drop any lateral pot-fields push, keep angular.z.
+    cmd.linear.x = 0.0;
+    cmd.linear.y = 0.0;
+    return false;
+  }
+
   bool get_robot_position_wrt_map() {
     try {
       geometry_msgs::msg::TransformStamped transformStamped =
@@ -772,10 +1036,7 @@ private:
     if (last < 0)
       return msg; // empty path guard
 
-    int idx = std::min(next_pose_idx + 5, last);
-    // int idx = next_pose_idx + 5 >= goal_path_.poses.size() - 1
-    //               ? goal_path_.poses.size() - 1
-    //               : next_pose_idx + 5;
+    int idx = std::min(next_pose_idx + head_lookahead_points_, last);
     float goal_x = goal_path_.poses[idx].pose.position.x;
     float goal_y = goal_path_.poses[idx].pose.position.y;
     float angle = atan2(goal_y - robot_y_, goal_x - robot_x_) - robot_t_;
@@ -786,6 +1047,22 @@ private:
     msg.data.push_back(angle);
     msg.data.push_back(-1.0);
     return msg;
+  }
+
+  // Head target during path following. When yaw_correction_align_head is set,
+  // the last-mile omni turns the camera to where the robot will end up facing
+  // (the goal yaw) as the base yaws onto it, instead of chasing the last few
+  // path points; otherwise the head keeps its normal path tracking.
+  void publish_path_head_goal(int idx) {
+    if (yaw_correction_align_head_ && last_mile_omni_active() &&
+        path_goal_t_valid_) {
+      std_msgs::msg::Float32MultiArray msg;
+      msg.data.push_back(wrap_to_pi(path_goal_t_ - robot_t_));
+      msg.data.push_back(-1.0);
+      pub_head_goal_pose_->publish(msg);
+      return;
+    }
+    pub_head_goal_pose_->publish(get_next_goal_head_angles(idx));
   }
 
   // ############
@@ -827,11 +1104,11 @@ private:
         }
         if (new_path_) {
           collision_risk_ = false;
-          // In constant-speed mode skip the accel/cruise/deccel profile and
-          // follow the path at a fixed speed from the start.
-          state = use_constant_speed_ ? SM_GOAL_PATH_CONSTANT
-                                      : SM_GOAL_PATH_ACCEL;
+          state =
+              use_constant_speed_ ? SM_GOAL_PATH_CONSTANT : SM_GOAL_PATH_ACCEL;
           new_path_ = false;
+          read_path_goal_orientation();
+          reset_rotation_budget();
           prev_pose_idx = 0;
           next_pose_idx = 0;
           global_goal_x_ =
@@ -870,7 +1147,7 @@ private:
         }
         break;
 
-      case SM_GOAL_REL_POSE: { // TODO maybe its moves only holonomic robot
+      case SM_GOAL_REL_POSE: { // TODO its moves only holonomic robot
         get_robot_position_wrt_odom();
         float dx = goal_x_ - robot_x_;
         float dy = goal_y_ - robot_y_;
@@ -1043,127 +1320,137 @@ private:
         current_linear_speed = 0;
         break;
 
-      case SM_GOAL_PATH_ACCEL:
-        if (collision_risk_) {
+      case SM_GOAL_PATH_ACCEL: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        auto cmd = path_tracking_speeds();
+
+        if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-
-          if (global_error < coarse_dist_tolerance_) {
-            state = SM_GOAL_PATH_FINISH;
-          } else if (global_error < current_linear_speed *
-                                        current_linear_speed /
-                                        linear_acceleration_) {
-            state = SM_GOAL_PATH_DECCEL;
-            temp_k = current_linear_speed / sqrt(global_error);
-          } else if (current_linear_speed >= max_linear_speed_) {
-            state = SM_GOAL_PATH_CRUISE;
-            current_linear_speed = max_linear_speed_;
-          }
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state: GOAL_PATH_ACCEL."
-                      << std::endl;
-          }
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
-          current_linear_speed += linear_acceleration_ / RATE;
+          break;
         }
-        break;
 
-      case SM_GOAL_PATH_CRUISE:
-        if (collision_risk_) {
-          state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
-          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
-                    << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-          if (global_error < coarse_dist_tolerance_)
-            state = SM_GOAL_PATH_FINISH;
-          else if (global_error < current_linear_speed * current_linear_speed /
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+
+        if (global_error < coarse_dist_tolerance_) {
+          state = SM_GOAL_PATH_FINISH;
+        } else if (global_error < current_linear_speed * current_linear_speed /
                                       linear_acceleration_) {
-            state = SM_GOAL_PATH_DECCEL;
-            temp_k = current_linear_speed / sqrt(global_error);
-          }
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state: GOAL_PATH_CRUISE."
-                      << std::endl;
-          }
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+          state = SM_GOAL_PATH_DECCEL;
+          temp_k = current_linear_speed / sqrt(global_error);
+        } else if (current_linear_speed >= max_linear_speed_) {
+          state = SM_GOAL_PATH_CRUISE;
+          current_linear_speed = max_linear_speed_;
         }
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state: GOAL_PATH_ACCEL."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          publish_path_head_goal(next_pose_idx);
+        current_linear_speed += linear_acceleration_ / RATE;
         break;
+      }
 
-      case SM_GOAL_PATH_DECCEL:
-        if (collision_risk_) {
+      case SM_GOAL_PATH_CRUISE: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        auto cmd = path_tracking_speeds();
+
+        if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
           pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
-        } else {
-          get_robot_position_wrt_map();
-          get_next_goal_from_path(prev_pose_idx, next_pose_idx);
-          global_error =
-              sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
-                   (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
-          if (global_error < coarse_dist_tolerance_)
-            state = SM_GOAL_PATH_FINISH;
-          if (--attempts <= 0) {
-            state = SM_GOAL_PATH_FAILED;
-            std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
-                         "goal path. Current state:GOAL_PATH_DECCEL."
-                      << std::endl;
-          }
-          current_linear_speed = temp_k * sqrt(global_error);
-          if (current_linear_speed < min_linear_speed_)
-            current_linear_speed = min_linear_speed_;
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
-          if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+          break;
         }
+
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+        if (global_error < coarse_dist_tolerance_)
+          state = SM_GOAL_PATH_FINISH;
+        else if (global_error < current_linear_speed * current_linear_speed /
+                                    linear_acceleration_) {
+          state = SM_GOAL_PATH_DECCEL;
+          temp_k = current_linear_speed / sqrt(global_error);
+        }
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state: GOAL_PATH_CRUISE."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          publish_path_head_goal(next_pose_idx);
         break;
+      }
+
+      case SM_GOAL_PATH_DECCEL: {
+        get_robot_position_wrt_map();
+        get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+        global_error =
+            sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
+                 (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
+
+        // Speed ramp must be applied before the twist is built, since the gate
+        // below inspects that twist.
+        current_linear_speed = temp_k * sqrt(global_error);
+        if (current_linear_speed < min_linear_speed_)
+          current_linear_speed = min_linear_speed_;
+
+        auto cmd = path_tracking_speeds();
+
+        if (collision_blocks_tracking(cmd)) {
+          state = SM_GOAL_PATH_FAILED;
+          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
+                    << std::endl;
+          break;
+        }
+
+        if (global_error < coarse_dist_tolerance_)
+          state = SM_GOAL_PATH_FINISH;
+        if (--attempts <= 0) {
+          state = SM_GOAL_PATH_FAILED;
+          std::cout << "SimpleMove.-> Timeout exceeded while trying to reach "
+                       "goal path. Current state:GOAL_PATH_DECCEL."
+                    << std::endl;
+        }
+        pub_cmd_vel_->publish(cmd);
+        if (move_head_)
+          publish_path_head_goal(next_pose_idx);
+        break;
+      }
 
       case SM_GOAL_PATH_CONSTANT:
         // Constant-speed path following: like CRUISE but the speed is held at
         // constant_speed_ for the whole path (no accel/deccel ramp). The
         // controller still attenuates linear speed on sharp turns.
-        if (collision_risk_) {
-          state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
-          std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
-                    << std::endl;
-        } else {
+        {
           get_robot_position_wrt_map();
           get_next_goal_from_path(prev_pose_idx, next_pose_idx);
+          current_linear_speed = constant_speed_;
+
+          auto cmd = path_tracking_speeds();
+
+          if (collision_blocks_tracking(cmd)) {
+            state = SM_GOAL_PATH_FAILED;
+            pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+            std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
+                      << std::endl;
+            break;
+          }
+
           global_error =
               sqrt((global_goal_x_ - robot_x_) * (global_goal_x_ - robot_x_) +
                    (global_goal_y_ - robot_y_) * (global_goal_y_ - robot_y_));
@@ -1175,14 +1462,9 @@ private:
                          "goal path. Current state: GOAL_PATH_CONSTANT."
                       << std::endl;
           }
-          current_linear_speed = constant_speed_;
-          pub_cmd_vel_->publish(calculate_speeds(
-              robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
-              current_linear_speed, max_angular_speed_, alpha_, beta_, false,
-              move_lat_, use_pot_fields_, rejection_force_.y));
+          pub_cmd_vel_->publish(cmd);
           if (move_head_)
-            pub_head_goal_pose_->publish(
-                get_next_goal_head_angles(next_pose_idx));
+            publish_path_head_goal(next_pose_idx);
         }
         break;
 
@@ -1197,6 +1479,7 @@ private:
 
       case SM_GOAL_PATH_FAILED:
         std::cout << "SimpleMove.-> FAILED path traking." << std::endl;
+        reset_rotation_budget();
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
         pub_goal_reached_->publish(msg_goal_reached);

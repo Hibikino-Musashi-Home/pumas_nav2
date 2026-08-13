@@ -7,34 +7,44 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(rclpy REQUIRED)
+find_package(rclcpp_action REQUIRED)
 
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
+find_package(actionlib_msgs REQUIRED)
 
-find_package(builtin_interfaces REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
 
+find_package(pumas_interfaces REQUIRED)
 
 # C++ section
-#add_executable(hoge_node
-#    src/hoge.cpp
-#)
-
-# Python section
-#ament_python_install_package(${PROJECT_NAME})
-
-install(PROGRAMS
-  ${PROJECT_NAME}/motion_synth_server.py
-  DESTINATION lib/${PROJECT_NAME}
+add_executable(motion_synth_server
+    src/motion_synth_server.cpp
 )
 
-## Ensure both are included
-#install(TARGETS
-#hoge_node  DESTINATION lib/${PROJECT_NAME}
-#)
+ament_target_dependencies(motion_synth_server
+    rclcpp
+    rclcpp_action
+
+    sensor_msgs
+    geometry_msgs
+    nav_msgs
+    actionlib_msgs
+
+    tf2
+    tf2_ros
+
+    pumas_interfaces
+)
+
+install(TARGETS
+  motion_synth_server
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()

@@ -5,6 +5,7 @@
 
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 
 #include <control_msgs/msg/joint_trajectory_controller_state.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
@@ -43,6 +44,10 @@ public:
     // dt = max(head_min_time, (|dpan| + |dtilt|) / head_default_speed)
     this->declare_parameter<double>("head_default_speed", 1.0); // [rad/s]
     this->declare_parameter<double>("head_min_time", 0.15);     // [s]
+    // Joint names in controller order (0: pan, 1: tilt). Configurable so this
+    // node isn't hardcoded to one robot's specific joint names.
+    this->declare_parameter<std::vector<std::string>>(
+        "head_default_names", {"head_pan_joint", "head_tilt_joint"});
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
@@ -58,6 +63,15 @@ public:
     this->get_parameter("move_head", move_head_);
     this->get_parameter("head_default_speed", head_default_speed_);
     this->get_parameter("head_min_time", head_min_time_);
+    this->get_parameter("head_default_names", head_default_names_);
+
+    if (head_default_names_.size() != 2) {
+      RCLCPP_ERROR(this->get_logger(),
+          "head_node.-> head_default_names must have exactly 2 entries "
+          "(got %zu); falling back to built-in defaults.",
+          head_default_names_.size());
+      head_default_names_ = {"head_pan_joint", "head_tilt_joint"};
+    }
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(std::bind(
@@ -68,7 +82,7 @@ public:
         this->create_publisher<trajectory_msgs::msg::JointTrajectory>(
             head_cmd_topic_, rclcpp::QoS(10).reliable());
     pub_head_current_pose_ =
-        this->create_publisher<std_msgs::msg::Float32MultiArray>(
+        this->create_publisher<sensor_msgs::msg::JointState>(
             head_current_topic_, rclcpp::QoS(10).reliable());
     pub_head_goal_reached_ = this->create_publisher<std_msgs::msg::Bool>(
         head_goal_reached_topic_, rclcpp::QoS(10).reliable());
@@ -115,6 +129,7 @@ private:
 
   double pan_min_, pan_max_, tilt_min_, tilt_max_;
   bool move_head_ = true;
+  std::vector<std::string> head_default_names_{"head_pan_joint", "head_tilt_joint"};
 
   // Distance-proportional trajectory timing for the gaze / simple_move path
   // (used only when no explicit motion_execution_time override is given).
@@ -123,7 +138,7 @@ private:
 
   rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr
       pub_head_goal_traj_;
-  rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr
+  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr
       pub_head_current_pose_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_head_goal_reached_;
 
@@ -220,6 +235,21 @@ private:
     return name;
   }
 
+  // Find `joint_name`'s value in the parallel `names`/`positions` arrays by
+  // name, not by a fixed index. Returns false if not found.
+  static bool findJointPosition(const std::vector<std::string> &names,
+                                const std::vector<double> &positions,
+                                const std::string &joint_name, float &out) {
+    auto it = std::find(names.begin(), names.end(), joint_name);
+    if (it == names.end())
+      return false;
+    const size_t idx = std::distance(names.begin(), it);
+    if (idx >= positions.size())
+      return false;
+    out = static_cast<float>(positions[idx]);
+    return true;
+  }
+
   void headStateCallback(
       const control_msgs::msg::JointTrajectoryControllerState::SharedPtr msg) {
     // expected: positions.size() >= 2  (0:pan, 1:tilt)
@@ -229,9 +259,11 @@ private:
       head_current_pose_[1] =
           static_cast<float>(msg->actual.positions[1]); // tilt
 
-      std_msgs::msg::Float32MultiArray arr;
-      arr.data = head_current_pose_;
-      pub_head_current_pose_->publish(arr);
+      sensor_msgs::msg::JointState state_msg;
+      state_msg.header.stamp = this->now();
+      state_msg.name = head_default_names_;
+      state_msg.position = {head_current_pose_[0], head_current_pose_[1]};
+      pub_head_current_pose_->publish(state_msg);
     }
 
     if (!startup_initialized_) {
@@ -305,12 +337,16 @@ private:
             ? static_cast<double>(msg->motion_execution_time)
             : kDefaultHeadTimeFromStart;
 
-    head_goal_pose_[0] =
-        std::clamp(msg->joints.head_pan_joint, static_cast<float>(pan_min_),
-                   static_cast<float>(pan_max_));
-    head_goal_pose_[1] =
-        std::clamp(msg->joints.head_tilt_joint, static_cast<float>(tilt_min_),
-                   static_cast<float>(tilt_max_));
+    // msg->joints is a name-keyed JointState (see MotionPose.msg) — look up
+    // the configured pan/tilt joint names instead of a fixed field layout.
+    float pan = 0.0f, tilt = 0.0f;
+    findJointPosition(msg->joints.name, msg->joints.position, head_default_names_[0], pan);
+    findJointPosition(msg->joints.name, msg->joints.position, head_default_names_[1], tilt);
+
+    head_goal_pose_[0] = std::clamp(pan, static_cast<float>(pan_min_),
+                                    static_cast<float>(pan_max_));
+    head_goal_pose_[1] = std::clamp(tilt, static_cast<float>(tilt_min_),
+                                    static_cast<float>(tilt_max_));
 
     goal_received_ = true;
     RCLCPP_INFO(
@@ -323,7 +359,7 @@ private:
 
   void sendHeadGoalTrajectory(float pan, float tilt) {
     trajectory_msgs::msg::JointTrajectory traj;
-    traj.joint_names = {"head_pan_joint", "head_tilt_joint"};
+    traj.joint_names = head_default_names_;
 
     // Decide the trajectory duration. An explicit override from motion_synth
     // (motion_execution_time) wins. Otherwise (gaze / simple_move path) the
