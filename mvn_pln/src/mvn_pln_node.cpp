@@ -137,6 +137,24 @@ public:
     this->declare_parameter<bool>("enable_stuck_abort", true);
     this->declare_parameter<double>("free_point_search_radius", 2.0);
 
+    // Near-goal replan suppression. Once the robot is this close [m] to the
+    // goal there is nothing useful left to plan: a replan can only return
+    // another near-zero path, which is what makes a goal placed ON an obstacle
+    // loop forever (the planner keeps relocating it a few centimetres away and
+    // we keep re-driving those few centimetres). Same idea as goal_distance_,
+    // except goal_distance_ is a per-goal request from the caller while this is
+    // a safety net that only applies when a REPLAN is about to happen.
+    // When the last plan came back relocated (the goal sits on an obstacle) the
+    // relocation distance is added to this radius, so "near the goal" is
+    // measured against what is actually reachable.
+    // This is the node-wide default: a PumasNav goal may override it with its
+    // own min_reach_goal_dist, and a goal value of 0 means "not specified" and
+    // falls back here. Setting this parameter to 0 disables the gate entirely.
+    this->declare_parameter<double>("min_reach_goal_dist", 0.0);
+    // true  -> treat the current point as the goal (SUCCEEDED, near_goal set)
+    // false -> abort the task instead
+    this->declare_parameter<bool>("near_goal_accept_as_goal", true);
+
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
     this->get_parameter("patience", patience_);
@@ -157,6 +175,8 @@ public:
     this->get_parameter("enable_goal_relax", enable_goal_relax_);
     this->get_parameter("enable_stuck_abort", enable_stuck_abort_);
     this->get_parameter("free_point_search_radius", free_point_search_radius_);
+    this->get_parameter("min_reach_goal_dist", min_reach_goal_dist_);
+    this->get_parameter("near_goal_accept_as_goal", near_goal_accept_as_goal_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -428,6 +448,19 @@ private:
   int converge_level_ = 0;
   std::string convergence_reason_;
 
+  // Near-goal replan suppression (see the parameter declarations). Sits on the
+  // replan path only: the first plan of a task is never suppressed, so a goal
+  // requested from right next to the robot still gets planned and driven.
+  double min_reach_goal_dist_ = 0.0;       // ROS param [m]; node-wide default
+  bool near_goal_accept_as_goal_ = true;   // ROS param
+  bool near_goal_final_accepted_ = false;  // latched once the point is accepted
+  // Per-goal override carried in the PumasNav goal, exactly like goal_distance_.
+  // <= 0 means "not specified" and falls back to min_reach_goal_dist_.
+  float goal_min_reach_dist_ = 0.0f;
+  // Overrides the SM_FINAL report when the task ended somewhere other than the
+  // requested goal. Cleared at each new task.
+  std::string pending_final_message_;
+
   // Nearest-free-point escape: a planning start substituted for the robot pose
   // when the robot itself sits on an occupied cell. One-shot per use.
   double free_point_search_radius_ = 2.0;  // ROS param [m]
@@ -584,6 +617,10 @@ private:
         enable_stuck_abort_ = param.as_bool();
       else if (param.get_name() == "free_point_search_radius")
         free_point_search_radius_ = param.as_double();
+      else if (param.get_name() == "min_reach_goal_dist")
+        min_reach_goal_dist_ = param.as_double();
+      else if (param.get_name() == "near_goal_accept_as_goal")
+        near_goal_accept_as_goal_ = param.as_bool();
 
       else {
         result.successful = false;
@@ -1137,6 +1174,83 @@ private:
     return false;
   }
 
+  // Near-goal replan gate. Runs at the top of SM_CALCULATE_PATH for every plan
+  // except the first of a task. Once the robot is within min_reach_goal_dist_
+  // of the goal a replan cannot improve anything: the path is a few centimetres
+  // long, and when the goal sits ON an obstacle the planner simply relocates it
+  // slightly differently every cycle, so the robot shuffles around the obstacle
+  // forever. Ends the task instead — accepting the current point as the goal,
+  // or aborting, per near_goal_accept_as_goal_. Returns true when it did, in
+  // which case the caller must not plan.
+  //
+  // This is the replan-side counterpart of the caller-requested goal_distance_
+  // stop-short in SM_WAIT_FOR_MOVE_FINISHED, and uses the same shutdown
+  // sequence.
+  bool suppress_replan_near_goal()
+  {
+    // Per-goal value wins; 0 (or unset) falls back to the node parameter, and
+    // a node parameter of 0 disables the gate entirely.
+    const double min_dist = (goal_min_reach_dist_ > 0.0f)
+                              ? static_cast<double>(goal_min_reach_dist_)
+                              : min_reach_goal_dist_;
+    if (min_dist <= 0.0) return false;
+    // First plan of a task is never suppressed, so a goal requested from right
+    // next to the robot is still planned and driven. The latch keeps the gate
+    // armed afterwards even though reset_recovery_state() zeroes replan_total_.
+    if (replan_total_ <= 0 && !near_goal_final_accepted_) return false;
+
+    const double dist_to_goal =
+      std::hypot(global_goal_.position.x - robot_x_, global_goal_.position.y - robot_y_);
+
+    // A relocated goal is one sitting on an obstacle: the nearest reachable
+    // point is goal_relocated_dist_ away from it, so that is as close as the
+    // robot can ever get. Widen the radius by that much rather than demand a
+    // proximity that is geometrically impossible.
+    double radius = min_dist;
+    if (goal_relocated_) radius += goal_relocated_dist_;
+    if (dist_to_goal > radius) return false;
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << "Near goal (" << dist_to_goal
+        << " m, no-replan radius " << radius << " m)";
+    if (goal_relocated_) oss << "; requested goal is on an obstacle";
+    const std::string reason = oss.str();
+
+    // Common shutdown: halt the base, drop potential fields, clear recovery.
+    pub_simple_move_stop_->publish(std_msgs::msg::Empty());
+    msg_bool.data = false;
+    pub_pot_fields_enable_->publish(msg_bool);
+    reset_recovery_state();
+
+    if (!near_goal_accept_as_goal_) {
+      const std::string msg = reason + "; aborted instead of replanning";
+      std::cout << "MotionPlanner.-> " << msg << std::endl;
+      publish_nav_feedback("NEAR_GOAL_ABORT", msg);
+      current_status = publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id, msg);
+      finish_action_abort(msg);
+      state = SM_INIT;
+      return true;
+    }
+
+    near_goal_sent = true;
+    pending_final_message_ = reason + "; accepted the current point as the goal";
+    publish_nav_feedback("NEAR_GOAL_ACCEPTED", pending_final_message_);
+
+    if (near_goal_final_accepted_) {
+      // Second pass: the final-angle correction already ran and reported an
+      // abort. Do not loop on it — finish here.
+      std::cout << "MotionPlanner.-> " << pending_final_message_ << " (final angle skipped)."
+                << std::endl;
+      state = SM_FINAL;
+      return true;
+    }
+    near_goal_final_accepted_ = true;
+    std::cout << "MotionPlanner.-> " << pending_final_message_ << "; correcting final angle."
+              << std::endl;
+    state = SM_CORRECT_FINAL_ANGLE;
+    return true;
+  }
+
   // Strict free-cell test for choosing a planning start. Deliberately NOT
   // map_cell_blocked(), which is fail-open (unknown reads as navigable) because
   // it guards short escape moves; a planning start must be known free.
@@ -1404,6 +1518,14 @@ private:
     // Stop-short distance for this goal (<= 0 disables; full arrival).
     goal_distance_ = goal->goal_distance;
 
+    // Per-goal near-goal replan radius (<= 0 -> use the node parameter).
+    goal_min_reach_dist_ = goal->min_reach_goal_dist;
+    if (goal_min_reach_dist_ > 0.0f) {
+      RCLCPP_INFO(
+        this->get_logger(), "MotionPlanner.-> Goal overrides min_reach_goal_dist: %.2f m",
+        goal_min_reach_dist_);
+    }
+
     if (goal->use_arm) {
       target_arm_pose = goal->arm_joints;
       arm_goal_received = true;
@@ -1572,6 +1694,8 @@ private:
               actionlib_msgs::msg::GoalStatus::ACTIVE, goal_id, "Starting new movement task");
             near_goal_sent = false;
             goal_relocated_ = false;
+            near_goal_final_accepted_ = false;
+            pending_final_message_.clear();
             reset_recovery_state();  // clean slate per task (hygiene)
           }
           break;
@@ -1580,6 +1704,12 @@ private:
         case SM_CALCULATE_PATH: {
           publish_nav_feedback("CALCULATE_PATH", "Calculating path");
           get_robot_position();
+
+          // Do not replan from right next to the goal: there is nothing left to
+          // plan, and with the goal on an obstacle this is exactly the loop that
+          // keeps relocating it a few centimetres away forever.
+          if (suppress_replan_near_goal()) break;
+
           update_via_points();
           note_replan(robot_x_, robot_y_);
 
@@ -2391,7 +2521,11 @@ private:
         case SM_FINAL: {
           std::cout << "MotionPlanner.-> TASK FINISHED." << std::endl;
           std::string final_msg = "Global goal point reached";
-          if (goal_relocated_) {
+          if (!pending_final_message_.empty()) {
+            // The task ended somewhere other than the requested goal (near-goal
+            // replan suppression). near_goal_sent is already set by the gate.
+            final_msg = pending_final_message_;
+          } else if (goal_relocated_) {
             // The requested goal was enclosed/unreachable; the planner stopped at
             // the nearest reachable point. Report it explicitly and make sure
             // near_goal_reached is set in the action result.

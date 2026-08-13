@@ -30,7 +30,7 @@
        pose while translating (removes the in-place turn after arrival). Most of
        the path uses unicycle control, so the body naturally faces the direction
        of travel. -->
-  <arg name="yaw_correction_omni_behavior" default="True"/>
+  <arg name="yaw_correction_omni_behavior" default="False"/>
   <arg name="yaw_correction_omni_distance" default="1.0"/>
   <!-- Stronger yaw gain used only during last one mile: turns far enough that
        mvn_pln's final yaw correction is nearly a no-op on arrival. The head also
@@ -91,6 +91,18 @@
   <!-- [m] Radius searched for a free cell to plan from when the robot is
        found sitting inside an obstacle. Falls back to backing up. -->
   <arg name="free_point_search_radius" default="2.0"/>
+
+  <!-- [m] Near-goal replan suppression: when a REPLAN would start from within
+       this distance of the goal, stop instead. Nothing useful is left to plan
+       there, and a goal placed ON an obstacle otherwise loops forever (the
+       planner keeps relocating it a few cm away). The relocation distance is
+       added to this radius when the goal is on an obstacle. Default 0 = off:
+       set it per goal via the PumasNav goal field min_reach_goal_dist (a goal
+       value of 0 means "unset" and falls back to this one). -->
+  <arg name="min_reach_goal_dist" default="0.0"/>
+  <!-- True = treat that point as the goal (SUCCEEDED, near_goal set),
+       False = abort the task instead. -->
+  <arg name="near_goal_accept_as_goal" default="True"/>
 
   <!-- simple_move: active rotate-in-place on collision risk. Off by default;
        flickering obstacle reports can make the base oscillate, so enable it
@@ -309,6 +321,8 @@
     <param name="enable_goal_relax" value="$(var enable_goal_relax)"/>
     <param name="enable_stuck_abort" value="$(var enable_stuck_abort)"/>
     <param name="free_point_search_radius" value="$(var free_point_search_radius)"/>
+    <param name="min_reach_goal_dist" value="$(var min_reach_goal_dist)"/>
+    <param name="near_goal_accept_as_goal" value="$(var near_goal_accept_as_goal)"/>
   </node>
 
   <!--arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll-->

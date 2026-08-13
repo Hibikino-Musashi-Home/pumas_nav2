@@ -460,7 +460,12 @@ class NavModule:
 
         self.get_logger().info('NavModule.->No motion_synth: moving body to default_arm_pose')
 
-    def send_nav_action_goal(self, goal: Pose2D, goal_distance: float = 0.0):
+    def send_nav_action_goal(
+        self,
+        goal: Pose2D,
+        goal_distance: float = 0.0,
+        min_reach_goal_dist: float = 0.0,
+    ):
         if not self.nav_action_client.wait_for_server(timeout_sec=3.0):
             self.get_logger().error('NavModule.->PumasNav action server not available')
             self._action_done = True
@@ -488,6 +493,15 @@ class NavModule:
         # Stop-short distance handled server-side by mvn_pln (<= 0 disables).
         goal_msg.goal_distance = (
             float(goal_distance) if goal_distance and goal_distance > 0 else 0.0
+        )
+
+        # Near-goal replan suppression: mvn_pln stops instead of replanning once
+        # it would replan from within this distance of the goal. 0 leaves the
+        # server's min_reach_goal_dist parameter in charge.
+        goal_msg.min_reach_goal_dist = (
+            float(min_reach_goal_dist)
+            if min_reach_goal_dist and min_reach_goal_dist > 0
+            else 0.0
         )
 
         # TODO
@@ -583,6 +597,7 @@ class NavModule:
         motion_synth=False,
         near_goal_callback=None,
         omni_goal_yaw_align=None,
+        min_reach_goal_dist=None,
     ) -> bool:
         self.get_logger().info(
             f'NavModule.->Go Absolute Goal(Action): x={goal.x}, y={goal.y}, theta={goal.theta}'
@@ -609,6 +624,10 @@ class NavModule:
             goal,
             goal_distance=(
                 goal_distance if goal_distance and goal_distance > 0 else 0.0),
+            min_reach_goal_dist=(
+                min_reach_goal_dist
+                if min_reach_goal_dist and min_reach_goal_dist > 0
+                else 0.0),
         )
 
         if not self._external_node:
@@ -700,6 +719,7 @@ class NavModule:
         via_points=None,
         near_goal_callback=None,
         omni_goal_yaw_align=None,
+        min_reach_goal_dist=None,
     ):
         self.initialize_before_new_goal(send_stop=True)
 
@@ -744,6 +764,7 @@ class NavModule:
             motion_synth=True,
             near_goal_callback=near_goal_callback,
             omni_goal_yaw_align=omni_goal_yaw_align,
+            min_reach_goal_dist=min_reach_goal_dist,
         )
 
         # Ensure gaze is cancelled and move_head restored after nav ends
