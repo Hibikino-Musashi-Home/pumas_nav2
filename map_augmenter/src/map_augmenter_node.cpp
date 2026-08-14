@@ -1,4 +1,5 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 // Message types
@@ -195,9 +196,14 @@ public:
     //  Map Augmenter main processing
     get_first_maps();
 
-    processing_timer_ = this->create_wall_timer(
-        // std::chrono::milliseconds(100), // 100 ms = 10 Hz
-        std::chrono::milliseconds(30), // 30 Hz
+    // Node-clock timer, matching simple_move / mvn_pln / potential_fields.
+    // decay_factor counts iterations of this loop, so on a wall timer the
+    // obstacle memory decayed in wall time while the controller consuming the
+    // map advanced in simulated time - the two disagreed by the real-time
+    // factor. On the node clock one iteration is 30 ms of simulated time for
+    // every node in the pipeline.
+    processing_timer_ = rclcpp::create_timer(
+        this, this->get_clock(), rclcpp::Duration::from_seconds(0.03), // 30 ms
         std::bind(&MapAugmenterNode::map_augmenter_processing, this));
 
     RCLCPP_INFO(this->get_logger(),
