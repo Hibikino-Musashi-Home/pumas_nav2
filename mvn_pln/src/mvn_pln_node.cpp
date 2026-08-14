@@ -1,3 +1,4 @@
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
@@ -50,6 +51,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>  // for std::stringstream
+#include <string>
 #include <vector>
 ///
 
@@ -264,9 +266,18 @@ public:
     //  Wait for transforms
     wait_for_transforms("map", base_link_name_);
 
-    // Simple Move main processing
-    processing_timer_ = this->create_wall_timer(
-      std::chrono::milliseconds(30),
+    // Motion planner main processing.
+    //
+    // Node-clock timer, not a wall timer: the convergence monitor and the
+    // replan sliding window below measure their windows with this->now(), and
+    // the state machine only advances on these ticks. create_wall_timer
+    // ignores use_sim_time, so under a simulator slower than realtime the
+    // 45 s convergence_timeout and the 30 s replan_window_sec would expire
+    // after rtf times that many simulated seconds (21 s / 14 s at the rtf 0.47
+    // measured on Isaac Sim), escalating a goal that was merely being
+    // approached slowly. See the matching comment in simple_move_node.cpp.
+    processing_timer_ = rclcpp::create_timer(
+      this, this->get_clock(), rclcpp::Duration::from_seconds(1.0 / 30.0),
       std::bind(&MotionPlannerNode::motion_planner_processing, this));
 
     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> MotionPlannerNode is ready.");
@@ -279,7 +290,11 @@ private:
   bool stop_ = false;
   bool collision_risk_ = false;
   bool new_global_goal_ = false;
-  int simple_move_status_id_ = 0;
+  // Goal id echoed back by simple_move on /simple_move/goal_reached. Kept as
+  // the raw string so the full path timestamp survives the round trip; see
+  // simple_move_sequencer. Empty means "no status pending", "-1" is the
+  // sentinel simple_move uses for non-path goals.
+  std::string simple_move_status_id_;
 
   geometry_msgs::msg::Pose global_goal_;
   // Ordered via points for the current goal (empty -> plain A*). Carried in the
@@ -311,7 +326,7 @@ private:
   float error = 0.0f;
 
   int state = SM_INIT;
-  int simple_move_sequencer = -1;
+  std::string simple_move_sequencer;
   int goal_id = -1;
   int current_status = 0;
 
@@ -664,12 +679,18 @@ private:
       this->get_logger(), "MotionPlanner.-> Waiting for transform from '%s' to '%s'...",
       source_frame.c_str(), target_frame.c_str());
 
-    rclcpp::Time start_time = this->now();
-    rclcpp::Duration timeout = rclcpp::Duration::from_seconds(10.0);
+    // Steady clock, deliberately not this->now(). This runs in the constructor,
+    // before the executor spins the node, so with use_sim_time the node's
+    // TimeSource has not received /clock yet and this->now() would stay pinned
+    // at 0 - the elapsed time would never grow and the loop would never time
+    // out. TF itself still arrives here because tf2_ros::TransformListener
+    // spins its own internal node on a dedicated thread.
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(10);
 
     bool transform_ok = false;
 
-    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
+    while (rclcpp::ok() && (std::chrono::steady_clock::now() - start_time) < timeout) {
       try {
         tf_buffer_.lookupTransform(
           target_frame, source_frame, tf2::TimePointZero, tf2::durationFromSec(0.1));
@@ -773,9 +794,7 @@ private:
     try {
       simple_move_goal_status_ = *msg;
 
-      std::stringstream ss;
-      ss << msg->goal_id.id;
-      ss >> simple_move_status_id_;
+      simple_move_status_id_ = msg->goal_id.id;
     } catch (const std::exception & e) {
       RCLCPP_ERROR(
         this->get_logger(),
@@ -1414,7 +1433,10 @@ private:
     ss >> msg.goal_id.id;
     msg.status = status;
     msg.text = text;
-    msg.goal_id.stamp = rclcpp::Clock().now();
+    // Node clock, not a default-constructed rclcpp::Clock: that one is
+    // RCL_SYSTEM_TIME regardless of use_sim_time, so under a simulator this
+    // stamp alone would sit ~1.7e9 s ahead of every other message.
+    msg.goal_id.stamp = this->now();
 
     pub_status_->publish(msg);
 
@@ -1931,7 +1953,7 @@ private:
             "to moving backwards.",
             free_point_search_radius_);
           simple_move_goal_status_.status = 0;
-          simple_move_status_id_ = 0;
+          simple_move_status_id_.clear();
           msg_goal_dist_angle.data.resize(2);
           msg_goal_dist_angle.data[0] = -recovery_back_dist_;
           msg_goal_dist_angle.data[1] = 0;
@@ -1997,14 +2019,14 @@ private:
         case SM_WAITING_FOR_MOVE_BACKWARDS: {
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-            simple_move_status_id_ == -1) {
+            simple_move_status_id_ == "-1") {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Moved backwards successfully." << std::endl;
             state = SM_CALCULATE_PATH;
           } else if (simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED) {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Simple move reported move aborted." << std::endl;
             state = SM_CALCULATE_PATH;
           } else {
@@ -2170,7 +2192,6 @@ private:
           std::cout << "MotionPlanner.-> Starting path following " << std::endl;
           collision_risk_ = false;
           collision_risk_latched_ = false;
-          simple_move_sequencer++;
 
           path_.header.frame_id = "map";
           path_.header.stamp = this->now();
@@ -2182,9 +2203,17 @@ private:
           if (!path_.poses.empty()) path_.poses.back().pose.orientation = global_goal_.orientation;
           pub_goal_path_->publish(path_);
 
-          // modified by ry0hei-kobayashi, 2025/8/23
-          // path_.header.frame_id = std::to_string(simple_move_sequencer);
-          simple_move_sequencer = path_.header.stamp.sec;
+          // Goal id for the handshake with simple_move, which echoes it back on
+          // /simple_move/goal_reached. It must key on the *whole* stamp: this
+          // used to be header.stamp.sec alone, which is unique enough under
+          // wall-clock epoch seconds but not under simulated time, where the
+          // stamp starts at 0 and the replan loops here can republish several
+          // paths within one simulated second. Two paths sharing an id let a
+          // stale SUCCEEDED from the previous path be accepted as completion of
+          // the current one. simple_move builds the same string in
+          // simple_move_node.cpp (search for goal_id.id) - keep them in sync.
+          simple_move_sequencer = std::to_string(path_.header.stamp.sec) + "." +
+                                  std::to_string(path_.header.stamp.nanosec);
 
           simple_move_goal_status_.status = 0;
 
@@ -2256,6 +2285,7 @@ private:
           }
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
+            !simple_move_sequencer.empty() &&
             simple_move_status_id_ == simple_move_sequencer) {
             simple_move_goal_status_.status = 0;
             std::cout << "MotionPlanner.-> Path followed succesfully. " << std::endl;
@@ -2351,7 +2381,7 @@ private:
                          "obstacle): x="
                       << rel_x << " y=" << rel_y << " m." << std::endl;
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std_msgs::msg::Float32MultiArray rp;
             rp.data = {rel_x, rel_y, 0.0f};  // [x fwd+, y left+, yaw] base frame
             pub_goal_rel_pose_->publish(rp);
@@ -2374,7 +2404,7 @@ private:
                         << " rad to shed point-cloud phantom (rotated so far="
                         << recovery_rotated_total_ << " rad)." << std::endl;
               simple_move_goal_status_.status = 0;
-              simple_move_status_id_ = 0;
+              simple_move_status_id_.clear();
               std_msgs::msg::Float32MultiArray rp;
               rp.data = {0.0f, 0.0f, recovery_rotate_step_};  // [x, y, yaw]; no translation
               pub_goal_rel_pose_->publish(rp);
@@ -2404,15 +2434,15 @@ private:
         case SM_RECOVERY_WAIT_BACKUP: {
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-            simple_move_status_id_ == -1) {
+            simple_move_status_id_ == "-1") {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Recovery escape move finished." << std::endl;
             advance_recovery_level();
             state = SM_CALCULATE_PATH;
           } else if (simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED) {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Recovery escape move aborted; continuing." << std::endl;
             advance_recovery_level();
             state = SM_CALCULATE_PATH;
@@ -2430,15 +2460,15 @@ private:
           // resets recovery) or a full turn is exhausted.
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-            simple_move_status_id_ == -1) {
+            simple_move_status_id_ == "-1") {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Recovery rotation finished; replanning." << std::endl;
             recovery_level_ = 0;
             state = SM_CALCULATE_PATH;
           } else if (simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::ABORTED) {
             simple_move_goal_status_.status = 0;
-            simple_move_status_id_ = 0;
+            simple_move_status_id_.clear();
             std::cout << "MotionPlanner.-> Recovery rotation aborted; replanning." << std::endl;
             recovery_level_ = 0;
             state = SM_CALCULATE_PATH;
@@ -2504,7 +2534,7 @@ private:
         case SM_WAIT_FOR_ANGLE_CORRECTED: {
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-            simple_move_status_id_ == -1) {
+            simple_move_status_id_ == "-1") {
             simple_move_goal_status_.status = 0;
             std::cout << "MotionPlanner.-> Final angle corrected succesfully." << std::endl;
             state = SM_FINAL;

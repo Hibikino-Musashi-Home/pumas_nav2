@@ -28,6 +28,7 @@
 
 // Standard
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <vector>
@@ -424,12 +425,20 @@ private:
                 "PotentialFields.-> Waiting for transform from '%s' to '%s'...",
                 source_frame.c_str(), target_frame.c_str());
 
-    rclcpp::Time start_time = this->now();
-    rclcpp::Duration timeout = rclcpp::Duration::from_seconds(10.0);
+    // Steady clock, deliberately not this->now(). This runs in the constructor,
+    // before the executor spins the node, so with use_sim_time the node's
+    // TimeSource has not received /clock yet and this->now() would stay pinned
+    // at 0 - the elapsed time would never grow and the node would never finish
+    // constructing. TF itself still arrives here because
+    // tf2_ros::TransformListener spins its own internal node on a dedicated
+    // thread. Same fix as in simple_move_node.cpp / mvn_pln_node.cpp.
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(10);
 
     bool transform_ok = false;
 
-    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
+    while (rclcpp::ok() &&
+           (std::chrono::steady_clock::now() - start_time) < timeout) {
       try {
         tf_buffer_.lookupTransform(target_frame, source_frame,
                                    tf2::TimePointZero,

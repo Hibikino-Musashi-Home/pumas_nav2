@@ -1,4 +1,5 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 // Message types
@@ -24,9 +25,11 @@
 
 // Standard
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <string>
 #include <vector>
 ///
 
@@ -235,9 +238,22 @@ public:
     wait_for_transforms("map", base_link_name_);
     wait_for_transforms(odom_name_, base_link_name_);
 
-    // Simple Move main processing
-    processing_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(30),
+    // Simple Move main processing.
+    //
+    // This must be a node-clock timer, not a wall timer. Every per-tick
+    // quantity below (the linear_acceleration ramp, the `attempts` budgets,
+    // rotation_ticks_remaining_) is written as "value / RATE", i.e. it assumes
+    // one tick is exactly 1/RATE of a *simulated* second. create_wall_timer
+    // ignores use_sim_time, so under a simulator running slower than realtime
+    // the loop gets RATE/rtf ticks per simulated second: the acceleration ramp
+    // is scaled by 1/rtf and every timeout expires after rtf times its
+    // intended simulated duration. Measured on Isaac Sim at rtf 0.47 that is a
+    // 2.4x faster ramp and timeouts firing at 47% of the configured time,
+    // which aborts path tracking during the deceleration before the goal.
+    // The period is derived from RATE so the two can no longer disagree (it
+    // used to be a hardcoded 30 ms = 33.3 Hz against RATE = 30).
+    processing_timer_ = rclcpp::create_timer(
+        this, this->get_clock(), rclcpp::Duration::from_seconds(1.0 / RATE),
         std::bind(&SimpleMoveNode::simple_move_processing, this));
 
     RCLCPP_INFO(this->get_logger(), "SimpleMove.-> SimpleMoveNode is ready.");
@@ -472,12 +488,19 @@ private:
                 "SimpleMove.-> Waiting for transform from '%s' to '%s'...",
                 source_frame.c_str(), target_frame.c_str());
 
-    rclcpp::Time start_time = this->now();
-    rclcpp::Duration timeout = rclcpp::Duration::from_seconds(10.0);
+    // Steady clock, deliberately not this->now(). This runs in the constructor,
+    // before the executor spins the node, so with use_sim_time the node's
+    // TimeSource has not received /clock yet and this->now() would stay pinned
+    // at 0 - the elapsed time would never grow and the loop would never time
+    // out. TF itself still arrives here because tf2_ros::TransformListener
+    // spins its own internal node on a dedicated thread.
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(10);
 
     bool transform_ok = false;
 
-    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
+    while (rclcpp::ok() &&
+           (std::chrono::steady_clock::now() - start_time) < timeout) {
       try {
         tf_buffer_.lookupTransform(target_frame, source_frame,
                                    tf2::TimePointZero,
@@ -921,8 +944,14 @@ private:
 
       return true;
     } catch (const tf2::TransformException &ex) {
-      // RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s",
-      // ex.what());
+      // Every caller of these getters discards the bool, so on failure
+      // robot_x_/robot_y_/robot_t_ silently keep their previous values (0,0,0
+      // before the first successful lookup) and the controller steers from a
+      // phantom pose. Throttled so a 30 Hz loop cannot flood the log.
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "SimpleMove.-> TF lookup failed, reusing last known "
+                           "robot pose: %s",
+                           ex.what());
       return false;
     }
   }
@@ -947,8 +976,14 @@ private:
 
       return true;
     } catch (const tf2::TransformException &ex) {
-      // RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s",
-      // ex.what());
+      // Every caller of these getters discards the bool, so on failure
+      // robot_x_/robot_y_/robot_t_ silently keep their previous values (0,0,0
+      // before the first successful lookup) and the controller steers from a
+      // phantom pose. Throttled so a 30 Hz loop cannot flood the log.
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "SimpleMove.-> TF lookup failed, reusing last known "
+                           "robot pose: %s",
+                           ex.what());
       return false;
     }
   }
@@ -984,8 +1019,14 @@ private:
 
       return true;
     } catch (const tf2::TransformException &ex) {
-      // RCLCPP_WARN(this->get_logger(), "SimpleMove.-> TF Exception: %s",
-      // ex.what());
+      // Every caller of these getters discards the bool, so on failure
+      // robot_x_/robot_y_/robot_t_ silently keep their previous values (0,0,0
+      // before the first successful lookup) and the controller steers from a
+      // phantom pose. Throttled so a 30 Hz loop cannot flood the log.
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "SimpleMove.-> TF lookup failed, reusing last known "
+                           "robot pose: %s",
+                           ex.what());
       return false;
     }
   }
@@ -1115,9 +1156,16 @@ private:
               goal_path_.poses[goal_path_.poses.size() - 1].pose.position.x;
           global_goal_y_ =
               goal_path_.poses[goal_path_.poses.size() - 1].pose.position.y;
-          std::stringstream ss;
-          ss << goal_path_.header.stamp.sec;
-          ss >> msg_goal_reached.goal_id.id;
+          // Goal id echoed back to mvn_pln so it can tell which path this
+          // SUCCEEDED/ABORTED belongs to. Keys on the whole stamp, not just
+          // .sec: under simulated time the stamp starts at 0 and mvn_pln can
+          // republish several paths within one simulated second, so a .sec-only
+          // id would let a stale result be accepted for the current path.
+          // mvn_pln builds the same string in mvn_pln_node.cpp (search for
+          // simple_move_sequencer) - keep them in sync.
+          msg_goal_reached.goal_id.id =
+              std::to_string(goal_path_.header.stamp.sec) + "." +
+              std::to_string(goal_path_.header.stamp.nanosec);
           // Timeout is sized from the speed actually used, otherwise a slow
           // constant_speed would run out of attempts before reaching the goal.
           float plan_speed = use_constant_speed_ && constant_speed_ > 0
