@@ -18,7 +18,6 @@ from pumas_interfaces.srv import ParamReadWrite
 from rcl_interfaces.srv import GetParameters
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.duration import Duration
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -232,6 +231,8 @@ class NavModule:
         )
         self._move_done = False
         self._move_success = False
+        # Only true while go_rel() is waiting; see _move_goal_reached_callback.
+        self._go_rel_active = False
 
         # mvn_pln also narrates itself on /navigation/status. This is the only
         # window into the stretches where the action publishes no feedback at
@@ -296,17 +297,36 @@ class NavModule:
         self._executor = None
         self._spin_thread = None
 
-    def _now(self) -> float:
-        """Seconds from the NODE clock, so every deadline below follows
-        use_sim_time. A default-constructed rclpy Clock() would be
-        RCL_SYSTEM_TIME regardless, and under a simulator running slower than
-        realtime a wall-clock timeout expires after far fewer simulated seconds
-        than the caller asked for. Same rule as mvn_pln / simple_move.
+    def _timeout_now(self) -> float:
+        """Seconds for timeout arithmetic. Deliberately NOT a ROS clock.
 
-        Note the trade-off this inherits: if /clock stops (simulator paused),
-        node time freezes and these timeouts never fire.
+        Everything navlib times is a duration -- "how long have I been waiting
+        for this result" -- never an instant that has to line up with somebody
+        else's timeline. For that, a monotonic count is the only source with no
+        failure mode:
+
+        * ROS system time (use_sim_time false) is CLOCK_REALTIME, which chrony
+          is allowed to *step* (``makestep``, typically shortly after boot). A
+          step moves every deadline derived from it, so a timeout fires
+          instantly or effectively never.
+        * ROS time (use_sim_time true) stops when the simulator pauses and jumps
+          when a bag loops. A paused simulator turns every timeout into a hang,
+          which is worse than the thing the timeout was protecting against.
+
+        time.monotonic() cannot be stepped, paused or rewound.
+
+        The cost is that under a simulator running far from 1.0 real-time factor
+        a timeout is counted in wall seconds rather than simulated ones. That
+        only shows up as a timeout firing early, which is visible and harmless,
+        and NavModule is not launched with the stack anyway -- nothing sets
+        use_sim_time on the node it creates, so a ROS clock here would read
+        system time under simulation regardless.
+
+        Message stamps are a separate matter and still use the node clock (see
+        send_nav_action_goal); mvn_pln does not read them -- it restamps
+        everything itself -- so they are for RViz only.
         """
-        return self._node.get_clock().now().nanoseconds * 1e-9
+        return time.monotonic()
 
     def _wait_for_future(self, future, timeout_sec: float) -> bool:
         """Block until `future` completes. Something else must be spinning the
@@ -387,7 +407,7 @@ class NavModule:
             self._proximity_criterion = 0.0
             self._min_reach_goal_dist = 0.0
             self._goal_distance = 0.0
-            self._start_time = self._now()
+            self._start_time = self._timeout_now()
 
     @property
     def nav_status(self) -> NavStatus:
@@ -414,7 +434,7 @@ class NavModule:
                 server_status_text=self._server_status_text,
                 client_error=self._client_error,
                 goal=self._goal_pose2d,
-                elapsed=self._now() - self._start_time,
+                elapsed=self._timeout_now() - self._start_time,
             )
 
     @property
@@ -609,7 +629,16 @@ class NavModule:
             self._goal_handle.cancel_goal_async()
 
     def _move_goal_reached_callback(self, msg):
-        if msg.goal_id.id != '-1':  # for go_rel
+        # "-1" is simple_move's sentinel for every NON-PATH goal, not a private
+        # channel for go_rel: mvn_pln drives simple_move the same way for its
+        # own in-place steps, most importantly the final angle correction
+        # (mvn_pln_node.cpp SM_WAIT_FOR_ANGLE_CORRECTED). Matching on the id
+        # alone therefore fires in the middle of every go_abs/nav_goal and ends
+        # the wait with _action_outcome still OUTCOME_UNKNOWN -- the caller sees
+        # success with no reason. Only a go_rel we actually sent may land here.
+        if not self._go_rel_active:
+            return
+        if msg.goal_id.id != '-1':
             return
         self._move_done = True
         self._move_success = msg.status == GoalStatus.SUCCEEDED
@@ -734,15 +763,21 @@ class NavModule:
         "Lookup would require extrapolation into the past", which reads like a
         broken TF tree but is just a buffer that has not filled yet -- it clears
         itself within a second. Pass timeout_sec=0.0 for a single attempt.
+
+        The retry is ours on purpose: tf2's own ``timeout=`` argument waits on a
+        default-constructed ``rclpy.clock.Clock()`` (see tf2_ros/buffer.py
+        can_transform), i.e. CLOCK_REALTIME, and aborts the wait on any backward
+        jump larger than 3 s -- exactly the chrony step _timeout_now() exists to
+        be immune to. Asking for the latest transform with no tf2 timeout keeps
+        the deadline ours.
         """
-        deadline = time.monotonic() + max(0.0, timeout_sec)
+        deadline = self._timeout_now() + max(0.0, timeout_sec)
         last_ex = None
 
         while True:
             try:
                 trans = self.tf_buffer.lookup_transform(
-                    target_frame, source_frame, rclpy.time.Time(),
-                    timeout=Duration(seconds=0.1)
+                    target_frame, source_frame, rclpy.time.Time()
                 )
 
                 x = trans.transform.translation.x
@@ -758,7 +793,7 @@ class NavModule:
 
             except TransformException as ex:
                 last_ex = ex
-                if time.monotonic() >= deadline:
+                if self._timeout_now() >= deadline:
                     break
                 # An extrapolation error is raised without waiting (the chain
                 # exists, only the timestamps do not line up), so pace the retry
@@ -784,8 +819,14 @@ class NavModule:
         """Load the default/recovery arm pose from the arm_controller node's
         params (set via <param> in its launch <node> block):
 
-            torso_default_pose : double      -> arm_lift_joint
-            arm_default_pose   : double[4]   -> arm_flex/arm_roll/wrist_flex/wrist_roll
+            arm_default_pose : double[5]
+
+        One list, ordered by that node's arm_default_names, which defaults to
+        [arm_lift, arm_flex, arm_roll, wrist_flex, wrist_roll] -- index 0 is the
+        torso/lift and 1..4 are the arm joints (arm_node.cpp publish_default_pose).
+        There is no separate torso parameter; asking for one used to make this
+        whole read fail, because rclcpp's get_parameters service silently drops
+        names that are not declared, so the response came back one value short.
 
         Head is reset to 0 (as in ROS1). If the params cannot be read (node not
         up / service timeout), fall back to the module-level default_arm_pose.
@@ -799,28 +840,28 @@ class NavModule:
             callback_group=self._callback_group)
         if cli.wait_for_service(timeout_sec=timeout_sec):
             req = GetParameters.Request()
-            req.names = ['torso_default_pose', 'arm_default_pose']
+            req.names = ['arm_default_pose']
             future = cli.call_async(req)
 
             ok = self._wait_for_future(future, timeout_sec)
 
             res = future.result() if ok else None
-            if res is not None and len(res.values) >= 2:
-                torso = res.values[0].double_value
-                arm = list(res.values[1].double_array_value)
-                if len(arm) >= 4:
-                    pose['arm_lift_joint'] = float(torso)
-                    pose['arm_flex_joint'] = float(arm[0])
-                    pose['arm_roll_joint'] = float(arm[1])
-                    pose['wrist_flex_joint'] = float(arm[2])
-                    pose['wrist_roll_joint'] = float(arm[3])
+            if res is not None and len(res.values) >= 1:
+                arm = list(res.values[0].double_array_value)
+                if len(arm) >= 5:
+                    pose['arm_lift_joint'] = float(arm[0])
+                    pose['arm_flex_joint'] = float(arm[1])
+                    pose['arm_roll_joint'] = float(arm[2])
+                    pose['wrist_flex_joint'] = float(arm[3])
+                    pose['wrist_roll_joint'] = float(arm[4])
                     pose['head_pan_joint'] = 0.0
                     pose['head_tilt_joint'] = 0.0
                     self.get_logger().info(
                         f'NavModule.->default_arm_pose from {arm_node}: {pose}')
                 else:
                     self.get_logger().warn(
-                        'NavModule.->arm_default_pose has <4 values; using module default'
+                        f'NavModule.->arm_default_pose has {len(arm)} values, '
+                        'expected 5; using module default'
                     )
             else:
                 self.get_logger().warn(
@@ -1100,7 +1141,7 @@ class NavModule:
         """
         deadline = None
         if timeout:
-            deadline = self._now() + float(timeout)
+            deadline = self._timeout_now() + float(timeout)
 
         result = False
         timed_out = False
@@ -1108,7 +1149,7 @@ class NavModule:
             if self._result_event.wait(timeout=0.1):
                 result = self._action_success
                 break
-            if deadline is not None and self._now() >= deadline:
+            if deadline is not None and self._timeout_now() >= deadline:
                 timed_out = True
                 break
 
@@ -1188,23 +1229,33 @@ class NavModule:
             self._state_name = 'GO_REL'
             self._goal_pose2d = Pose2D(x=float(x), y=float(y), theta=float(yaw))
 
+        # Opens the gate in _move_goal_reached_callback. Set after
+        # reset_action_state() so a stale goal_reached still in flight from the
+        # previous move cannot be mistaken for this one's.
+        self._go_rel_active = True
+
         msg = Float32MultiArray()
         msg.data = [float(x), float(y), float(yaw)]
         self.pub_goal_rel_pose.publish(msg)
         self.get_logger().info(
             f'NavModule.->go_rel: x={x:.3f} m, y={y:.3f} m, yaw={yaw:.3f} rad')
 
-        deadline = self._now() + float(timeout) if timeout else None
+        deadline = self._timeout_now() + float(timeout) if timeout else None
 
         result = False
         timed_out = False
-        while rclpy.ok() and not self.robot_stop:
-            if self._result_event.wait(timeout=0.1):
-                result = self._move_success
-                break
-            if deadline is not None and self._now() >= deadline:
-                timed_out = True
-                break
+        try:
+            while rclpy.ok() and not self.robot_stop:
+                if self._result_event.wait(timeout=0.1):
+                    result = self._move_success
+                    break
+                if deadline is not None and self._timeout_now() >= deadline:
+                    timed_out = True
+                    break
+        finally:
+            # Close the gate however we leave, so mvn_pln's own "-1" handshakes
+            # during a later go_abs/nav_goal are ignored again.
+            self._go_rel_active = False
 
         if timed_out:
             self.get_logger().warn('NavModule.->go_rel: timeout waiting for goal_reached')
