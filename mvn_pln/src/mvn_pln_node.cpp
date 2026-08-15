@@ -64,6 +64,8 @@
 #define SM_WAITING_FOR_MOVE_BACKWARDS 18
 #define SM_CHECK_IF_OBSTACLES 21
 #define SM_WAIT_FOR_NO_OBSTACLES 22
+// Non-blocking gap between two obstacle re-polls (replaces a sleep_for(1s)).
+#define SM_WAIT_FOR_NO_OBSTACLES_DELAY 25
 #define SM_ENABLE_POT_FIELDS 23
 #define SM_WAIT_FOR_POT_FIELDS 24
 #define SM_WAIT_FOR_NOT_POT_FIELDS 124
@@ -475,6 +477,14 @@ private:
   // Overrides the SM_FINAL report when the task ended somewhere other than the
   // requested goal. Cleared at each new task.
   std::string pending_final_message_;
+  // Outcome that goes with pending_final_message_; only read when that message
+  // is set, so SM_FINAL can report WHY it is finishing away from the goal.
+  uint8_t pending_final_outcome_ = PumasNav::Result::OUTCOME_UNKNOWN;
+
+  // Node-clock deadline for the next temporal-obstacle re-poll. Must be built
+  // with RCL_ROS_TIME: a default-constructed rclcpp::Time is RCL_SYSTEM_TIME
+  // and comparing it against this->now() throws on mismatched time sources.
+  rclcpp::Time obstacle_recheck_at_{0, 0, RCL_ROS_TIME};
 
   // Nearest-free-point escape: a planning start substituted for the robot pose
   // when the robot itself sits on an occupied cell. One-shot per use.
@@ -565,12 +575,16 @@ private:
     (void)uuid;
     (void)goal;
 
+    // A new goal always wins: it preempts whatever is running (handle_accepted
+    // terminates the old handle). Rejecting instead used to make an RViz goal
+    // sent mid-navigation silently do nothing, and made navlib's
+    // cancel-then-send racy -- the cancel only takes effect on the next 30 Hz
+    // tick, so the follow-up goal could still land while action_active_ was
+    // true and be rejected.
     if (action_active_) {
       RCLCPP_WARN(
         this->get_logger(),
-        "MotionPlanner.-> Rejecting new goal because another "
-        "navigation task is active.");
-      return rclcpp_action::GoalResponse::REJECT;
+        "MotionPlanner.-> New goal will preempt the active navigation task.");
     }
 
     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Navigation action goal accepted request.");
@@ -1246,13 +1260,14 @@ private:
       std::cout << "MotionPlanner.-> " << msg << std::endl;
       publish_nav_feedback("NEAR_GOAL_ABORT", msg);
       current_status = publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id, msg);
-      finish_action_abort(msg);
+      finish_action_abort(msg, PumasNav::Result::OUTCOME_NEAR_GOAL_ABORT);
       state = SM_INIT;
       return true;
     }
 
     near_goal_sent = true;
     pending_final_message_ = reason + "; accepted the current point as the goal";
+    pending_final_outcome_ = PumasNav::Result::OUTCOME_NEAR_GOAL_ACCEPTED;
     publish_nav_feedback("NEAR_GOAL_ACCEPTED", pending_final_message_);
 
     if (near_goal_final_accepted_) {
@@ -1523,6 +1538,16 @@ private:
 
   void handle_accepted(const std::shared_ptr<GoalHandlePumasNav> goal_handle)
   {
+    // Must run before anything below overwrites active_goal_handle_: an
+    // accepted goal handle that is never terminated leaks inside the action
+    // server and its client waits on a result that never arrives.
+    //
+    // No locking: the action server and the 30 Hz processing timer both live in
+    // the node's default (mutually exclusive) callback group, so this cannot
+    // interleave with motion_planner_processing even under the
+    // MultiThreadedExecutor in main().
+    preempt_active_goal();
+
     active_goal_handle_ = goal_handle;
     action_active_ = true;
     cancel_requested_ = false;
@@ -1558,6 +1583,59 @@ private:
     near_goal_sent = false;
   }
 
+  // Name and one-line description of every state, so the periodic feedback can
+  // report where the state machine is without each case having to remember to
+  // publish. Termination tags (STOP_SHORT, GOAL_RELAXED, ...) are NOT here:
+  // those are events, published explicitly at the branch that raises them.
+  static void state_info(int s, const char *& name, const char *& message)
+  {
+    switch (s) {
+      // clang-format off
+      case SM_INIT:                             name = "INIT";                       message = "Idle"; return;
+      case SM_WAITING_FOR_TASK:                 name = "WAITING_FOR_TASK";           message = "Waiting for task"; return;
+      case SM_CALCULATE_PATH:                   name = "CALCULATE_PATH";             message = "Calculating path"; return;
+      case SM_WAIT_FOR_PATH_RESPONSE:           name = "WAIT_FOR_PATH_RESPONSE";     message = "Waiting for the path planner"; return;
+      case SM_WAIT_FOR_CLEAR_MEMORY_RESPONSE:   name = "WAIT_FOR_CLEAR_MEMORY";      message = "Clearing remembered obstacles"; return;
+      case SM_CHECK_IF_INSIDE_OBSTACLES:        name = "CHECK_INSIDE_OBSTACLES";     message = "Checking whether the robot sits on an obstacle"; return;
+      case SM_WAIT_FOR_INSIDE_OBSTACLES_RESPONSE: name = "WAIT_INSIDE_OBSTACLES";    message = "Checking whether the robot sits on an obstacle"; return;
+      case SM_WAITING_FOR_MOVE_BACKWARDS:       name = "MOVE_BACKWARDS";             message = "Backing out of an obstacle"; return;
+      case SM_CHECK_IF_OBSTACLES:               name = "CHECK_OBSTACLES";            message = "Checking for temporal obstacles"; return;
+      case SM_WAIT_FOR_IF_OBSTACLES_RESPONSE:   name = "WAIT_CHECK_OBSTACLES";       message = "Checking for temporal obstacles"; return;
+      case SM_WAIT_FOR_NO_OBSTACLES:            name = "WAIT_FOR_NO_OBSTACLES";      message = "Waiting for temporal obstacles to move"; return;
+      case SM_WAIT_FOR_NO_OBSTACLES_DELAY:      name = "WAIT_FOR_NO_OBSTACLES";      message = "Waiting for temporal obstacles to move"; return;
+      case SM_WAIT_FOR_NO_OBSTACLES_RESPONSE:   name = "WAIT_FOR_NO_OBSTACLES";      message = "Waiting for temporal obstacles to move"; return;
+      case SM_ENABLE_POT_FIELDS:                name = "ENABLE_POT_FIELDS";          message = "Enabling potential fields"; return;
+      case SM_WAIT_FOR_POT_FIELDS:              name = "WAIT_FOR_POT_FIELDS";        message = "Waiting for potential fields"; return;
+      case SM_WAIT_FOR_NOT_POT_FIELDS:          name = "WAIT_FOR_NOT_POT_FIELDS";    message = "Disabling potential fields"; return;
+      case SM_START_MOVE_PATH:                  name = "START_MOVE_PATH";            message = "Starting to follow the path"; return;
+      case SM_WAIT_FOR_MOVE_FINISHED:           name = "WAIT_FOR_MOVE_FINISHED";     message = "Following path"; return;
+      case SM_COLLISION_RECOVERY:               name = "COLLISION_RECOVERY";         message = "Recovering from a collision risk"; return;
+      case SM_RECOVERY_WAIT_MAP:                name = "RECOVERY_WAIT_MAP";          message = "Looking for an escape direction"; return;
+      case SM_RECOVERY_WAIT_BACKUP:             name = "RECOVERY_WAIT_BACKUP";       message = "Backing away from the obstacle"; return;
+      case SM_RECOVERY_WAIT_ROTATE:             name = "RECOVERY_WAIT_ROTATE";       message = "Rotating to find a way out"; return;
+      case SM_GOAL_CONVERGENCE_CHECK:           name = "GOAL_CONVERGENCE_CHECK";     message = "Goal is not converging"; return;
+      case SM_CONVERGENCE_WAIT_CLEAR_MEM:       name = "CONVERGENCE_CLEAR_MEMORY";   message = "Clearing remembered obstacles"; return;
+      case SM_CONVERGENCE_WAIT_FREE_MAP:        name = "CONVERGENCE_WAIT_MAP";       message = "Looking for a free cell to plan from"; return;
+      case SM_CORRECT_FINAL_ANGLE:              name = "CORRECT_FINAL_ANGLE";        message = "Correcting the final angle"; return;
+      case SM_WAIT_FOR_ANGLE_CORRECTED:         name = "WAIT_FOR_ANGLE_CORRECTED";   message = "Correcting the final angle"; return;
+      case SM_FINAL:                            name = "FINAL";                      message = "Finishing"; return;
+      default:                                  name = "UNKNOWN";                    message = ""; return;
+      // clang-format on
+    }
+  }
+
+  // Called once per tick from motion_planner_processing() so that feedback
+  // flows at the full loop rate in EVERY state. Before this, only three states
+  // published anything and a client saw multi-second silences during obstacle
+  // waits, potential-field waits and the whole collision-recovery ladder.
+  void publish_periodic_feedback()
+  {
+    const char * name = nullptr;
+    const char * message = nullptr;
+    state_info(state, name, message);
+    publish_nav_feedback(name, message);
+  }
+
   void publish_nav_feedback(const std::string & state_name, const std::string & message = "")
   {
     if (!action_active_ || !active_goal_handle_) {
@@ -1577,6 +1655,15 @@ private:
     feedback->near_goal_reached = near_goal_sent;
     feedback->message = message;
 
+    // Settings in force for this goal, so a client can interpret the numbers
+    // above without reaching for our parameters. min_reach_goal_dist is the
+    // RESOLVED value -- same expression as suppress_replan_near_goal().
+    feedback->proximity_criterion = proximity_criterion_;
+    feedback->min_reach_goal_dist = (goal_min_reach_dist_ > 0.0f)
+                                      ? goal_min_reach_dist_
+                                      : static_cast<float>(min_reach_goal_dist_);
+    feedback->goal_distance = goal_distance_;
+
     active_goal_handle_->publish_feedback(feedback);
   }
 
@@ -1587,7 +1674,56 @@ private:
     pub_map_aug_enable_->publish(msg);
   }
 
-  void finish_action_success(const std::string & message)
+  // Terminate the running goal because a newer one is taking over. Called from
+  // handle_accepted BEFORE the new goal's fields are installed.
+  //
+  // Deliberately different from the finish_action_* helpers: the map augmenter
+  // stays enabled (SM_WAITING_FOR_TASK re-enables it one tick later anyway) and
+  // via_points_ is left alone because handle_accepted overwrites it immediately.
+  //
+  // The base IS stopped here. simple_move still holds the old path, and if
+  // planning for the new goal fails the state machine parks in a patience /
+  // obstacle wait without ever republishing a stop -- the robot would keep
+  // driving the abandoned path. One stop message costs a moment of motion and
+  // removes that hazard.
+  void preempt_active_goal()
+  {
+    if (!action_active_ || !active_goal_handle_) {
+      return;
+    }
+
+    auto result = std::make_shared<PumasNav::Result>();
+    result->success = false;
+    result->near_goal_reached = near_goal_sent;
+    result->message = "Preempted by a new goal";
+    result->outcome = PumasNav::Result::OUTCOME_PREEMPTED;
+
+    // A goal the client already asked to cancel must be terminated as CANCELED;
+    // rclcpp_action rejects abort() on a handle in the CANCELING state.
+    if (active_goal_handle_->is_canceling()) {
+      active_goal_handle_->canceled(result);
+    } else {
+      active_goal_handle_->abort(result);
+    }
+
+    active_goal_handle_.reset();
+    action_active_ = false;
+
+    pub_simple_move_stop_->publish(std_msgs::msg::Empty());
+    std_msgs::msg::Bool msg_bool;
+    msg_bool.data = false;
+    pub_pot_fields_enable_->publish(msg_bool);
+    reset_recovery_state();
+
+    // Drop a stop/cancel that was raised against the goal just terminated:
+    // leaving it set would make the next 30 Hz tick abort the incoming goal.
+    stop_ = false;
+    cancel_requested_ = false;
+
+    std::cout << "MotionPlanner.-> Active goal preempted by a new goal." << std::endl;
+  }
+
+  void finish_action_success(const std::string & message, uint8_t outcome)
   {
     if (!action_active_ || !active_goal_handle_) {
       return;
@@ -1597,6 +1733,7 @@ private:
     result->success = true;
     result->near_goal_reached = near_goal_sent;
     result->message = message;
+    result->outcome = outcome;
 
     active_goal_handle_->succeed(result);
     active_goal_handle_.reset();
@@ -1606,7 +1743,7 @@ private:
     set_map_augmenter_enable(false);
   }
 
-  void finish_action_abort(const std::string & message)
+  void finish_action_abort(const std::string & message, uint8_t outcome)
   {
     if (!action_active_ || !active_goal_handle_) {
       return;
@@ -1616,6 +1753,7 @@ private:
     result->success = false;
     result->near_goal_reached = near_goal_sent;
     result->message = message;
+    result->outcome = outcome;
 
     active_goal_handle_->abort(result);
     active_goal_handle_.reset();
@@ -1625,7 +1763,7 @@ private:
     set_map_augmenter_enable(false);
   }
 
-  void finish_action_cancel(const std::string & message)
+  void finish_action_cancel(const std::string & message, uint8_t outcome)
   {
     if (!action_active_ || !active_goal_handle_) {
       return;
@@ -1635,6 +1773,7 @@ private:
     result->success = false;
     result->near_goal_reached = near_goal_sent;
     result->message = message;
+    result->outcome = outcome;
 
     active_goal_handle_->canceled(result);
     active_goal_handle_.reset();
@@ -1660,9 +1799,10 @@ private:
 
         if (action_active_) {
           if (cancel_requested_) {
-            finish_action_cancel("Navigation task canceled");
+            finish_action_cancel("Navigation task canceled", PumasNav::Result::OUTCOME_CANCELED);
           } else {
-            finish_action_abort("Stop signal received. Task aborted");
+            finish_action_abort(
+              "Stop signal received. Task aborted", PumasNav::Result::OUTCOME_STOP_SIGNAL);
           }
         }
 
@@ -1693,6 +1833,11 @@ private:
         state = SM_GOAL_CONVERGENCE_CHECK;
       }
 
+      // One feedback per tick, whatever the state. A case below may publish
+      // again with an event tag (STOP_SHORT, NEAR_GOAL, ...); that one lands
+      // last and is what the client sees for this tick.
+      publish_periodic_feedback();
+
       switch (state) {
         case SM_INIT: {
           std::cout << "MotionPlanner.-> MVN PLN READY. Waiting for new goal. " << std::endl;
@@ -1701,7 +1846,6 @@ private:
         }
 
         case SM_WAITING_FOR_TASK: {
-          publish_nav_feedback("SM_WAITING_FOR_TASK", "Waiting for task");
           if (new_global_goal_) {
             new_global_goal_ = false;
             set_map_augmenter_enable(true);
@@ -1718,13 +1862,13 @@ private:
             goal_relocated_ = false;
             near_goal_final_accepted_ = false;
             pending_final_message_.clear();
+            pending_final_outcome_ = PumasNav::Result::OUTCOME_UNKNOWN;
             reset_recovery_state();  // clean slate per task (hygiene)
           }
           break;
         }
 
         case SM_CALCULATE_PATH: {
-          publish_nav_feedback("CALCULATE_PATH", "Calculating path");
           get_robot_position();
 
           // Do not replan from right next to the goal: there is nothing left to
@@ -1874,7 +2018,7 @@ private:
             publish_nav_feedback("GOAL_RELAXED", msg);
             current_status =
               publish_status(actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id, msg);
-            finish_action_success(msg);
+            finish_action_success(msg, PumasNav::Result::OUTCOME_GOAL_RELAXED);
             state = SM_INIT;
             break;
           }
@@ -1894,7 +2038,7 @@ private:
             reset_recovery_state();
             publish_nav_feedback("GOAL_NOT_CONVERGING", msg);
             current_status = publish_status(actionlib_msgs::msg::GoalStatus::ABORTED, goal_id, msg);
-            finish_action_abort(msg);
+            finish_action_abort(msg, PumasNav::Result::OUTCOME_NOT_CONVERGING);
             state = SM_INIT;
             break;
           }
@@ -2072,7 +2216,9 @@ private:
             current_status = publish_status(
               actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
               "Cannot calculate path from start to goal point");
-            finish_action_abort("Cannot calculate path from start to goal point");
+            finish_action_abort(
+              "Cannot calculate path from start to goal point",
+              PumasNav::Result::OUTCOME_NO_PATH);
             state = SM_INIT;
           } else {
             std::cout << "MotionPlanner.->Temporal obstacles detected. Waiting "
@@ -2083,6 +2229,13 @@ private:
               "Waiting for temporal obstacles to move");
             state = SM_WAIT_FOR_NO_OBSTACLES;
           }
+          break;
+        }
+
+        case SM_WAIT_FOR_NO_OBSTACLES_DELAY: {
+          // Idle until the re-poll is due; ticks keep running so feedback keeps
+          // flowing and goals/cancels stay responsive.
+          if (this->now() >= obstacle_recheck_at_) state = SM_WAIT_FOR_NO_OBSTACLES;
           break;
         }
 
@@ -2127,15 +2280,22 @@ private:
             current_status = publish_status(
               actionlib_msgs::msg::GoalStatus::ABORTED, this->goal_id,
               "Cannot calculate path from start to goal point");
-            finish_action_abort("Cannot calculate path from start to goal point");
+            finish_action_abort(
+              "Cannot calculate path from start to goal point",
+              PumasNav::Result::OUTCOME_NO_PATH);
             state = SM_INIT;
 
           } else if (!are_still_obs_) {
             std::cout << "MotionPlanner.-> Temporal obstacles removed." << std::endl;
             state = SM_CALCULATE_PATH;
           } else {
-            rclcpp::sleep_for(std::chrono::seconds(1));
-            state = SM_WAIT_FOR_NO_OBSTACLES;
+            // Re-poll in 1 s WITHOUT blocking. This used to be a
+            // rclcpp::sleep_for(1s) inside the timer callback, which stalls the
+            // node's default (mutually exclusive) callback group: for that whole
+            // second no feedback is published, and no goal or cancel request is
+            // served either, so a new goal could not preempt this wait.
+            obstacle_recheck_at_ = this->now() + rclcpp::Duration::from_seconds(1.0);
+            state = SM_WAIT_FOR_NO_OBSTACLES_DELAY;
           }
 
           break;
@@ -2173,14 +2333,18 @@ private:
               RCLCPP_WARN(
                 this->get_logger(), "MotionPlanner.-> Potential fields received but invalid.");
               waiting_for_potential_fields_ = false;
-              finish_action_abort("Potential fields received but invalid");
+              finish_action_abort(
+                "Potential fields received but invalid",
+                PumasNav::Result::OUTCOME_POT_FIELDS_INVALID);
               state = SM_INIT;
             }
           } else if ((this->now() - pot_fields_start_time_).seconds() > 10.0) {
             RCLCPP_WARN(
               this->get_logger(), "MotionPlanner.-> Timeout waiting for potential fields message.");
 
-            finish_action_abort("Timeout waiting for potential fields message");
+            finish_action_abort(
+              "Timeout waiting for potential fields message",
+              PumasNav::Result::OUTCOME_POT_FIELDS_TIMEOUT);
             waiting_for_potential_fields_ = false;
             state = SM_INIT;
           }
@@ -2222,7 +2386,6 @@ private:
         }
 
         case SM_WAIT_FOR_MOVE_FINISHED: {
-          publish_nav_feedback("WAIT_FOR_MOVE_FINISHED", "Following path");
           get_robot_position();
           update_via_points();
           error = sqrt(
@@ -2270,7 +2433,7 @@ private:
             // 5) Report success and return to idle (skip final-angle correction).
             current_status =
               publish_status(actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id, msg);
-            finish_action_success(msg);
+            finish_action_success(msg, PumasNav::Result::OUTCOME_STOP_SHORT);
             state = SM_INIT;
             break;
           }
@@ -2418,7 +2581,9 @@ private:
               m.data = false;
               pub_pot_fields_enable_->publish(m);
               reset_recovery_state();
-              finish_action_success("Blocked by obstacles; stopped at nearest reachable point");
+              finish_action_success(
+                "Blocked by obstacles; stopped at nearest reachable point",
+                PumasNav::Result::OUTCOME_BLOCKED_STOPPED);
               state = SM_INIT;
             }
           } else {
@@ -2551,10 +2716,12 @@ private:
         case SM_FINAL: {
           std::cout << "MotionPlanner.-> TASK FINISHED." << std::endl;
           std::string final_msg = "Global goal point reached";
+          uint8_t final_outcome = PumasNav::Result::OUTCOME_GOAL_REACHED;
           if (!pending_final_message_.empty()) {
             // The task ended somewhere other than the requested goal (near-goal
             // replan suppression). near_goal_sent is already set by the gate.
             final_msg = pending_final_message_;
+            final_outcome = pending_final_outcome_;
           } else if (goal_relocated_) {
             // The requested goal was enclosed/unreachable; the planner stopped at
             // the nearest reachable point. Report it explicitly and make sure
@@ -2566,10 +2733,11 @@ private:
                    "point ("
                 << goal_relocated_dist_ << " m from requested goal)";
             final_msg = oss.str();
+            final_outcome = PumasNav::Result::OUTCOME_GOAL_RELOCATED;
           }
           current_status =
             publish_status(actionlib_msgs::msg::GoalStatus::SUCCEEDED, goal_id, final_msg);
-          finish_action_success(final_msg);
+          finish_action_success(final_msg, final_outcome);
           state = SM_INIT;
           break;
         }
@@ -2590,7 +2758,9 @@ private:
           "Exception in motion_planner_processing core");
       }
       if (action_active_) {
-        finish_action_abort("Exception in motion_planner_processing core");
+        finish_action_abort(
+          "Exception in motion_planner_processing core",
+          PumasNav::Result::OUTCOME_INTERNAL_ERROR);
       }
       state = SM_INIT;
     }

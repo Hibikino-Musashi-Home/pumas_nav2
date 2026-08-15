@@ -137,6 +137,29 @@
   <arg name="cloud_min_z" default="0.1"/>
   <arg name="cloud_max_z" default="1.0"/>
 
+  <!-- simple_move: speed limits and unicycle control gains. Defaults are the
+       values that used to be hard-coded on the node below. -->
+  <arg name="max_linear_speed" default="1.0"/>
+  <arg name="max_angular_speed" default="1.25"/>
+  <arg name="control_alpha" default="0.35"/>
+  <arg name="control_beta" default="0.8"/>
+
+  <!-- potential_fields: repulsion onset distance [m] and gain, per sensor. -->
+  <arg name="laser_pot_fields_d0" default="0.60"/>
+  <arg name="laser_pot_fields_k_rej" default="0.30"/>
+  <arg name="cloud_pot_fields_d0" default="0.80"/>
+  <arg name="cloud_pot_fields_k_rej" default="0.30"/>
+
+  <!-- map_augmenter: how many cycles an observed obstacle survives without
+       being re-observed. Higher than the localization launch because the
+       static map is still being built. -->
+  <arg name="decay_factor" default="20"/>
+  <!--[m] Inaccessible; expansion of the black area. Specify a value at least
+      equal to the radius of the footprint. Default 0.22 (hsr)-->
+  <arg name="inflation_radius" default="0.22"/>
+  <!--[m] Passable; adds a cost to A* to center the path-->
+  <arg name="cost_radius" default="0.35"/>
+
   <!-- Map servers -->
   <node name="prohibition_map_server"
         pkg="nav2_map_server"
@@ -190,9 +213,9 @@
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
 
-    <param name="decay_factor" value="20"/>
-    <param name="inflation_radius" value="0.22"/> <!--default 0.22 (hsr)-->
-    <param name="cost_radius" value="0.35"/>
+    <param name="decay_factor" value="$(var decay_factor)"/>
+    <param name="inflation_radius" value="$(var inflation_radius)"/>
+    <param name="cost_radius" value="$(var cost_radius)"/>
 
     <param name="use_online" value="$(var use_online)"/>
     <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
@@ -231,8 +254,8 @@
         pkg="simple_move"
         exec="simple_move_node"
         output="screen">
-    <param name="max_linear_speed" value="1.0"/>
-    <param name="max_angular_speed" value="1.25"/>
+    <param name="max_linear_speed" value="$(var max_linear_speed)"/>
+    <param name="max_angular_speed" value="$(var max_angular_speed)"/>
     <param name="use_constant_speed" value="$(var use_constant_speed)"/>
     <param name="constant_speed" value="$(var constant_speed)"/>
     <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
@@ -242,8 +265,8 @@
     <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
     <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
     <param name="linear_acceleration" value="0.2"/>
-    <param name="control_alpha" value="0.35"/>
-    <param name="control_beta" value="0.8"/>
+    <param name="control_alpha" value="$(var control_alpha)"/>
+    <param name="control_beta" value="$(var control_beta)"/>
 
     <param name="move_head" value="True"/>
     <param name="use_pot_fields" value="$(var use_pot_fields)"/>
@@ -281,11 +304,11 @@
     <param name="cloud_max_z" value="$(var cloud_max_z)"/>
     <param name="cloud_min_z" value="$(var cloud_min_z)"/>
 
-    <param name="laser_pot_fields_d0" value="0.60"/>
-    <param name="laser_pot_fields_k_rej" value="0.30"/>
+    <param name="laser_pot_fields_d0" value="$(var laser_pot_fields_d0)"/>
+    <param name="laser_pot_fields_k_rej" value="$(var laser_pot_fields_k_rej)"/>
 
-    <param name="cloud_pot_fields_d0" value="0.80"/>
-    <param name="cloud_pot_fields_k_rej" value="0.30"/>
+    <param name="cloud_pot_fields_d0" value="$(var cloud_pot_fields_d0)"/>
+    <param name="cloud_pot_fields_k_rej" value="$(var cloud_pot_fields_k_rej)"/>
 
     <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
     <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
