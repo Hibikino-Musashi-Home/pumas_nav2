@@ -3,6 +3,13 @@
   <!-- Arguments -->
   <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
+  <!-- Applies to every node below. This used to be forwarded only to a single
+       node, so simple_move, mvn_pln, map_augmenter, path_planner and
+       potential_fields all ran on the wall clock while a simulator ran on
+       /clock. Their TF lookups still worked (they all use tf2::TimePointZero),
+       which hid the problem, but every timeout and every per-tick ramp was
+       then scaled by the simulator's real-time factor. -->
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
 
   <!-- Generic package-relative default; the actual site-specific map name
        should be overridden from the hsr_navigation wrapper launch file. -->
@@ -40,7 +47,6 @@
   <arg name="yaw_correction_omni_gain" default="4.5"/>
   <arg name="yaw_correction_ignore_obstacles" default="True"/>
   <arg name="yaw_correction_align_head" default="True"/>
-  <arg name="yaw_correction_align_head_speed" default="4.0"/>
 
   <!-- Head control parameters.-->
   <arg name="head_pan_min" default="-3.14"/>
@@ -291,7 +297,6 @@
     <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
     <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
     <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
-    <param name="yaw_correction_align_head_speed" value="$(var yaw_correction_align_head_speed)"/>
     <param name="head_lookahead_points" value="$(var head_lookahead_points)"/>
 
     <param name="control_alpha" value="0.2"/>

@@ -18,6 +18,45 @@ float32 min_reach_goal_dist
 bool success
 bool near_goal_reached
 string message
+# Machine-readable termination reason. Defined here so that server and client
+# share ONE vocabulary: mvn_pln sets it at every terminal branch, clients switch
+# on it, and `message` stays the human-readable detail (distances, counts).
+# success is redundant with the OUTCOME_ range but kept for compatibility.
+uint8 outcome
+uint8 OUTCOME_UNKNOWN=0
+# --- terminated with success=true ---
+# Arrived at the requested goal pose.
+uint8 OUTCOME_GOAL_REACHED=1
+# Halted deliberately within the goal_distance requested in the Goal.
+uint8 OUTCOME_STOP_SHORT=2
+# Inside min_reach_goal_dist of the goal; the current point was taken as the
+# goal instead of replanning.
+uint8 OUTCOME_NEAR_GOAL_ACCEPTED=3
+# Gave up converging and accepted the closest position reached.
+uint8 OUTCOME_GOAL_RELAXED=4
+# The requested goal was enclosed/unreachable; stopped at the nearest
+# reachable point.
+uint8 OUTCOME_GOAL_RELOCATED=5
+# Enclosed by obstacles with no escape direction left; stopped where it is.
+uint8 OUTCOME_BLOCKED_STOPPED=6
+# --- terminated with success=false ---
+# No path from the current pose to the goal.
+uint8 OUTCOME_NO_PATH=10
+# Stuck: no progress / too many replans.
+uint8 OUTCOME_NOT_CONVERGING=11
+# Inside min_reach_goal_dist but near_goal_accept_as_goal is false.
+uint8 OUTCOME_NEAR_GOAL_ABORT=12
+uint8 OUTCOME_POT_FIELDS_INVALID=13
+uint8 OUTCOME_POT_FIELDS_TIMEOUT=14
+# /stop or /navigation/stop was received.
+uint8 OUTCOME_STOP_SIGNAL=15
+# Unhandled exception in the planner core.
+uint8 OUTCOME_INTERNAL_ERROR=16
+# The client canceled the goal.
+uint8 OUTCOME_CANCELED=17
+# A newer goal arrived and took over; this one was dropped. The robot keeps
+# moving -- toward the new goal.
+uint8 OUTCOME_PREEMPTED=18
 
 ---
 # Feedback
@@ -26,3 +65,14 @@ float32 remaining_distance
 bool collision_risk
 bool near_goal_reached
 string message
+# Effective planner settings for THIS goal, resolved server-side so the client
+# never has to guess whether the goal field or the node parameter won. Constant
+# for the duration of a goal; they ride along with the feedback so that reading
+# them needs nothing beyond the action itself.
+# Radius at which near_goal_reached is raised (mvn_pln proximity_criterion).
+float32 proximity_criterion
+# No-replan radius actually in force: the goal's min_reach_goal_dist when it was
+# > 0, otherwise the node's min_reach_goal_dist parameter. 0 = gate disabled.
+float32 min_reach_goal_dist
+# Stop-short distance requested in the goal. 0 = full arrival.
+float32 goal_distance

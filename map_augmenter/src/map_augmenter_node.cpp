@@ -1,4 +1,5 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 // Message types
@@ -123,6 +124,10 @@ public:
     //  Publishers
     pub_augmented_map_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
         make_name("/augmented_map"), rclcpp::QoS(10).transient_local());
+    pub_augmented_cost_map_ =
+        this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            make_name("/augmented_cost_map"),
+            rclcpp::QoS(10).transient_local());
 
     // ############
     //  Subscribers
@@ -193,11 +198,17 @@ public:
 
     // ############
     //  Map Augmenter main processing
-    get_first_maps();
+    // The first map fetch is driven by the bootstrap timer in
+    // init_service_clients(), not from here -- see the comment there.
 
-    processing_timer_ = this->create_wall_timer(
-        // std::chrono::milliseconds(100), // 100 ms = 10 Hz
-        std::chrono::milliseconds(30), // 30 Hz
+    // Node-clock timer, matching simple_move / mvn_pln / potential_fields.
+    // decay_factor counts iterations of this loop, so on a wall timer the
+    // obstacle memory decayed in wall time while the controller consuming the
+    // map advanced in simulated time - the two disagreed by the real-time
+    // factor. On the node clock one iteration is 30 ms of simulated time for
+    // every node in the pipeline.
+    processing_timer_ = rclcpp::create_timer(
+        this, this->get_clock(), rclcpp::Duration::from_seconds(0.03), // 30 ms
         std::bind(&MapAugmenterNode::map_augmenter_processing, this));
 
     RCLCPP_INFO(this->get_logger(),
@@ -259,6 +270,11 @@ private:
   // ############
   //  Publishers
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr pub_augmented_map_;
+  // Visualization only. The planner takes the cost map through
+  // get_augmented_cost_map; without this topic a change of cost_radius is
+  // invisible in RViz because nothing ever publishes a cost map.
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr
+      pub_augmented_cost_map_;
 
   // ############
   //  Subscribers
@@ -321,6 +337,19 @@ private:
   bool is_static_map_ = false;
   bool is_prohibition_map_ = false;
 
+  // Bootstrap retry state (see init_service_clients()). After
+  // kProhibitionGraceAttempts seconds of the prohibition server answering with
+  // an empty grid, come up without a prohibition layer instead of hanging.
+  static constexpr int kProhibitionGraceAttempts = 10;
+  int bootstrap_attempts_ = 0;
+  bool prohibition_grace_over_ = false;
+
+  // static_map_ merged with the prohibition layer but NOT yet inflated. Kept so
+  // rebuild_static_maps() can re-inflate from clean geometry when
+  // inflation_radius / cost_radius change at runtime.
+  nav_msgs::msg::OccupancyGrid static_map_merged_;
+  bool have_static_map_merged_ = false;
+
   // Main processing loop
   rclcpp::TimerBase::SharedPtr processing_timer_;
 
@@ -330,6 +359,11 @@ private:
   on_parameter_change(const std::vector<rclcpp::Parameter> &params) {
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
+
+    // The static map is inflated once, when it arrives. With use_online=false
+    // it is never re-fetched, so a new radius has to trigger the recompute
+    // itself or it would only ever affect sensed obstacles.
+    bool rebuild_static = false;
 
     for (const auto &param : params) {
       if (param.get_name() == "use_namespace")
@@ -377,10 +411,13 @@ private:
         cloud_downsampling2_ = param.as_int();
       else if (param.get_name() == "lidar_downsampling")
         lidar_downsampling_ = param.as_int();
-      else if (param.get_name() == "inflation_radius")
+      else if (param.get_name() == "inflation_radius") {
         inflation_radius_ = param.as_double();
-      else if (param.get_name() == "cost_radius")
+        rebuild_static = true;
+      } else if (param.get_name() == "cost_radius") {
         cost_radius_ = param.as_double();
+        rebuild_static = true;
+      }
 
       else if (param.get_name() == "point_cloud_topic")
         point_cloud_topic_ = param.as_string();
@@ -419,6 +456,18 @@ private:
       }
     }
 
+    if (result.successful && rebuild_static) {
+      rebuild_static_maps();
+      // The obstacle layer is sized against static_map_, which just changed
+      // shape only if the radius altered its extents; re-fitting is cheap and
+      // keeps the two layers consistent.
+      reproject_obstacles_map();
+      RCLCPP_INFO(this->get_logger(),
+                  "MapAugmenter.-> Static map re-inflated: inflation_radius=%.3f "
+                  "cost_radius=%.3f",
+                  inflation_radius_, cost_radius_);
+    }
+
     return result;
   }
 
@@ -453,18 +502,30 @@ private:
     clt_get_prohibition_map_ =
         this->create_client<nav_msgs::srv::GetMap>(prohibition_map_server_);
 
+    // Bootstrap loop. get_first_maps() used to run exactly once, from the
+    // constructor, after a blind 1 s sleep -- so whether the map servers
+    // happened to be up by then decided whether this node ever produced a map
+    // at all. async_send_request() to a service with no server never resolves,
+    // so is_static_map_ stayed false, process_maps() never ran,
+    // obstacles_map_ stayed empty and map_augmenter_processing() bailed out
+    // forever: /augmented_map silently never published, and the launch was a
+    // coin flip. Keep re-requesting until the merged static map really exists.
     service_check_timer_ =
         this->create_wall_timer(std::chrono::seconds(1), [this]() {
+          if (have_static_map_merged_) {
+            RCLCPP_INFO(this->get_logger(),
+                        "MapAugmenter.-> Bootstrap complete after %d attempt(s).",
+                        bootstrap_attempts_);
+            service_check_timer_->cancel();
+            return;
+          }
+
           bool is_static_map =
               clt_get_static_map_->wait_for_service(std::chrono::seconds(0));
           bool is_prohibition_map = clt_get_prohibition_map_->wait_for_service(
               std::chrono::seconds(0));
-          if (is_static_map && is_prohibition_map) {
-            RCLCPP_INFO(this->get_logger(),
-                        "MapAugmenter.-> All map services are now available.");
-            services_ready_ = true;
-            service_check_timer_->cancel();
-          } else {
+
+          if (!is_static_map || !is_prohibition_map) {
             if (!is_static_map)
               RCLCPP_WARN(this->get_logger(),
                           "MapAugmenter.-> Waiting for static_map service to "
@@ -474,7 +535,24 @@ private:
               RCLCPP_WARN(this->get_logger(),
                           "MapAugmenter.-> Waiting for prohibition_map service "
                           "to become available...");
+            return;
           }
+
+          if (!services_ready_) {
+            RCLCPP_INFO(this->get_logger(),
+                        "MapAugmenter.-> All map services are now available.");
+            services_ready_ = true;
+          }
+
+          // A map server can answer before it has finished loading its YAML and
+          // hand back a 0 x 0 grid (seen on the prohibition layer), so one
+          // successful round-trip is not proof of a usable map. After the grace
+          // period stop insisting on the prohibition layer -- a deployment
+          // without prohibition zones must still come up.
+          ++bootstrap_attempts_;
+          prohibition_grace_over_ =
+              bootstrap_attempts_ > kProhibitionGraceAttempts;
+          get_first_maps();
         });
   }
 
@@ -519,16 +597,27 @@ private:
     }
   }
 
+  // Requested once per bootstrap tick until process_maps() succeeds. Safe to
+  // call repeatedly: both handlers only latch a map that is actually usable,
+  // and process_maps() is idempotent.
   void get_first_maps() {
-    rclcpp::sleep_for(std::chrono::seconds(1));
-
     auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
     clt_get_static_map_->async_send_request(
         static_map_req,
         [this](
             rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
           try {
-            this->static_map_ = future_static.get()->map;
+            auto map = future_static.get()->map;
+            if (map.data.empty()) {
+              // Everything downstream is sized against the static map, so an
+              // empty one is fatal rather than merely degraded. Retry.
+              RCLCPP_WARN(this->get_logger(),
+                          "MapAugmenter.-> Static map server answered with an "
+                          "empty %d x %d grid; retrying.",
+                          map.info.width, map.info.height);
+              return;
+            }
+            this->static_map_ = map;
             is_static_map_ = true;
             RCLCPP_INFO(this->get_logger(),
                         "MapAugmenter.-> Got static map with size %d x %d",
@@ -548,7 +637,22 @@ private:
         [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture
                    future_ptohibition) {
           try {
-            this->prohibition_map_ = future_ptohibition.get()->map;
+            auto map = future_ptohibition.get()->map;
+            if (map.data.empty() && !prohibition_grace_over_) {
+              // merge_maps() tolerates an empty overlay, so accepting this
+              // would come up "successfully" with the prohibition zones
+              // silently missing. Retry while there is still time.
+              RCLCPP_WARN(this->get_logger(),
+                          "MapAugmenter.-> Prohibition map server answered with "
+                          "an empty %d x %d grid; retrying.",
+                          map.info.width, map.info.height);
+              return;
+            }
+            if (map.data.empty())
+              RCLCPP_WARN(this->get_logger(),
+                          "MapAugmenter.-> Proceeding without a prohibition "
+                          "layer: the server kept returning an empty grid.");
+            this->prohibition_map_ = map;
             is_prohibition_map_ = true;
             RCLCPP_INFO(this->get_logger(),
                         "MapAugmenter.-> Got prohibition map with size %d x %d",
@@ -569,10 +673,14 @@ private:
                   "MapAugmenter.-> Updating static map with prohibition layer "
                   "and static cost map...");
 
-      static_map_ = merge_maps(static_map_, prohibition_map_);
-      static_map_ = inflate_map(static_map_, inflation_radius_);
+      // Keep the merged-but-NOT-inflated map so the inflation can be redone
+      // later with a different radius. inflate_map() below overwrites
+      // static_map_, so without this copy the pristine geometry is gone and
+      // re-inflating would compound on top of the previous inflation.
+      static_map_merged_ = merge_maps(static_map_, prohibition_map_);
+      have_static_map_merged_ = true;
 
-      static_cost_map_ = get_cost_map(static_map_, cost_radius_);
+      rebuild_static_maps();
       reproject_obstacles_map();
 
       is_static_map_ = false;
@@ -580,6 +688,19 @@ private:
       RCLCPP_INFO(this->get_logger(),
                   "MapAugmenter.-> Statics maps have been updated.");
     }
+  }
+
+  // Recompute the inflated static map and the static cost map from the
+  // untouched merged map. Split out of process_maps() so a runtime change of
+  // inflation_radius / cost_radius can take effect without waiting for a fresh
+  // static map -- with use_online=false the map is fetched exactly once at
+  // startup, so before this the new radius applied only to sensed obstacles and
+  // the walls kept their startup inflation forever.
+  void rebuild_static_maps() {
+    if (!have_static_map_merged_) return;
+
+    static_map_ = inflate_map(static_map_merged_, inflation_radius_);
+    static_cost_map_ = get_cost_map(static_map_, cost_radius_);
   }
 
   // Re-fit obstacles_map_ to the current static-map geometry while KEEPING the
@@ -1276,8 +1397,9 @@ private:
       const std::shared_ptr<nav_msgs::srv::GetMap::Request> request,
       std::shared_ptr<nav_msgs::srv::GetMap::Response> response) {
     if (!services_ready_) {
-      RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Services not ready. "
-                                       "Cannot handle static map request.");
+      RCLCPP_ERROR(this->get_logger(),
+                   "MapAugmenter.-> Services not ready. Cannot handle "
+                   "augmented map request.");
       return;
     }
 
@@ -1379,9 +1501,12 @@ private:
   // ############
   // Map Augmenter main processing
   void map_augmenter_processing() {
+    // Normal for the first second or two of a launch, and this loop runs at
+    // ~33 Hz, so throttle instead of spamming one line per tick.
     if (!services_ready_) {
-      RCLCPP_ERROR(this->get_logger(), "MapAugmenter.-> Services not ready. "
-                                       "Cannot handle static map request.");
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "MapAugmenter.-> Waiting for the map services "
+                           "before augmenting.");
       return;
     }
 
@@ -1408,6 +1533,18 @@ private:
       obstacles_inflated_map_ = inflate_map(obstacles_map_, inflation_radius_);
       augmented_map_ = merge_maps(static_map_, obstacles_inflated_map_);
       pub_augmented_map_->publish(augmented_map_);
+
+      // Visualization copy of what callback_augmented_cost_map() hands the
+      // planner. get_cost_map() is O(occupied cells * steps^2), so only pay for
+      // it while something is actually looking. The static half is already
+      // cached in static_cost_map_ (rebuilt by rebuild_static_maps() whenever
+      // inflation_radius / cost_radius change), so the per-cycle work is just
+      // the obstacle layer.
+      if (pub_augmented_cost_map_->get_subscription_count() > 0) {
+        auto obs_cost_map = get_cost_map(obstacles_inflated_map_, cost_radius_);
+        pub_augmented_cost_map_->publish(
+            merge_maps(static_cost_map_, obs_cost_map));
+      }
     }
   }
 };
