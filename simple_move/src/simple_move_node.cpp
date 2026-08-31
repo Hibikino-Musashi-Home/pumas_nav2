@@ -63,6 +63,15 @@ public:
     this->declare_parameter<float>("max_linear_speed", 0.3f);
     this->declare_parameter<float>("min_linear_speed", 0.05f);
     this->declare_parameter<float>("max_angular_speed", 1.0f);
+    // Upper bound on the lateral (linear.y) component of the published
+    // command, independent of max_linear_speed. Needed by robots whose
+    // sideways motion is slower or less stable than their forward motion
+    // (e.g. quadrupeds): the unicycle controller writes the repulsion force
+    // straight into linear.y, and the holonomic controller only saturates the
+    // vx/vy magnitude, so neither path bounds linear.y on its own.
+    // Negative (the default) disables the clamp, leaving existing robots
+    // unchanged.
+    this->declare_parameter<float>("max_lateral_speed", -1.0f);
     // Constant-speed (cruise-only) mode for path following.
     // When use_constant_speed is true the trapezoidal accel/cruise/deccel
     // profile is skipped and the robot follows the path at a fixed
@@ -121,6 +130,7 @@ public:
     this->get_parameter("max_linear_speed", max_linear_speed_);
     this->get_parameter("min_linear_speed", min_linear_speed_);
     this->get_parameter("max_angular_speed", max_angular_speed_);
+    this->get_parameter("max_lateral_speed", max_lateral_speed_);
     this->get_parameter("use_constant_speed", use_constant_speed_);
     this->get_parameter("constant_speed", constant_speed_);
     this->get_parameter("yaw_correction_omni_behavior",
@@ -305,6 +315,7 @@ private:
   float max_linear_speed_;
   float min_linear_speed_;
   float max_angular_speed_;
+  float max_lateral_speed_ = -1.0f;
   bool use_constant_speed_ = false;
   float constant_speed_;
   bool yaw_correction_omni_behavior_ = false;
@@ -393,6 +404,8 @@ private:
         min_linear_speed_ = param.as_double();
       else if (param.get_name() == "max_angular_speed")
         max_angular_speed_ = param.as_double();
+      else if (param.get_name() == "max_lateral_speed")
+        max_lateral_speed_ = param.as_double();
       else if (param.get_name() == "use_constant_speed")
         use_constant_speed_ = param.as_bool();
       else if (param.get_name() == "constant_speed")
@@ -695,6 +708,23 @@ private:
           "SimpleMove.-> Error processing callback_rejection_force: %s",
           e.what());
     }
+  }
+
+  // ############
+  // Single exit point for every velocity command. Clamping here rather than in
+  // the controllers keeps one bound over all of them: unicycle tracking,
+  // holonomic last-mile tracking, lateral moves, relative moves and the
+  // mvn_pln recovery manoeuvres.
+  void publish_cmd_vel(const geometry_msgs::msg::Twist &cmd) {
+    if (max_lateral_speed_ < 0.0f) {
+      pub_cmd_vel_->publish(cmd);
+      return;
+    }
+    geometry_msgs::msg::Twist limited = cmd;
+    limited.linear.y = std::max(-static_cast<double>(max_lateral_speed_),
+                                std::min(static_cast<double>(max_lateral_speed_),
+                                         limited.linear.y));
+    pub_cmd_vel_->publish(limited);
   }
 
   // ############
@@ -1116,7 +1146,7 @@ private:
         collision_risk_ = false;
         new_rel_pose_ = false;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
-        pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+        publish_cmd_vel(geometry_msgs::msg::Twist());
         pub_goal_reached_->publish(msg_goal_reached);
       }
       if (new_pose_ || new_path_ || new_rel_pose_)
@@ -1212,7 +1242,7 @@ private:
           current_linear_speed = 0;
           msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::SUCCEEDED;
           pub_goal_reached_->publish(msg_goal_reached);
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          publish_cmd_vel(geometry_msgs::msg::Twist());
           break;
         }
         if (--attempts <= 0) {
@@ -1221,7 +1251,7 @@ private:
           current_linear_speed = 0;
           msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
           pub_goal_reached_->publish(msg_goal_reached);
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          publish_cmd_vel(geometry_msgs::msg::Twist());
           break;
         }
 
@@ -1240,7 +1270,7 @@ private:
         cmd.angular.z =
             std::max(-max_angular_speed_,
                      std::min(max_angular_speed_, kp_ang * yaw_err));
-        pub_cmd_vel_->publish(cmd);
+        publish_cmd_vel(cmd);
         break;
       }
 
@@ -1265,11 +1295,11 @@ private:
                        "goal position. Current state: GOAL_POSE_ACCEL."
                     << std::endl;
         }
-        // pub_cmd_vel_->publish(calculate_speeds(
+        // publish_cmd_vel(calculate_speeds(
         //     robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
         //     min_linear_speed_, current_linear_speed, max_angular_speed_,
         //     alpha_ * 2, beta_ / 4, goal_distance_ < 0, move_lat_));
-        pub_cmd_vel_->publish(calculate_speeds(
+        publish_cmd_vel(calculate_speeds(
             robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
             current_linear_speed, max_angular_speed_, alpha_ * 2, beta_ / 4,
             goal_distance_ < 0, move_lat_, use_pot_fields_,
@@ -1294,11 +1324,11 @@ private:
                        "goal position. Current state: GOAL_POSE_CRUISE."
                     << std::endl;
         }
-        // pub_cmd_vel_->publish(calculate_speeds(
+        // publish_cmd_vel(calculate_speeds(
         //     robot_x_, robot_y_, robot_t_, goal_x_, goal_y_,
         //     min_linear_speed_, current_linear_speed, max_angular_speed_,
         //     alpha_ * 2, beta_ / 4, goal_distance_ < 0, move_lat_));
-        pub_cmd_vel_->publish(calculate_speeds(
+        publish_cmd_vel(calculate_speeds(
             robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
             current_linear_speed, max_angular_speed_, alpha_ * 2, beta_ / 4,
             goal_distance_ < 0, move_lat_, use_pot_fields_,
@@ -1321,7 +1351,7 @@ private:
         current_linear_speed = temp_k * sqrt(global_error);
         if (current_linear_speed < min_linear_speed_)
           current_linear_speed = min_linear_speed_;
-        pub_cmd_vel_->publish(calculate_speeds(
+        publish_cmd_vel(calculate_speeds(
             robot_x_, robot_y_, robot_t_, goal_x_, goal_y_, min_linear_speed_,
             current_linear_speed, max_angular_speed_, alpha_ * 2, beta_ / 4,
             goal_distance_ < 0, move_lat_, use_pot_fields_,
@@ -1338,7 +1368,7 @@ private:
         global_error = fabs(global_error);
         if (global_error < angle_tolerance_)
           state = SM_GOAL_POSE_FINISH;
-        pub_cmd_vel_->publish(
+        publish_cmd_vel(
             calculate_speeds(robot_t_, goal_t_, max_angular_speed_, beta_ / 4));
         if (--attempts <= 0) {
           state = SM_GOAL_POSE_FAILED;
@@ -1354,7 +1384,7 @@ private:
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::SUCCEEDED;
         pub_goal_reached_->publish(msg_goal_reached);
-        pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+        publish_cmd_vel(geometry_msgs::msg::Twist());
         current_linear_speed = 0;
         break;
 
@@ -1364,7 +1394,7 @@ private:
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
         pub_goal_reached_->publish(msg_goal_reached);
-        pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+        publish_cmd_vel(geometry_msgs::msg::Twist());
         current_linear_speed = 0;
         break;
 
@@ -1375,7 +1405,7 @@ private:
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          publish_cmd_vel(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
           break;
@@ -1401,7 +1431,7 @@ private:
                        "goal path. Current state: GOAL_PATH_ACCEL."
                     << std::endl;
         }
-        pub_cmd_vel_->publish(cmd);
+        publish_cmd_vel(cmd);
         if (move_head_)
           publish_path_head_goal(next_pose_idx);
         current_linear_speed += linear_acceleration_ / RATE;
@@ -1415,7 +1445,7 @@ private:
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          publish_cmd_vel(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
           break;
@@ -1437,7 +1467,7 @@ private:
                        "goal path. Current state: GOAL_PATH_CRUISE."
                     << std::endl;
         }
-        pub_cmd_vel_->publish(cmd);
+        publish_cmd_vel(cmd);
         if (move_head_)
           publish_path_head_goal(next_pose_idx);
         break;
@@ -1460,7 +1490,7 @@ private:
 
         if (collision_blocks_tracking(cmd)) {
           state = SM_GOAL_PATH_FAILED;
-          pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+          publish_cmd_vel(geometry_msgs::msg::Twist());
           std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                     << std::endl;
           break;
@@ -1474,7 +1504,7 @@ private:
                        "goal path. Current state:GOAL_PATH_DECCEL."
                     << std::endl;
         }
-        pub_cmd_vel_->publish(cmd);
+        publish_cmd_vel(cmd);
         if (move_head_)
           publish_path_head_goal(next_pose_idx);
         break;
@@ -1493,7 +1523,7 @@ private:
 
           if (collision_blocks_tracking(cmd)) {
             state = SM_GOAL_PATH_FAILED;
-            pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+            publish_cmd_vel(geometry_msgs::msg::Twist());
             std::cout << "SimpleMove.-> WARNING! Collision risk detected!!!!!"
                       << std::endl;
             break;
@@ -1510,7 +1540,7 @@ private:
                          "goal path. Current state: GOAL_PATH_CONSTANT."
                       << std::endl;
           }
-          pub_cmd_vel_->publish(cmd);
+          publish_cmd_vel(cmd);
           if (move_head_)
             publish_path_head_goal(next_pose_idx);
         }
@@ -1521,7 +1551,7 @@ private:
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::SUCCEEDED;
         pub_goal_reached_->publish(msg_goal_reached);
-        pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+        publish_cmd_vel(geometry_msgs::msg::Twist());
         current_linear_speed = 0;
         break;
 
@@ -1531,7 +1561,7 @@ private:
         state = SM_INIT;
         msg_goal_reached.status = actionlib_msgs::msg::GoalStatus::ABORTED;
         pub_goal_reached_->publish(msg_goal_reached);
-        pub_cmd_vel_->publish(geometry_msgs::msg::Twist());
+        publish_cmd_vel(geometry_msgs::msg::Twist());
         current_linear_speed = 0;
         break;
 

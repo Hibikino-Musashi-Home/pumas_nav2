@@ -548,8 +548,16 @@ private:
         if (use_lidar_ && !sub_lidar_) {
           rclcpp::SubscriptionOptions lidar_opts;
           lidar_opts.callback_group = lidar_cb_group_;
+          // SensorDataQoS (best effort), matching the point-cloud
+          // subscriptions here and every sensor subscription in
+          // map_augmenter. A reliable subscription silently receives nothing
+          // from a best-effort publisher, which is what a scan derived from
+          // pointcloud_to_laserscan is; obstacle avoidance would then go quiet
+          // with no error. A best-effort subscription still receives from a
+          // reliable publisher, so this is safe for lidars that publish
+          // reliably.
           sub_lidar_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-              laser_scan_topic_, rclcpp::QoS(10).reliable(),
+              laser_scan_topic_, rclcpp::SensorDataQoS(),
               std::bind(&PotentialFieldsNode::callback_lidar, this,
                         std::placeholders::_1),
               lidar_opts);

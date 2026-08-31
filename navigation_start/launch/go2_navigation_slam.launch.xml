@@ -1,0 +1,445 @@
+<launch>
+
+  <!-- ============================================================
+       Unitree Go2 + pumas_nav2, online SLAM (slam_toolbox).
+
+       Written as a separate file rather than an include of
+       navigation_slam.launch.xml because that file starts arm_controller and
+       head_controller unconditionally and pins simple_move's move_head to
+       True: the Go2 has no arm and no head.
+
+       Frames: every node is given base_link_name=base_link. The Go2 URDF
+       fixes base_footprint at the same pose as base_link (origin xyz="0 0 0"),
+       so base_footprint is NOT on the ground here and the HSR's floor-relative
+       detection box heights do not carry over. All z values below are relative
+       to base_link, whose height above the floor is about 0.32 m when the
+       robot stands.
+
+       See docs/design-doc/go2-pumas-nav2/ for the rationale behind every value.
+       ============================================================ -->
+
+  <arg name="robot_name" default="go2"/>
+  <arg name="use_sim_time" default="false"/>
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+
+  <!-- === Interfaces to go2_robot_sdk === -->
+  <!-- twist_mux takes the navigation input on /cmd_vel (priority 5) and the
+       joystick on cmd_vel_joy (priority 10), so the operator can always
+       override. Point this at a dummy topic to bring the stack up without
+       moving the robot. -->
+  <arg name="cmd_vel_topic" default="/cmd_vel"/>
+  <arg name="odom_topic" default="/odom"/>
+  <arg name="laser_scan_topic" default="/scan"/>
+  <arg name="point_cloud_topic" default="/point_cloud2"/>
+
+  <!-- base_link while the scan is produced with target_frame=base_link.
+       Once go2_bringup publishes the ground-projected frame (x, y and yaw of
+       base_link, roll/pitch dropped, z on the floor) and pointcloud_to_laserscan
+       targets it, pass base_link_name:=base_ground here as well: a LaserScan
+       lies in the z=0 plane of the frame it is expressed in, so pumas must work
+       in that same frame for the detection box heights below to mean anything.
+       This is also the base_footprint that pumas was designed around and that
+       the Go2 URDF does not provide. -->
+  <arg name="base_link_name" default="base_link"/>
+  <arg name="odom_name" default="odom"/>
+
+  <arg name="prohibition_map_file"
+       default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
+
+  <!-- === Sensor selection ===
+       The Go2's only obstacle source is the built-in LiDAR, reduced to /scan.
+       The point-cloud path is the HSR's head RGB-D; there is no equivalent
+       sensor here, so it stays off until the 3D LiDAR is wired in as a second
+       input. -->
+  <arg name="use_lidar" default="True"/>
+  <arg name="use_point_cloud" default="False"/>
+  <arg name="use_sonars" default="False"/>
+  <arg name="use_pot_fields" default="True"/>
+  <arg name="use_online" default="True"/>
+
+  <!-- === Detection box, base_link frame [m] ===
+       x forward, y left, z up. The floor sits at about z = -0.32.
+       laser_min_z is the parameter that keeps the robot's own legs out of the
+       obstacle set; it is the single most uncertain value here and must be set
+       from the measurements in docs/design-doc/go2-pumas-nav2/03-verification.md. -->
+  <arg name="laser_min_x" default="0.35"/>
+  <arg name="laser_max_x" default="0.90"/>
+  <arg name="laser_min_y" default="-0.30"/>
+  <arg name="laser_max_y" default="0.30"/>
+  <arg name="laser_min_z" default="-0.25"/>
+  <arg name="laser_max_z" default="0.60"/>
+
+  <arg name="cloud_min_x" default="0.35"/>
+  <arg name="cloud_max_x" default="0.90"/>
+  <arg name="cloud_min_y" default="-0.30"/>
+  <arg name="cloud_max_y" default="0.30"/>
+  <arg name="cloud_min_z" default="-0.25"/>
+  <arg name="cloud_max_z" default="0.60"/>
+
+  <arg name="cloud_downsampling" default="5"/>
+  <arg name="lidar_downsampling" default="1"/>
+  <arg name="cloud_points_threshold" default="100"/>
+  <arg name="lidar_points_threshold" default="20"/>
+
+  <!-- === Speed limits ===
+       max_lateral_speed bounds linear.y on its own. The unicycle controller
+       writes the repulsion force straight into linear.y and the holonomic
+       controller only saturates the vx/vy magnitude, so without this the
+       sideways command can reach max_linear_speed - too fast for a walking
+       gait. Start at 0.0 on the first run and open it up in steps. -->
+  <arg name="max_linear_speed" default="0.5"/>
+  <arg name="max_angular_speed" default="0.8"/>
+  <arg name="max_lateral_speed" default="0.25"/>
+  <arg name="linear_acceleration" default="0.2"/>
+  <arg name="control_alpha" default="0.3"/>
+  <arg name="control_beta" default="0.8"/>
+  <arg name="use_constant_speed" default="False"/>
+  <arg name="constant_speed" default="0.3"/>
+
+  <!-- === Last-mile holonomic tracking ===
+       Kept on: the Go2 accepts vx, vy and vyaw. The gain is lower than the
+       HSR's 4.5 because a walking turn is slower than a wheeled one, and the
+       distance is longer because it takes more travel to settle. -->
+  <arg name="yaw_correction_omni_behavior" default="True"/>
+  <arg name="yaw_correction_omni_distance" default="0.8"/>
+  <arg name="yaw_correction_omni_gain" default="2.0"/>
+  <arg name="yaw_correction_ignore_obstacles" default="True"/>
+  <arg name="yaw_correction_align_head" default="False"/>
+
+  <!-- === Cost shaping ===
+       The Go2 body is about 0.70 x 0.31 m and reaches roughly 0.80 x 0.40 m
+       once the legs swing, hence a larger inflation than the HSR's 0.22. -->
+  <arg name="inflation_radius" default="0.25"/>
+  <!-- cost_radius must stay modest. path_planner's free-space test is
+       `use_online ? (v <= 0) : (v == 0)` (PathPlanner.cpp:22), so a cell with
+       ANY positive cost is rejected as a start or goal. A wide cost radius
+       therefore does not merely discourage paths near walls, it makes the
+       robot unable to plan at all once it stands inside that band, which in
+       a small room is nearly everywhere. 0.60 was verified to do exactly that
+       on the real robot in a 5.6 x 5.7 m room. -->
+  <arg name="cost_radius" default="0.20"/>
+  <!-- Cycles an observed obstacle survives without being re-observed. -->
+  <arg name="decay_factor" default="3"/>
+  <!-- False. True keeps a permanent set of every cell ever seen as an
+       obstacle (map_augmenter_node.cpp:263), which never decays: a person who
+       stands in front of the robot leaves the floor they stood on impassable
+       for the rest of the run. That memory suits map building, not moving
+       around people, and decay_factor above only takes effect while this is
+       off. Verified on the real robot. -->
+  <arg name="remember_all_obstacles" default="False"/>
+
+  <!-- === Potential fields === -->
+  <arg name="laser_pot_fields_d0" default="0.60"/>
+  <arg name="laser_pot_fields_k_rej" default="0.30"/>
+
+  <!-- === mvn_pln === -->
+  <arg name="proximity_criterion" default="0.8"/>
+  <arg name="mvn_pln_patience" default="False"/>
+  <arg name="collision_recovery_trigger_count" default="3"/>
+  <!-- False. With rear masking on, path_planner reports
+       "Start point is inside non-free space" and never produces a path: the
+       mask covers the robot's own start cell. Verified on the real robot:
+       flipping this to False was what turned "Failed to plan path" into
+       "Path planned successfully". -->
+  <arg name="disable_rear_path_plan" default="False"/>
+  <arg name="online_behind_clearance" default="1.0"/>
+  <arg name="escape_clear_radius" default="0.6"/>
+  <arg name="convergence_epsilon" default="0.20"/>
+  <arg name="convergence_timeout" default="45.0"/>
+  <arg name="replan_window_sec" default="30.0"/>
+  <arg name="replan_window_max" default="5"/>
+  <arg name="replan_spread_radius" default="2.0"/>
+  <arg name="replan_max_per_task" default="40"/>
+  <arg name="goal_relax_max" default="1.5"/>
+  <arg name="enable_goal_relax" default="True"/>
+  <arg name="enable_stuck_abort" default="True"/>
+  <arg name="free_point_search_radius" default="2.0"/>
+  <arg name="min_reach_goal_dist" default="0.0"/>
+  <arg name="near_goal_accept_as_goal" default="True"/>
+
+  <!-- === simple_move rotate-on-collision === -->
+  <arg name="allow_rotation_on_collision" default="False"/>
+  <arg name="rotation_collision_angle_threshold" default="0.35"/>
+  <arg name="rotation_collision_angular_speed" default="0.4"/>
+  <arg name="rotation_collision_max_time" default="3.0"/>
+
+  <!-- === Optional nodes ===
+       motion_synth_server synchronises arm motion with navigation progress.
+       The Go2 has no arm, but mvn_pln holds an action client to it; enable
+       this if /pumas_nav turns out to block waiting for the server (Q6). -->
+  <arg name="use_motion_synth" default="False"/>
+  <arg name="rviz" default="True"/>
+
+  <!-- ============================================================
+       SLAM Toolbox: builds the map and publishes map -> odom.
+       odom -> base_link comes from go2_driver_node.
+       ============================================================ -->
+  <node name="slam_toolbox"
+        pkg="slam_toolbox"
+        exec="async_slam_toolbox_node"
+        output="screen"
+        respawn="true">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="scan_topic" value="$(var laser_scan_topic)"/>
+    <param name="odom_frame" value="$(var odom_name)"/>
+    <param name="map_frame" value="map"/>
+    <param name="base_frame" value="$(var base_link_name)"/>
+    <param name="mode" value="mapping"/>
+    <param name="map_update_interval" value="1.0"/>
+    <param name="resolution" value="0.05"/>
+    <param name="max_laser_range" value="20.0"/>
+  </node>
+
+  <!-- ============================================================
+       Prohibition layer. Blank while mapping; a real prohibition map can be
+       passed in once the environment has been surveyed.
+       ============================================================ -->
+  <node name="prohibition_map_server"
+        pkg="nav2_map_server"
+        exec="map_server"
+        output="screen"
+        respawn="true">
+    <param name="yaml_filename" value="$(var prohibition_map_file)"/>
+    <remap from="/map" to="/fixed_prohibition_layer_map"/>
+  </node>
+
+  <node name="lifecycle_manager_map"
+        pkg="nav2_lifecycle_manager"
+        exec="lifecycle_manager"
+        output="screen"
+        respawn="true">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="autostart" value="true"/>
+    <param name="node_names" value="['prohibition_map_server']"/>
+  </node>
+
+  <node name="map_enhancer"
+        pkg="augment_gridmap_online"
+        exec="augment_gridmap_online_node"
+        output="screen"
+        respawn="true">
+    <remap from="point_obstacle" to="/clicked_point"/>
+    <param name="obstacle_radius" value="0.05"/>
+    <param name="debug" value="True"/>
+    <param name="input_map" value="/fixed_prohibition_layer_map"/>
+    <!-- No env_furniture YAML exists for the Go2 environment yet. -->
+    <param name="add_static_obstacles" value="False"/>
+    <remap from="/grid_map/get_augmented_map" to="/prohibition_map"/>
+    <remap from="/grid_map/augmented_map" to="/prohibition_layer_map"/>
+  </node>
+
+  <!-- ============================================================
+       Map augmenter: static map + prohibition layer + live obstacles.
+       ============================================================ -->
+  <node name="map_augmenter"
+        pkg="map_augmenter"
+        exec="map_augmenter_node"
+        output="screen"
+        respawn="true">
+    <param name="base_link_name" value="$(var base_link_name)"/>
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <param name="static_map_server" value="/slam_toolbox/dynamic_map"/>
+    <param name="prohibition_map_server" value="/prohibition_map"/>
+
+    <remap from="point_obstacle" to="/clicked_point"/>
+
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_sonars" value="$(var use_sonars)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+
+    <param name="decay_factor" value="$(var decay_factor)"/>
+    <param name="inflation_radius" value="$(var inflation_radius)"/>
+    <param name="cost_radius" value="$(var cost_radius)"/>
+
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
+
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+  </node>
+
+  <!-- ============================================================
+       Global planner (A* over the augmented map).
+       ============================================================ -->
+  <node name="path_planner"
+        pkg="path_planner"
+        exec="path_planner_node"
+        output="screen"
+        respawn="true">
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="disable_rear_path_plan" value="$(var disable_rear_path_plan)"/>
+    <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
+    <param name="diagonal_paths" value="True"/>
+    <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
+  </node>
+
+  <!-- ============================================================
+       Path following and the single /cmd_vel exit point.
+       ============================================================ -->
+  <node name="simple_move"
+        pkg="simple_move"
+        exec="simple_move_node"
+        output="screen">
+    <param name="base_link_name" value="$(var base_link_name)"/>
+    <param name="odom_name" value="$(var odom_name)"/>
+
+    <param name="max_linear_speed" value="$(var max_linear_speed)"/>
+    <param name="max_angular_speed" value="$(var max_angular_speed)"/>
+    <param name="max_lateral_speed" value="$(var max_lateral_speed)"/>
+    <param name="linear_acceleration" value="$(var linear_acceleration)"/>
+    <param name="control_alpha" value="$(var control_alpha)"/>
+    <param name="control_beta" value="$(var control_beta)"/>
+    <param name="use_constant_speed" value="$(var use_constant_speed)"/>
+    <param name="constant_speed" value="$(var constant_speed)"/>
+
+    <param name="fine_dist_tolerance" value="0.05"/>
+    <param name="coarse_dist_tolerance" value="0.10"/>
+
+    <!-- The Go2 has no head to turn toward the path. -->
+    <param name="move_head" value="False"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <param name="yaw_correction_omni_behavior" value="$(var yaw_correction_omni_behavior)"/>
+    <param name="yaw_correction_omni_distance" value="$(var yaw_correction_omni_distance)"/>
+    <param name="yaw_correction_omni_gain" value="$(var yaw_correction_omni_gain)"/>
+    <param name="yaw_correction_ignore_obstacles" value="$(var yaw_correction_ignore_obstacles)"/>
+    <param name="yaw_correction_align_head" value="$(var yaw_correction_align_head)"/>
+
+    <param name="allow_rotation_on_collision" value="$(var allow_rotation_on_collision)"/>
+    <param name="rotation_collision_angle_threshold" value="$(var rotation_collision_angle_threshold)"/>
+    <param name="rotation_collision_angular_speed" value="$(var rotation_collision_angular_speed)"/>
+    <param name="rotation_collision_max_time" value="$(var rotation_collision_max_time)"/>
+
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
+  </node>
+
+  <!-- ============================================================
+       Reactive obstacle avoidance.
+       ============================================================ -->
+  <node name="potential_fields"
+        pkg="potential_fields"
+        exec="potential_fields_node"
+        output="screen"
+        respawn="true">
+    <param name="base_link_name" value="$(var base_link_name)"/>
+    <param name="debug" value="False"/>
+    <!-- OpenCV debug window; off so the stack can run without a display. -->
+    <param name="show_image" value="False"/>
+    <param name="use_pot_fields" value="$(var use_pot_fields)"/>
+
+    <param name="use_lidar" value="$(var use_lidar)"/>
+    <param name="use_point_cloud" value="$(var use_point_cloud)"/>
+
+    <param name="laser_min_x" value="$(var laser_min_x)"/>
+    <param name="laser_max_x" value="$(var laser_max_x)"/>
+    <param name="laser_min_y" value="$(var laser_min_y)"/>
+    <param name="laser_max_y" value="$(var laser_max_y)"/>
+    <param name="laser_min_z" value="$(var laser_min_z)"/>
+    <param name="laser_max_z" value="$(var laser_max_z)"/>
+
+    <param name="cloud_min_x" value="$(var cloud_min_x)"/>
+    <param name="cloud_max_x" value="$(var cloud_max_x)"/>
+    <param name="cloud_min_y" value="$(var cloud_min_y)"/>
+    <param name="cloud_max_y" value="$(var cloud_max_y)"/>
+    <param name="cloud_min_z" value="$(var cloud_min_z)"/>
+    <param name="cloud_max_z" value="$(var cloud_max_z)"/>
+
+    <param name="laser_pot_fields_d0" value="$(var laser_pot_fields_d0)"/>
+    <param name="laser_pot_fields_k_rej" value="$(var laser_pot_fields_k_rej)"/>
+
+    <param name="cloud_downsampling" value="$(var cloud_downsampling)"/>
+    <param name="lidar_downsampling" value="$(var lidar_downsampling)"/>
+    <param name="cloud_points_threshold" value="$(var cloud_points_threshold)"/>
+    <param name="lidar_points_threshold" value="$(var lidar_points_threshold)"/>
+
+    <param name="point_cloud_topic" value="$(var point_cloud_topic)"/>
+    <param name="laser_scan_topic" value="$(var laser_scan_topic)"/>
+
+    <remap from="/cmd_vel" to="$(var cmd_vel_topic)"/>
+  </node>
+
+  <node name="publish_enable"
+        pkg="potential_fields"
+        exec="publish_enable.py"
+        output="screen"
+        respawn="true"/>
+
+  <!-- ============================================================
+       Task-level state machine. Serves the /pumas_nav action.
+       ============================================================ -->
+  <node name="mvn_pln"
+        pkg="mvn_pln"
+        exec="mvn_pln_node"
+        output="screen"
+        respawn="true">
+    <param name="base_link_name" value="$(var base_link_name)"/>
+    <param name="patience" value="$(var mvn_pln_patience)"/>
+    <param name="proximity_criterion" value="$(var proximity_criterion)"/>
+    <param name="remember_all_obstacles" value="$(var remember_all_obstacles)"/>
+    <param name="collision_recovery_trigger_count" value="$(var collision_recovery_trigger_count)"/>
+    <param name="use_online" value="$(var use_online)"/>
+    <param name="convergence_epsilon" value="$(var convergence_epsilon)"/>
+    <param name="convergence_timeout" value="$(var convergence_timeout)"/>
+    <param name="replan_window_sec" value="$(var replan_window_sec)"/>
+    <param name="replan_window_max" value="$(var replan_window_max)"/>
+    <param name="replan_spread_radius" value="$(var replan_spread_radius)"/>
+    <param name="replan_max_per_task" value="$(var replan_max_per_task)"/>
+    <param name="goal_relax_max" value="$(var goal_relax_max)"/>
+    <param name="enable_goal_relax" value="$(var enable_goal_relax)"/>
+    <param name="enable_stuck_abort" value="$(var enable_stuck_abort)"/>
+    <param name="free_point_search_radius" value="$(var free_point_search_radius)"/>
+    <param name="min_reach_goal_dist" value="$(var min_reach_goal_dist)"/>
+    <param name="near_goal_accept_as_goal" value="$(var near_goal_accept_as_goal)"/>
+  </node>
+
+  <node name="motion_synth_server"
+        pkg="motion_synth"
+        exec="motion_synth_server"
+        output="screen"
+        if="$(var use_motion_synth)"/>
+
+  <!-- ============================================================
+       Tooling: runtime parameter changes and the RViz goal bridge.
+       ============================================================ -->
+  <node name="dynamic_param_rw_server"
+        pkg="navigation_tools"
+        exec="param_rw.py"
+        output="screen"/>
+
+  <node name="pumas_viz_goal_bridge_node"
+        pkg="navigation_tools"
+        exec="pumas_viz_goal_bridge.py"
+        output="screen"
+        emulate_tty="true"/>
+
+  <!-- go2_pumas_nav2.rviz rather than config.rviz: the HSR config subscribes to
+       /scan as Reliable, but on the Go2 that topic comes from
+       pointcloud_to_laserscan, which publishes Best Effort. RViz then draws
+       nothing and says nothing. The Go2 config also carries a (disabled)
+       /point_cloud2 display, which is what the height band in
+       pointcloud_to_laserscan.yaml is cut from. -->
+  <arg name="rviz_config"
+       default="$(find-pkg-share navigation_start)/rviz/go2_pumas_nav2.rviz"/>
+
+  <node name="rviz2"
+        pkg="rviz2"
+        exec="rviz2"
+        args="-d $(var rviz_config)
+              --ros-args --log-level rviz2:=warn"
+        output="screen"
+        if="$(var rviz)"/>
+
+</launch>
