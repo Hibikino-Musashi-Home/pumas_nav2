@@ -353,6 +353,10 @@ private:
   // Main processing loop
   rclcpp::TimerBase::SharedPtr processing_timer_;
 
+  // Retries get_first_maps() when a map service responds before the map
+  // server has actually loaded its map (empty 0x0 response).
+  rclcpp::TimerBase::SharedPtr maps_retry_timer_;
+
   // ############
   //  Runtime parameter update callback
   rcl_interfaces::msg::SetParametersResult
@@ -524,8 +528,13 @@ private:
               clt_get_static_map_->wait_for_service(std::chrono::seconds(0));
           bool is_prohibition_map = clt_get_prohibition_map_->wait_for_service(
               std::chrono::seconds(0));
-
-          if (!is_static_map || !is_prohibition_map) {
+          if (is_static_map && is_prohibition_map) {
+            RCLCPP_INFO(this->get_logger(),
+                        "MapAugmenter.-> All map services are now available.");
+            services_ready_ = true;
+            service_check_timer_->cancel();
+            get_first_maps();
+          } else {
             if (!is_static_map)
               RCLCPP_WARN(this->get_logger(),
                           "MapAugmenter.-> Waiting for static_map service to "
@@ -597,9 +606,21 @@ private:
     }
   }
 
-  // Requested once per bootstrap tick until process_maps() succeeds. Safe to
-  // call repeatedly: both handlers only latch a map that is actually usable,
-  // and process_maps() is idempotent.
+  // Schedules a single retry of get_first_maps(). The map services can be
+  // advertised (wait_for_service succeeds) before the underlying map-server
+  // lifecycle node has actually loaded its map, so a GetMap call right after
+  // service discovery may return a valid but empty (0x0) response.
+  void schedule_maps_retry() {
+    if (maps_retry_timer_)
+      return;
+
+    maps_retry_timer_ = this->create_wall_timer(std::chrono::seconds(1), [this]() {
+      maps_retry_timer_->cancel();
+      maps_retry_timer_.reset();
+      get_first_maps();
+    });
+  }
+
   void get_first_maps() {
     auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
     clt_get_static_map_->async_send_request(
@@ -608,13 +629,12 @@ private:
             rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
           try {
             auto map = future_static.get()->map;
-            if (map.data.empty()) {
-              // Everything downstream is sized against the static map, so an
-              // empty one is fatal rather than merely degraded. Retry.
+            if (map.info.width == 0 || map.info.height == 0) {
               RCLCPP_WARN(this->get_logger(),
-                          "MapAugmenter.-> Static map server answered with an "
-                          "empty %d x %d grid; retrying.",
-                          map.info.width, map.info.height);
+                          "MapAugmenter.-> Static map service returned an "
+                          "empty map (0x0); the map server may still be "
+                          "loading. Retrying...");
+              schedule_maps_retry();
               return;
             }
             this->static_map_ = map;
@@ -638,20 +658,14 @@ private:
                    future_ptohibition) {
           try {
             auto map = future_ptohibition.get()->map;
-            if (map.data.empty() && !prohibition_grace_over_) {
-              // merge_maps() tolerates an empty overlay, so accepting this
-              // would come up "successfully" with the prohibition zones
-              // silently missing. Retry while there is still time.
+            if (map.info.width == 0 || map.info.height == 0) {
               RCLCPP_WARN(this->get_logger(),
-                          "MapAugmenter.-> Prohibition map server answered with "
-                          "an empty %d x %d grid; retrying.",
-                          map.info.width, map.info.height);
+                          "MapAugmenter.-> Prohibition map service returned "
+                          "an empty map (0x0); the map server may still be "
+                          "loading. Retrying...");
+              schedule_maps_retry();
               return;
             }
-            if (map.data.empty())
-              RCLCPP_WARN(this->get_logger(),
-                          "MapAugmenter.-> Proceeding without a prohibition "
-                          "layer: the server kept returning an empty grid.");
             this->prohibition_map_ = map;
             is_prohibition_map_ = true;
             RCLCPP_INFO(this->get_logger(),
@@ -1328,53 +1342,13 @@ private:
   }
 
   // ############
-  // Map Augmenter subscribers callbacks //not working
+  // Map Augmenter subscribers callbacks
   void callback_point_obstacle(
       const geometry_msgs::msg::PointStamped::SharedPtr msg) {
-    rclcpp::sleep_for(std::chrono::seconds(1));
-
+    (void)msg;
     RCLCPP_INFO(this->get_logger(),
-                "MapAugmenter.-> new PointStamped received...");
-
-    auto static_map_req = std::make_shared<nav_msgs::srv::GetMap::Request>();
-    clt_get_static_map_->async_send_request(
-        static_map_req,
-        [this](
-            rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture future_static) {
-          try {
-            this->static_map_ = future_static.get()->map;
-            is_static_map_ = true;
-            RCLCPP_INFO(this->get_logger(),
-                        "MapAugmenter.-> Got static map with size %d x %d",
-                        static_map_.info.width, static_map_.info.height);
-            process_maps();
-          } catch (const std::exception &e) {
-            RCLCPP_ERROR(this->get_logger(),
-                         "MapAugmenter.-> Failed to get static map: %s",
-                         e.what());
-          }
-        });
-
-    auto prohibition_map_req =
-        std::make_shared<nav_msgs::srv::GetMap::Request>();
-    clt_get_prohibition_map_->async_send_request(
-        prohibition_map_req,
-        [this](rclcpp::Client<nav_msgs::srv::GetMap>::SharedFuture
-                   future_ptohibition) {
-          try {
-            this->prohibition_map_ = future_ptohibition.get()->map;
-            is_prohibition_map_ = true;
-            RCLCPP_INFO(this->get_logger(),
-                        "MapAugmenter.-> Got prohibition map with size %d x %d",
-                        prohibition_map_.info.width,
-                        prohibition_map_.info.height);
-            process_maps();
-          } catch (const std::exception &e) {
-            RCLCPP_ERROR(this->get_logger(),
-                         "MapAugmenter.-> Failed to get prohibition map: %s",
-                         e.what());
-          }
-        });
+                "MapAugmenter.-> new PointStamped received, re-fetching maps...");
+    get_first_maps();
   }
 
   // ############
