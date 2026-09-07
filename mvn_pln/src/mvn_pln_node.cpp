@@ -158,6 +158,14 @@ public:
     // true  -> treat the current point as the goal (SUCCEEDED, near_goal set)
     // false -> abort the task instead
     this->declare_parameter<bool>("near_goal_accept_as_goal", true);
+    // Require evidence that the goal itself is blocked before giving up near it.
+    // true (default) -> only a RELOCATED goal (the planner moved the path
+    //   endpoint off the requested point, i.e. the goal sits on an obstacle)
+    //   ends the task. A replan caused by something merely in the way keeps
+    //   planning, so the robot does not abandon a perfectly free goal because a
+    //   person walked past it.
+    // false -> legacy behaviour: any replan inside the radius ends the task.
+    this->declare_parameter<bool>("near_goal_require_relocation", true);
 
     // Initialize internal variables from declared parameters
     this->get_parameter("use_namespace", use_namespace_);
@@ -181,6 +189,7 @@ public:
     this->get_parameter("free_point_search_radius", free_point_search_radius_);
     this->get_parameter("min_reach_goal_dist", min_reach_goal_dist_);
     this->get_parameter("near_goal_accept_as_goal", near_goal_accept_as_goal_);
+    this->get_parameter("near_goal_require_relocation", near_goal_require_relocation_);
 
     // Setup parameter change callback
     param_callback_handle_ = this->add_on_set_parameters_callback(
@@ -470,6 +479,7 @@ private:
   // requested from right next to the robot still gets planned and driven.
   double min_reach_goal_dist_ = 0.0;       // ROS param [m]; node-wide default
   bool near_goal_accept_as_goal_ = true;   // ROS param
+  bool near_goal_require_relocation_ = true;  // ROS param
   bool near_goal_final_accepted_ = false;  // latched once the point is accepted
   // Per-goal override carried in the PumasNav goal, exactly like goal_distance_.
   // <= 0 means "not specified" and falls back to min_reach_goal_dist_.
@@ -650,6 +660,8 @@ private:
         min_reach_goal_dist_ = param.as_double();
       else if (param.get_name() == "near_goal_accept_as_goal")
         near_goal_accept_as_goal_ = param.as_bool();
+      else if (param.get_name() == "near_goal_require_relocation")
+        near_goal_require_relocation_ = param.as_bool();
 
       else {
         result.successful = false;
@@ -1209,12 +1221,16 @@ private:
 
   // Near-goal replan gate. Runs at the top of SM_CALCULATE_PATH for every plan
   // except the first of a task. Once the robot is within min_reach_goal_dist_
-  // of the goal a replan cannot improve anything: the path is a few centimetres
-  // long, and when the goal sits ON an obstacle the planner simply relocates it
-  // slightly differently every cycle, so the robot shuffles around the obstacle
-  // forever. Ends the task instead — accepting the current point as the goal,
-  // or aborting, per near_goal_accept_as_goal_. Returns true when it did, in
-  // which case the caller must not plan.
+  // of the goal AND the planner has relocated that goal, a replan cannot improve
+  // anything: the path is a few centimetres long and the planner just relocates
+  // the endpoint slightly differently every cycle, so the robot shuffles around
+  // the obstacle forever. Ends the task instead — accepting the current point as
+  // the goal, or aborting, per near_goal_accept_as_goal_. Returns true when it
+  // did, in which case the caller must not plan.
+  //
+  // Proximity by itself is deliberately NOT enough (near_goal_require_relocation_,
+  // default true): a free goal with a person standing in front of it produces
+  // exactly the same replan, and abandoning it there was the old failure mode.
   //
   // This is the replan-side counterpart of the caller-requested goal_distance_
   // stop-short in SM_WAIT_FOR_MOVE_FINISHED, and uses the same shutdown
@@ -1242,6 +1258,36 @@ private:
     double radius = min_dist;
     if (goal_relocated_) radius += goal_relocated_dist_;
     if (dist_to_goal > radius) return false;
+
+    // Proximity alone is NOT evidence that the goal is unreachable. A replan
+    // right next to a perfectly free goal is the ordinary case: something (a
+    // person, a chair) got in the way and collision_risk aborted the move. The
+    // only evidence that the requested point itself is blocked is the planner
+    // RELOCATING it -- goal_relocated_, set by detect_goal_relocation() when the
+    // path endpoint lands further than goal_relocation_report_threshold_ from
+    // the request. Not relocated => the goal cell is free => keep planning and
+    // let the robot finish the approach once the obstacle moves.
+    //
+    // Note the value read here belongs to the LAST COMPLETED plan: this runs at
+    // the top of SM_CALCULATE_PATH, before the next planning call clears the
+    // flag. That is intended -- it is the freshest verdict available, and for a
+    // goal genuinely sitting on an obstacle the flag is already set by the plan
+    // that brought the robot into the radius, so nothing is delayed.
+    //
+    // Giving up is no longer guaranteed here, so the terminator for the
+    // never-converging case is the goal-convergence monitor: goal relax
+    // (SUCCEEDED) or, failing that, the stuck abort.
+    // near_goal_final_accepted_ bypasses the check: the gate already accepted
+    // this point and only came back for the post-final-angle second pass. That
+    // decision is not re-opened.
+    if (near_goal_require_relocation_ && !goal_relocated_ && !near_goal_final_accepted_) {
+      RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "MotionPlanner.-> Near goal (%.2f m) but the goal was not relocated; "
+        "the obstacle is in the way, not on the goal. Continuing to plan.",
+        dist_to_goal);
+      return false;
+    }
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << "Near goal (" << dist_to_goal
