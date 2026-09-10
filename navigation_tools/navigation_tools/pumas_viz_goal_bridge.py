@@ -20,8 +20,8 @@ class RvizGoalBridge(Node):
     """
 
     def __init__(self):
-        super().__init__("rviz_goal_bridge")
-        self.cli = ActionClient(self, PumasNav, "/pumas_nav")
+        super().__init__('rviz_goal_bridge')
+        self.cli = ActionClient(self, PumasNav, '/pumas_nav')
 
         # Incremented per click; every callback carries the value it was
         # registered under and bails out once it no longer matches.
@@ -29,23 +29,23 @@ class RvizGoalBridge(Node):
 
         self.sub = self.create_subscription(
             PoseStamped,
-            "/move_base_simple/goal",
+            '/move_base_simple/goal',
             self.cb_goal,
             10,
         )
 
-        self.get_logger().info("RvizGoalBridge started")
+        self.get_logger().info('RvizGoalBridge started')
 
     def _is_stale(self, generation: int) -> bool:
         return generation != self._generation
 
     def cb_goal(self, msg: PoseStamped):
         self.get_logger().info(
-            f"Received RViz goal: x={msg.pose.position.x}, y={msg.pose.position.y}"
+            f'Received RViz goal: x={msg.pose.position.x}, y={msg.pose.position.y}'
         )
 
         if not self.cli.wait_for_server(timeout_sec=3.0):
-            self.get_logger().error("PumasNav action server not available")
+            self.get_logger().error('PumasNav action server not available')
             return
 
         self._generation += 1
@@ -60,7 +60,8 @@ class RvizGoalBridge(Node):
 
         future = self.cli.send_goal_async(
             goal,
-            feedback_callback=lambda fb: self.feedback_callback(fb, generation),
+            feedback_callback=lambda fb: self.feedback_callback(
+                fb, generation),
         )
         future.add_done_callback(
             lambda f: self.goal_response_callback(f, generation))
@@ -76,10 +77,10 @@ class RvizGoalBridge(Node):
             return
 
         if goal_handle is None or not goal_handle.accepted:
-            self.get_logger().error("PumasNav goal rejected")
+            self.get_logger().error('PumasNav goal rejected')
             return
 
-        self.get_logger().info("PumasNav goal accepted")
+        self.get_logger().info('PumasNav goal accepted')
 
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(
@@ -89,31 +90,32 @@ class RvizGoalBridge(Node):
         if self._is_stale(generation):
             return
 
-        fb = feedback_msg.feedback
-        self.get_logger().info(
-            f"feedback: state={fb.state_name}, "
-            f"dist={fb.remaining_distance:.3f}, "
-            f"near={fb.near_goal_reached}, "
-            f"msg={fb.message}"
-        )
+        # logger disabled by ry0hei.kobayashi
+        # fb = feedback_msg.feedback
+        # self.get_logger().info(
+        #    f"feedback: state={fb.state_name}, "
+        #    f"dist={fb.remaining_distance:.3f}, "
+        #    f"near={fb.near_goal_reached}, "
+        #    f"msg={fb.message}"
+        # )
 
     def result_callback(self, future, generation: int):
         result = future.result().result
 
-        if self._is_stale(generation):
-            self.get_logger().info(
-                f"superseded goal finished: "
-                f"outcome={outcome_name(result.outcome)}, "
-                f"message={result.message}"
-            )
-            return
+        # if self._is_stale(generation):
+        #    self.get_logger().info(
+        #        f'superseded goal finished: '
+        #        f'outcome={outcome_name(result.outcome)}, '
+        #        f'message={result.message}'
+        #    )
+        #    return
 
-        self.get_logger().info(
-            f"result: success={result.success}, "
-            f"outcome={outcome_name(result.outcome)}, "
-            f"near_goal_reached={result.near_goal_reached}, "
-            f"message={result.message}"
-        )
+        # self.get_logger().info(
+        #    f'result: success={result.success}, '
+        #    f'outcome={outcome_name(result.outcome)}, '
+        #    f'near_goal_reached={result.near_goal_reached}, '
+        #    f'message={result.message}'
+        # )
 
 
 def main():
@@ -123,5 +125,5 @@ def main():
     rclpy.shutdown()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

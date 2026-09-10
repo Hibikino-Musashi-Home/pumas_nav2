@@ -477,10 +477,10 @@ private:
   // Near-goal replan suppression (see the parameter declarations). Sits on the
   // replan path only: the first plan of a task is never suppressed, so a goal
   // requested from right next to the robot still gets planned and driven.
-  double min_reach_goal_dist_ = 0.0;       // ROS param [m]; node-wide default
-  bool near_goal_accept_as_goal_ = true;   // ROS param
+  double min_reach_goal_dist_ = 0.0;          // ROS param [m]; node-wide default
+  bool near_goal_accept_as_goal_ = true;      // ROS param
   bool near_goal_require_relocation_ = true;  // ROS param
-  bool near_goal_final_accepted_ = false;  // latched once the point is accepted
+  bool near_goal_final_accepted_ = false;     // latched once the point is accepted
   // Per-goal override carried in the PumasNav goal, exactly like goal_distance_.
   // <= 0 means "not specified" and falls back to min_reach_goal_dist_.
   float goal_min_reach_dist_ = 0.0f;
@@ -593,8 +593,7 @@ private:
     // true and be rejected.
     if (action_active_) {
       RCLCPP_WARN(
-        this->get_logger(),
-        "MotionPlanner.-> New goal will preempt the active navigation task.");
+        this->get_logger(), "MotionPlanner.-> New goal will preempt the active navigation task.");
     }
 
     RCLCPP_INFO(this->get_logger(), "MotionPlanner.-> Navigation action goal accepted request.");
@@ -1280,13 +1279,26 @@ private:
     // near_goal_final_accepted_ bypasses the check: the gate already accepted
     // this point and only came back for the post-final-angle second pass. That
     // decision is not re-opened.
-    if (near_goal_require_relocation_ && !goal_relocated_ && !near_goal_final_accepted_) {
+    if (near_goal_require_relocation_ && !near_goal_final_accepted_) {
+      if (!goal_relocated_) {
+        // The goal cell itself is free -- what is in the way is an obstacle,
+        // not the goal. Keep planning and track the path all the way in.
+        RCLCPP_INFO_THROTTLE(
+          this->get_logger(), *this->get_clock(), 5000,
+          "MotionPlanner.-> Near goal (%.2f m) but the goal was not relocated; "
+          "the obstacle is in the way, not on the goal. Continuing to plan.",
+          dist_to_goal);
+        return false;
+      }
+
+      // The goal cell itself is blocked, so the robot can never converge on it.
+      // Deliberately does NOT return here: fall through to the acceptance /
+      // abort below, which is what stops the replan loop.
       RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 5000,
-        "MotionPlanner.-> Near goal (%.2f m) but the goal was not relocated; "
-        "the obstacle is in the way, not on the goal. Continuing to plan.",
-        dist_to_goal);
-      return false;
+        "MotionPlanner.-> Near goal (%.2f m) and the goal was relocated (%.2f m); "
+        "the goal cell itself is blocked. Stopping replanning.",
+        dist_to_goal, goal_relocated_dist_);
     }
 
     std::ostringstream oss;
@@ -1636,7 +1648,7 @@ private:
   static void state_info(int s, const char *& name, const char *& message)
   {
     switch (s) {
-      // clang-format off
+        // clang-format off
       case SM_INIT:                             name = "INIT";                       message = "Idle"; return;
       case SM_WAITING_FOR_TASK:                 name = "WAITING_FOR_TASK";           message = "Waiting for task"; return;
       case SM_CALCULATE_PATH:                   name = "CALCULATE_PATH";             message = "Calculating path"; return;
@@ -1666,7 +1678,7 @@ private:
       case SM_WAIT_FOR_ANGLE_CORRECTED:         name = "WAIT_FOR_ANGLE_CORRECTED";   message = "Correcting the final angle"; return;
       case SM_FINAL:                            name = "FINAL";                      message = "Finishing"; return;
       default:                                  name = "UNKNOWN";                    message = ""; return;
-      // clang-format on
+        // clang-format on
     }
   }
 
@@ -2263,8 +2275,7 @@ private:
               actionlib_msgs::msg::GoalStatus::ABORTED, goal_id,
               "Cannot calculate path from start to goal point");
             finish_action_abort(
-              "Cannot calculate path from start to goal point",
-              PumasNav::Result::OUTCOME_NO_PATH);
+              "Cannot calculate path from start to goal point", PumasNav::Result::OUTCOME_NO_PATH);
             state = SM_INIT;
           } else {
             std::cout << "MotionPlanner.->Temporal obstacles detected. Waiting "
@@ -2327,8 +2338,7 @@ private:
               actionlib_msgs::msg::GoalStatus::ABORTED, this->goal_id,
               "Cannot calculate path from start to goal point");
             finish_action_abort(
-              "Cannot calculate path from start to goal point",
-              PumasNav::Result::OUTCOME_NO_PATH);
+              "Cannot calculate path from start to goal point", PumasNav::Result::OUTCOME_NO_PATH);
             state = SM_INIT;
 
           } else if (!are_still_obs_) {
@@ -2494,8 +2504,7 @@ private:
           }
           if (
             simple_move_goal_status_.status == actionlib_msgs::msg::GoalStatus::SUCCEEDED &&
-            !simple_move_sequencer.empty() &&
-            simple_move_status_id_ == simple_move_sequencer) {
+            !simple_move_sequencer.empty() && simple_move_status_id_ == simple_move_sequencer) {
             simple_move_goal_status_.status = 0;
             std::cout << "MotionPlanner.-> Path followed succesfully. " << std::endl;
             msg_bool.data = false;
@@ -2805,8 +2814,7 @@ private:
       }
       if (action_active_) {
         finish_action_abort(
-          "Exception in motion_planner_processing core",
-          PumasNav::Result::OUTCOME_INTERNAL_ERROR);
+          "Exception in motion_planner_processing core", PumasNav::Result::OUTCOME_INTERNAL_ERROR);
       }
       state = SM_INIT;
     }
