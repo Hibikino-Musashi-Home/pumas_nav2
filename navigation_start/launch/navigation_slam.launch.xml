@@ -213,6 +213,7 @@
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="diagonal_paths" value="True"/>
     <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
+    <param name="goal_relocation_radius" value="2.0"/> <!--[m] If the goal is unreachable (boxed in by obstacles), snap it to the nearest reachable cell and continue. Only within this distance of the requested goal (last resort). Disabled if <= 0-->
   </node>
 
   <node name="simple_move"  

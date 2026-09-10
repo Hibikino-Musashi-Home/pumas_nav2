@@ -247,7 +247,7 @@
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="diagonal_paths" value="True"/>
     <param name="escape_clear_radius" value="0.6"/> <!--[m] On planning failure, free (0) this radius around the robot and replan once. Escape when boxed in by obstacles. Disabled if <= 0-->
-    <!--param name="goal_relocation_radius" value="1.0"/--> <!--[m] If the goal is unreachable (boxed in by obstacles), snap it to the nearest reachable cell and continue. Only within this distance of the requested goal (last resort). Disabled if <= 0-->
+    <param name="goal_relocation_radius" value="2.0"/> <!--[m] If the goal is unreachable (boxed in by obstacles), snap it to the nearest reachable cell and continue. Only within this distance of the requested goal (last resort). Disabled if <= 0-->
   </node>
 
   <node name="simple_move"

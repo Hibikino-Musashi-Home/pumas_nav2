@@ -148,6 +148,10 @@ public:
     // we keep re-driving those few centimetres). Same idea as goal_distance_,
     // except goal_distance_ is a per-goal request from the caller while this is
     // a safety net that only applies when a REPLAN is about to happen.
+    // "This close" is a distance ALONG THE PLANNED PATH, not a straight line
+    // (goal_distance_ is the straight-line one): the question here is how far
+    // the robot must still drive, and a goal a metre away on the far side of a
+    // wall is a long drive, not an arrival.
     // When the last plan came back relocated (the goal sits on an obstacle) the
     // relocation distance is added to this radius, so "near the goal" is
     // measured against what is actually reachable.
@@ -1218,6 +1222,75 @@ private:
     return false;
   }
 
+  // Distance from the robot to the REQUESTED goal, measured ALONG the path the
+  // last plan returned instead of straight through walls. Straight-line
+  // distance is the wrong measure for the near-goal gate below: a goal one
+  // metre away on the far side of a wall reads as "practically arrived", and
+  // the task is ended while the robot still has the whole detour left to drive.
+  //
+  //   = robot -> its nearest point on the path   (lateral offset)
+  //   + that point -> the path endpoint          (along the path)
+  //   + the path endpoint -> the requested goal  (straight)
+  //
+  // The last term is the residual left when the planner moved the endpoint off
+  // a blocked goal cell; it is the same quantity as goal_relocated_dist_, so it
+  // cancels against the radius widening in suppress_replan_near_goal() rather
+  // than double-counting there.
+  //
+  // Returns false when the last plan came back empty and there is no path to
+  // measure along -- see the caller for why that must not end a task.
+  bool goal_distance_along_path(double & out) const
+  {
+    const auto & poses = path_.poses;
+    if (poses.size() < 2) return false;
+
+    // Nearest point on the polyline: project the robot onto every segment,
+    // clamped to the segment, and keep the closest.
+    size_t best_i = 0;
+    double best_t = 0.0;
+    double best_d2 = std::numeric_limits<double>::max();
+    for (size_t i = 0; i + 1 < poses.size(); ++i) {
+      const auto & a = poses[i].pose.position;
+      const auto & b = poses[i + 1].pose.position;
+      const double vx = b.x - a.x, vy = b.y - a.y;
+      const double len2 = vx * vx + vy * vy;
+      double t = 0.0;
+      if (len2 > 1e-12) {
+        t = ((robot_x_ - a.x) * vx + (robot_y_ - a.y) * vy) / len2;
+        t = std::max(0.0, std::min(1.0, t));
+      }
+      const double px = a.x + t * vx, py = a.y + t * vy;
+      const double d2 = (robot_x_ - px) * (robot_x_ - px) + (robot_y_ - py) * (robot_y_ - py);
+      if (d2 < best_d2) {
+        best_d2 = d2;
+        best_i = i;
+        best_t = t;
+      }
+    }
+
+    // Getting back onto the path counts: potential fields push the robot off it.
+    double d = std::sqrt(best_d2);
+
+    // Remainder of the segment the robot sits on, then every segment after it.
+    {
+      const auto & a = poses[best_i].pose.position;
+      const auto & b = poses[best_i + 1].pose.position;
+      d += (1.0 - best_t) * std::hypot(b.x - a.x, b.y - a.y);
+    }
+    for (size_t i = best_i + 1; i + 1 < poses.size(); ++i) {
+      const auto & a = poses[i].pose.position;
+      const auto & b = poses[i + 1].pose.position;
+      d += std::hypot(b.x - a.x, b.y - a.y);
+    }
+
+    // Endpoint -> requested goal; non-zero exactly when the goal was relocated.
+    const auto & end = poses.back().pose.position;
+    d += std::hypot(global_goal_.position.x - end.x, global_goal_.position.y - end.y);
+
+    out = d;
+    return true;
+  }
+
   // Near-goal replan gate. Runs at the top of SM_CALCULATE_PATH for every plan
   // except the first of a task. Once the robot is within min_reach_goal_dist_
   // of the goal AND the planner has relocated that goal, a replan cannot improve
@@ -1231,9 +1304,15 @@ private:
   // default true): a free goal with a person standing in front of it produces
   // exactly the same replan, and abandoning it there was the old failure mode.
   //
+  // "Within min_reach_goal_dist_" is measured as a PATH LENGTH by
+  // goal_distance_along_path(), not as a straight line: what decides whether a
+  // replan can still achieve anything is how far the robot must still DRIVE,
+  // and a goal a metre away through a wall is metres of driving away. When no
+  // path is available to measure along, the gate does not fire at all.
+  //
   // This is the replan-side counterpart of the caller-requested goal_distance_
-  // stop-short in SM_WAIT_FOR_MOVE_FINISHED, and uses the same shutdown
-  // sequence.
+  // stop-short in SM_WAIT_FOR_MOVE_FINISHED (which stays straight-line, being a
+  // caller-facing tolerance), and uses the same shutdown sequence.
   bool suppress_replan_near_goal()
   {
     // Per-goal value wins; 0 (or unset) falls back to the node parameter, and
@@ -1247,13 +1326,25 @@ private:
     // armed afterwards even though reset_recovery_state() zeroes replan_total_.
     if (replan_total_ <= 0 && !near_goal_final_accepted_) return false;
 
-    const double dist_to_goal =
-      std::hypot(global_goal_.position.x - robot_x_, global_goal_.position.y - robot_y_);
+    // Measured along the path, so "near" cannot mean "near through a wall".
+    double dist_to_goal = 0.0;
+    if (!goal_distance_along_path(dist_to_goal)) {
+      // The last plan came back empty (planning failure), so there is no path
+      // to measure along. Never end a task on a distance we could not measure:
+      // let SM_CALCULATE_PATH plan again. If that never converges, the
+      // goal-convergence monitor is the backstop that terminates the task.
+      RCLCPP_INFO_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "MotionPlanner.-> No path from the last plan; skipping the near-goal gate.");
+      return false;
+    }
 
     // A relocated goal is one sitting on an obstacle: the nearest reachable
     // point is goal_relocated_dist_ away from it, so that is as close as the
     // robot can ever get. Widen the radius by that much rather than demand a
-    // proximity that is geometrically impossible.
+    // proximity that is geometrically impossible. dist_to_goal carries the same
+    // endpoint->goal residual, so the two cancel and the comparison is really
+    // "path length to the reachable endpoint vs min_dist".
     double radius = min_dist;
     if (goal_relocated_) radius += goal_relocated_dist_;
     if (dist_to_goal > radius) return false;
@@ -1285,8 +1376,8 @@ private:
         // not the goal. Keep planning and track the path all the way in.
         RCLCPP_INFO_THROTTLE(
           this->get_logger(), *this->get_clock(), 5000,
-          "MotionPlanner.-> Near goal (%.2f m) but the goal was not relocated; "
-          "the obstacle is in the way, not on the goal. Continuing to plan.",
+          "MotionPlanner.-> Near goal (%.2f m along the path) but the goal was not "
+          "relocated; the obstacle is in the way, not on the goal. Continuing to plan.",
           dist_to_goal);
         return false;
       }
@@ -1296,14 +1387,14 @@ private:
       // abort below, which is what stops the replan loop.
       RCLCPP_INFO_THROTTLE(
         this->get_logger(), *this->get_clock(), 5000,
-        "MotionPlanner.-> Near goal (%.2f m) and the goal was relocated (%.2f m); "
-        "the goal cell itself is blocked. Stopping replanning.",
+        "MotionPlanner.-> Near goal (%.2f m along the path) and the goal was relocated "
+        "(%.2f m); the goal cell itself is blocked. Stopping replanning.",
         dist_to_goal, goal_relocated_dist_);
     }
 
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2) << "Near goal (" << dist_to_goal
-        << " m, no-replan radius " << radius << " m)";
+        << " m along the path, no-replan radius " << radius << " m)";
     if (goal_relocated_) oss << "; requested goal is on an obstacle";
     const std::string reason = oss.str();
 
