@@ -1,4 +1,5 @@
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 // Message types
@@ -28,6 +29,7 @@
 
 // Standard
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <vector>
@@ -185,8 +187,13 @@ public:
     // Simple Move main processing
     timer_cb_group_ = this->create_callback_group(
         rclcpp::CallbackGroupType::MutuallyExclusive);
-    processing_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(30),
+    // Node-clock timer so this loop shares a time base with simple_move and
+    // mvn_pln, which consume the collision_risk / rejection_force this loop
+    // publishes. A wall timer here would keep running at 33 Hz of wall time
+    // while those two run at 30 Hz of simulated time, so the obstacle signal
+    // and the controller reading it would disagree on rate under a simulator.
+    processing_timer_ = rclcpp::create_timer(
+        this, this->get_clock(), rclcpp::Duration::from_seconds(0.03),
         std::bind(&PotentialFieldsNode::potential_fields_processing, this),
         timer_cb_group_);
 
@@ -207,9 +214,16 @@ private:
   float current_speed_linear_ = 0.0;
   float current_speed_angular_ = 0.0;
 
-  // Timeout counters
-  int no_data_cloud_counter_ = 0;
-  int no_data_lidar_counter_ = 0;
+  // Sensor freshness. Tracked as a timestamp, not a tick count: the tick form
+  // (counter > no_sensor_data_timeout / 0.03) assumed this node's processing
+  // loop ran at exactly 30 ms, so it measured loop iterations rather than
+  // elapsed time. Under a simulator the loop rate and the sensor rate scale
+  // differently, and a render hitch that delayed /scan by ~0.5 s of wall time
+  // tripped it even though no data was actually lost - which then raised
+  // collision_risk and stopped simple_move mid-path.
+  // Default-constructed to 0, which reads as "nothing received yet".
+  rclcpp::Time last_lidar_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_cloud_time_{0, 0, RCL_ROS_TIME};
 
   // Rejection force outputs
   geometry_msgs::msg::Vector3 rejection_force_lidar_;
@@ -424,12 +438,20 @@ private:
                 "PotentialFields.-> Waiting for transform from '%s' to '%s'...",
                 source_frame.c_str(), target_frame.c_str());
 
-    rclcpp::Time start_time = this->now();
-    rclcpp::Duration timeout = rclcpp::Duration::from_seconds(10.0);
+    // Steady clock, deliberately not this->now(). This runs in the constructor,
+    // before the executor spins the node, so with use_sim_time the node's
+    // TimeSource has not received /clock yet and this->now() would stay pinned
+    // at 0 - the elapsed time would never grow and the node would never finish
+    // constructing. TF itself still arrives here because
+    // tf2_ros::TransformListener spins its own internal node on a dedicated
+    // thread. Same fix as in simple_move_node.cpp / mvn_pln_node.cpp.
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(10);
 
     bool transform_ok = false;
 
-    while (rclcpp::ok() && (this->now() - start_time) < timeout) {
+    while (rclcpp::ok() &&
+           (std::chrono::steady_clock::now() - start_time) < timeout) {
       try {
         tf_buffer_.lookupTransform(target_frame, source_frame,
                                    tf2::TimePointZero,
@@ -463,7 +485,7 @@ private:
   void
   callback_point_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
     try {
-      no_data_cloud_counter_ = 0;
+      last_cloud_time_ = this->now();
       // sub_cloud_ is torn down only on the enable=false transition (which
       // mvn_pln publishes solely on a SUCCEEDED path-follow), so it can stay
       // alive across abort/cancel/preempt and into the next goal. Setting
@@ -489,7 +511,7 @@ private:
 
   void callback_lidar(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
     try {
-      no_data_lidar_counter_ = 0;
+      last_lidar_time_ = this->now();
       collision_risk_lidar_ = check_collision_risk_with_lidar(
           msg, rejection_force_lidar_.x, rejection_force_lidar_.y);
 
@@ -1013,20 +1035,31 @@ private:
         pub_detect_area_markers_->publish(detect_markers);
       }
 
-      // fix loop hz by r.k
-      int timeout_ticks = static_cast<int>(no_sensor_data_timeout_ / 0.03);
-      if (use_lidar_ && sub_lidar_ &&
-          ++no_data_lidar_counter_ > timeout_ticks) {
+      // Sensor staleness is measured in elapsed time on the node clock, not in
+      // loop iterations. Both the sensors and this node share use_sim_time, so
+      // this stays correct whatever rate the loop or the simulator runs at.
+      // The previous tick form (counter > no_sensor_data_timeout / 0.03)
+      // measured iterations of a loop that is not guaranteed to run at 30 ms,
+      // so a simulator hitch raised collision_risk and stopped path following
+      // even though no scan had actually been lost.
+      const rclcpp::Time now = this->now();
+      const auto stale = [&](const rclcpp::Time &last) {
+        // Nothing received yet: hold off until the first message rather than
+        // reporting a loss that never happened.
+        if (last.nanoseconds() == 0)
+          return false;
+        return (now - last).seconds() > no_sensor_data_timeout_;
+      };
+      if (use_lidar_ && sub_lidar_ && stale(last_lidar_time_)) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                              "PotentialFields.-> No lidar data for %.2f s!",
-                             no_sensor_data_timeout_);
+                             (now - last_lidar_time_).seconds());
         collision_risk_lidar_ = true;
       }
-      if (use_cloud_ && sub_cloud_ &&
-          ++no_data_cloud_counter_ > timeout_ticks) {
+      if (use_cloud_ && sub_cloud_ && stale(last_cloud_time_)) {
         RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
                              "PotentialFields.-> No cloud data for %.2f s!",
-                             no_sensor_data_timeout_);
+                             (now - last_cloud_time_).seconds());
         collision_risk_cloud_ = true;
       }
 

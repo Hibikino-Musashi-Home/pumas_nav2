@@ -1,18 +1,17 @@
 #include "PathPlanner.h"
+
 #include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
 
-bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
-                        const nav_msgs::msg::OccupancyGrid &cost_map,
-                        const geometry_msgs::msg::Pose &start_pose,
-                        const geometry_msgs::msg::Pose &goal_pose,
-                        bool diagonal_paths, nav_msgs::msg::Path &result_path,
-                        bool use_online, double max_goal_relocation_dist) {
-
-  std::cout << "PathCalculator.-> Calculating by A* from "
-            << start_pose.position.x << "  ";
+bool PathPlanner::AStar(
+  const nav_msgs::msg::OccupancyGrid & map, const nav_msgs::msg::OccupancyGrid & cost_map,
+  const geometry_msgs::msg::Pose & start_pose, const geometry_msgs::msg::Pose & goal_pose,
+  bool diagonal_paths, nav_msgs::msg::Path & result_path, bool use_online,
+  double max_goal_relocation_dist)
+{
+  std::cout << "PathCalculator.-> Calculating by A* from " << start_pose.position.x << "  ";
   std::cout << start_pose.position.y << "  to " << goal_pose.position.x << "  "
             << goal_pose.position.y << std::endl;
 
@@ -27,16 +26,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   int idx_start_y;
   int idx_goal_x;
   int idx_goal_y;
-  idx_start_y = (int)((start_pose.position.y - map.info.origin.position.y) /
-                      map.info.resolution);
-  idx_start_x = (int)((start_pose.position.x - map.info.origin.position.x) /
-                      map.info.resolution);
+  idx_start_y = (int)((start_pose.position.y - map.info.origin.position.y) / map.info.resolution);
+  idx_start_x = (int)((start_pose.position.x - map.info.origin.position.x) / map.info.resolution);
   int idx_start = idx_start_y * map.info.width + idx_start_x;
 
-  idx_goal_y = (int)((goal_pose.position.y - map.info.origin.position.y) /
-                     map.info.resolution);
-  idx_goal_x = (int)((goal_pose.position.x - map.info.origin.position.x) /
-                     map.info.resolution);
+  idx_goal_y = (int)((goal_pose.position.y - map.info.origin.position.y) / map.info.resolution);
+  idx_goal_x = (int)((goal_pose.position.x - map.info.origin.position.x) / map.info.resolution);
   int idx_goal = idx_goal_y * map.info.width + idx_goal_x;
 
   int best_idx = -1;
@@ -45,75 +40,150 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   int _idx_goal_y = idx_goal_y;
   int _idx_goal_x = idx_goal_x;
 
-  int count = 0;
-  int loop_count = 0;
-  // double radius = 0.1;
-  double radius = 1.0;
+  // ===== BEGIN legacy stage-1 relocation (ring sweep, nearest-to-GOAL) — DISABLED =====
+  // Kept verbatim for rollback. Replaced by the ray-cast variant below: one
+  // outward march per azimuth that stops at the first navigable cell (the
+  // obstacle exit point in that direction), then argmin over those exit points
+  // by distance to the ROBOT.
+  // To restore: uncomment this block and delete the ray-cast block below.
+  //
+  //   int count = 0;
+  //   int loop_count = 0;
+  //   // double radius = 0.1;
+  //   double radius = 1.0;
+  //
+  //   int MAX_GOAL_UPDATE = 16; // points on circle
+  //   double angle_increment = 2 * M_PI / (MAX_GOAL_UPDATE);
+  //
+  //   if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
+  //     while (loop_count < 10) { // TODO
+  //
+  //       double angle = count * angle_increment;
+  //       idx_goal_y =
+  //           static_cast<int>(std::round(_idx_goal_y + radius * cos(angle)));
+  //       idx_goal_x =
+  //           static_cast<int>(std::round(_idx_goal_x + radius * sin(angle)));
+  //       // idx_goal_y = _idx_goal_y + radius * cos(angle);
+  //       // idx_goal_x = _idx_goal_x + radius * sin(angle);
+  //
+  //       // double world_x =
+  //       //     idx_goal_x * map.info.resolution + map.info.origin.position.x;
+  //       // double world_y =
+  //       //     idx_goal_y * map.info.resolution + map.info.origin.position.y;
+  //
+  //       // std::cout << "[relocate] ring=" << loop_count << " count=" << count
+  //       //           << " radius(cell)=" << radius << " angle(rad)=" << angle
+  //       //           << " idx=(" << idx_goal_x << ", " << idx_goal_y << ")"
+  //       //           << " world=(" << world_x << ", " << world_y << ")";
+  //
+  //       // check if not inside of map
+  //       if (idx_goal_x >= 0 && idx_goal_x < map.info.width && idx_goal_y >= 0 &&
+  //           idx_goal_y < map.info.height) {
+  //
+  //         idx_goal = idx_goal_y * map.info.width + idx_goal_x;
+  //
+  //         if (allow_unknown_space_to_navigate(map.data[idx_goal])) {
+  //           double distance =
+  //               std::hypot(idx_goal_x - _idx_goal_x, idx_goal_y - _idx_goal_y);
+  //           if (distance < best_distance) {
+  //             best_distance = distance;
+  //             best_idx = idx_goal;
+  //           }
+  //         }
+  //       }
+  //
+  //       count++;
+  //       if (count == MAX_GOAL_UPDATE) {
+  //         count = 0;
+  //         // radius += 0.1;
+  //         radius += 1;
+  //         loop_count++;
+  //       }
+  //     }
+  //     if (best_idx != -1) {
+  //       idx_goal = best_idx;
+  //       idx_goal_y = idx_goal / map.info.width;
+  //       idx_goal_x = idx_goal % map.info.width;
+  //       std::cout << "PathPlanner.-> Goal updated to nearest free cell: "
+  //                 << idx_goal_x << ", " << idx_goal_y << std::endl;
+  //     } else {
+  //       // reloaction faile: restore the original goal so the checks below, fix
+  //       // bug by r.k
+  //       idx_goal_x = _idx_goal_x;
+  //       idx_goal_y = _idx_goal_y;
+  //       idx_goal = idx_goal_y * map.info.width + idx_goal_x;
+  //       std::cout << "PathPlanner.-> Could not relocate to a free cell."
+  //                 << std::endl;
+  //     }
+  //   }
+  // ===== END legacy stage-1 relocation =====
 
-  int MAX_GOAL_UPDATE = 16; // points on circle
+  // newer implementation by ry0hei-kobayashi
+  int MAX_GOAL_UPDATE = 16;  // rays cast around the goal
   double angle_increment = 2 * M_PI / (MAX_GOAL_UPDATE);
 
+  int max_radius_cells = 10;
+  if (max_goal_relocation_dist > 0.0 && map.info.resolution > 0.0) {
+    // round, don't truncate: 1.2 / 0.05 is 23.999... in binary floating point,
+    // which would silently cost a cell of budget.
+    max_radius_cells = (int)std::lround(max_goal_relocation_dist / map.info.resolution);
+    if (max_radius_cells <= 0) max_radius_cells = 10;
+    if (max_radius_cells > 200)  // guard against a bogus (tiny) map resolution
+      max_radius_cells = 200;
+  }
+
   if (!allow_unknown_space_to_navigate(map.data[idx_goal])) {
-    while (loop_count < 10) { // TODO
+    // 1) cast one ray per azimuth, keep the first navigable cell on each
+    for (int i = 0; i < MAX_GOAL_UPDATE; i++) {
+      double angle = i * angle_increment;
+      for (int r = 1; r <= max_radius_cells; r++) {
+        int cell_y = static_cast<int>(std::round(_idx_goal_y + r * cos(angle)));
+        int cell_x = static_cast<int>(std::round(_idx_goal_x + r * sin(angle)));
 
-      double angle = count * angle_increment;
-      idx_goal_y =
-          static_cast<int>(std::round(_idx_goal_y + radius * cos(angle)));
-      idx_goal_x =
-          static_cast<int>(std::round(_idx_goal_x + radius * sin(angle)));
-      // idx_goal_y = _idx_goal_y + radius * cos(angle);
-      // idx_goal_x = _idx_goal_x + radius * sin(angle);
+        // the ray left the map; it will not come back, so drop this azimuth
+        if (
+          cell_x < 0 || cell_x >= (int)map.info.width || cell_y < 0 ||
+          cell_y >= (int)map.info.height)
+          break;
 
-      // double world_x =
-      //     idx_goal_x * map.info.resolution + map.info.origin.position.x;
-      // double world_y =
-      //     idx_goal_y * map.info.resolution + map.info.origin.position.y;
+        int cell_idx = cell_y * (int)map.info.width + cell_x;
+        if (!allow_unknown_space_to_navigate(map.data[cell_idx]))
+          continue;  // still inside the obstacle, keep marching. do not break
 
-      // std::cout << "[relocate] ring=" << loop_count << " count=" << count
-      //           << " radius(cell)=" << radius << " angle(rad)=" << angle
-      //           << " idx=(" << idx_goal_x << ", " << idx_goal_y << ")"
-      //           << " world=(" << world_x << ", " << world_y << ")";
-
-      // check if not inside of map
-      if (idx_goal_x >= 0 && idx_goal_x < map.info.width && idx_goal_y >= 0 &&
-          idx_goal_y < map.info.height) {
-
-        idx_goal = idx_goal_y * map.info.width + idx_goal_x;
-
-        if (allow_unknown_space_to_navigate(map.data[idx_goal])) {
-          double distance =
-              std::hypot(idx_goal_x - _idx_goal_x, idx_goal_y - _idx_goal_y);
-          if (distance < best_distance) {
-            best_distance = distance;
-            best_idx = idx_goal;
-          }
+        // 2) exit point found: score it by distance to the robot
+        double distance =
+          std::hypot((double)(cell_x - idx_start_x), (double)(cell_y - idx_start_y));
+        if (distance < best_distance) {
+          best_distance = distance;
+          best_idx = cell_idx;
         }
-      }
-
-      count++;
-      if (count == MAX_GOAL_UPDATE) {
-        count = 0;
-        // radius += 0.1;
-        radius += 1;
-        loop_count++;
+        break;  // this azimuth is done
       }
     }
+
     if (best_idx != -1) {
       idx_goal = best_idx;
       idx_goal_y = idx_goal / map.info.width;
       idx_goal_x = idx_goal % map.info.width;
-      std::cout << "PathPlanner.-> Goal updated to nearest free cell: "
-                << idx_goal_x << ", " << idx_goal_y << std::endl;
+      double moved_m =
+        std::hypot((double)(idx_goal_x - _idx_goal_x), (double)(idx_goal_y - _idx_goal_y)) *
+        map.info.resolution;
+      std::cout << "PathPlanner.-> Goal updated to nearest free cell: " << idx_goal_x << ", "
+                << idx_goal_y << " (max_radius_cells=" << max_radius_cells << ", "
+                << best_distance * map.info.resolution << " m from robot, moved " << moved_m
+                << " m from requested goal)" << std::endl;
     } else {
-      // reloaction faile: restore the original goal so the checks below, fix
-      // bug by r.k
+      // relocation failed: restore the original goal so the checks below and
+      // the stage-2 fallback still key off the requested point. fix bug by r.k
       idx_goal_x = _idx_goal_x;
       idx_goal_y = _idx_goal_y;
       idx_goal = idx_goal_y * map.info.width + idx_goal_x;
-      std::cout << "PathPlanner.-> Could not relocate to a free cell."
-                << std::endl;
+      std::cout << "PathPlanner.-> Could not relocate to a free cell "
+                   "(max_radius_cells="
+                << max_radius_cells << ")." << std::endl;
     }
   }
+  // ===== END stage-1 relocation (ray cast, nearest-to-ROBOT) =====
 
   // while (map.data[idx_goal] != 0 or loop_count < 4) {
 
@@ -139,8 +209,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     p.pose = start_pose;
     result_path.poses.push_back(p);
 
-    std::cout << "PathPlanner.-> Start and goal are the same cell."
-              << std::endl;
+    std::cout << "PathPlanner.-> Start and goal are the same cell." << std::endl;
     return true;
   }
 
@@ -154,8 +223,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     // search loop below, keyed off the original _idx_goal). With relocation
     // disabled keep the original fail-fast behavior. fix by r.k
     if (max_goal_relocation_dist <= 0.0) {
-      std::cout << "PathPlanner.->Goal point is inside non-free space!!!!"
-                << std::endl;
+      std::cout << "PathPlanner.->Goal point is inside non-free space!!!!" << std::endl;
       return false;
     }
     std::cout << "PathPlanner.-> Goal is inside non-free space; relocating to "
@@ -163,13 +231,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
               << max_goal_relocation_dist << " m)." << std::endl;
   }
   if (!allow_unknown_space_to_navigate(map.data[idx_start])) {
-    std::cout << "PathPlanner.->Start point is inside non-free space!!!!"
-              << std::endl;
+    std::cout << "PathPlanner.->Start point is inside non-free space!!!!" << std::endl;
     return false;
   }
 
   std::vector<Node> nodes;
-  Node *current_node;
+  Node * current_node;
   std::vector<int> node_neighbors;
   int steps = 0;
   nodes.resize(map.data.size());
@@ -178,8 +245,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   else
     node_neighbors.resize(4);
   std::priority_queue<Node *, std::vector<Node *>, CompareByFValue> open_list;
-  for (size_t i = 0; i < map.data.size(); i++)
-    nodes[i].index = i;
+  for (size_t i = 0; i < map.data.size(); i++) nodes[i].index = i;
 
   current_node = &nodes[idx_start];
   current_node->g_value = 0;
@@ -191,12 +257,10 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   // to it when the goal itself is unreachable, e.g. a person inside a furniture
   // outline. Distances are kept in cells (squared) for the comparison.
   int closest_idx = idx_start;
-  long long closest_d2 =
-      (long long)(idx_start_x - _idx_goal_x) * (idx_start_x - _idx_goal_x) +
-      (long long)(idx_start_y - _idx_goal_y) * (idx_start_y - _idx_goal_y);
+  long long closest_d2 = (long long)(idx_start_x - _idx_goal_x) * (idx_start_x - _idx_goal_x) +
+                         (long long)(idx_start_y - _idx_goal_y) * (idx_start_y - _idx_goal_y);
 
   while (!open_list.empty() && current_node->index != idx_goal) {
-
     current_node = open_list.top();
     open_list.pop();
     current_node->in_closed_list = true;
@@ -225,24 +289,24 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
 
     for (size_t i = 0; i < node_neighbors.size(); i++) {
       int ni = node_neighbors[i];
-      if (ni < 0 ||
-          ni >= static_cast<int>(map.data.size())) // check out of range
+      if (ni < 0 || ni >= static_cast<int>(map.data.size()))  // check out of range
         continue;
 
       int w = static_cast<int>(map.info.width);
-      if (std::abs((ni % w) - (current_node->index % w)) >
-          1) // reject horizontal wrap-around to the opposite side map edge, fix
-             // bug r.k
+      if (std::abs((ni % w) - (current_node->index % w)) > 1)  // reject horizontal wrap-around to
+                                                               // the opposite side map edge, fix
+                                                               // bug r.k
         continue;
 
-      if (!allow_unknown_space_to_navigate(map.data[node_neighbors[i]]) ||
-          nodes[node_neighbors[i]].in_closed_list)
+      if (
+        !allow_unknown_space_to_navigate(map.data[node_neighbors[i]]) ||
+        nodes[node_neighbors[i]].in_closed_list)
         continue;
 
-      Node *neighbor = &nodes[node_neighbors[i]];
+      Node * neighbor = &nodes[node_neighbors[i]];
       float delta_g = i < 4 ? 1.0 : 1.414213562;
-      float g_value = current_node->g_value + (i < 4 ? 1.0 : 1.414213562) +
-                      cost_map.data[node_neighbors[i]];
+      float g_value =
+        current_node->g_value + (i < 4 ? 1.0 : 1.414213562) + cost_map.data[node_neighbors[i]];
       float h_value;
       int h_value_x = node_neighbors[i] % map.info.width - idx_goal_x;
       int h_value_y = node_neighbors[i] / map.info.width - idx_goal_y;
@@ -264,8 +328,7 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     }
     steps++;
   }
-  std::cout << "PathPlanner.->A* Algorithm ended after " << steps << " steps"
-            << std::endl;
+  std::cout << "PathPlanner.->A* Algorithm ended after " << steps << " steps" << std::endl;
 
   if (current_node->index != idx_goal) {
     // Goal is unreachable (the open list was exhausted without reaching it),
@@ -276,9 +339,8 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     if (max_goal_relocation_dist > 0.0) {
       int cx = closest_idx % (int)map.info.width;
       int cy = closest_idx / (int)map.info.width;
-      double dist_m = std::hypot((double)(cx - _idx_goal_x),
-                                 (double)(cy - _idx_goal_y)) *
-                      map.info.resolution;
+      double dist_m =
+        std::hypot((double)(cx - _idx_goal_x), (double)(cy - _idx_goal_y)) * map.info.resolution;
       if (dist_m <= max_goal_relocation_dist) {
         std::cout << "PathPlanner.-> Goal unreachable (enclosed). Relocated to "
                      "nearest reachable cell "
@@ -288,13 +350,12 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
       } else {
         std::cout << "PathPlanner.-> Goal unreachable; nearest reachable cell "
                      "is "
-                  << dist_m << " m away (> " << max_goal_relocation_dist
-                  << " m). Giving up." << std::endl;
+                  << dist_m << " m away (> " << max_goal_relocation_dist << " m). Giving up."
+                  << std::endl;
         return false;
       }
     } else {
-      std::cout << "PathPlanner.-> current_node->index != idx_goal "
-                << std::endl;
+      std::cout << "PathPlanner.-> current_node->index != idx_goal " << std::endl;
       return false;
     }
   }
@@ -305,11 +366,9 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
   p.header.frame_id = "map";
   while (current_node->parent != NULL) {
     p.pose.position.x =
-        current_node->index % map.info.width * map.info.resolution +
-        map.info.origin.position.x;
+      current_node->index % map.info.width * map.info.resolution + map.info.origin.position.x;
     p.pose.position.y =
-        current_node->index / map.info.width * map.info.resolution +
-        map.info.origin.position.y;
+      current_node->index / map.info.width * map.info.resolution + map.info.origin.position.y;
     result_path.poses.insert(result_path.poses.begin(), p);
     current_node = current_node->parent;
   }
@@ -322,21 +381,18 @@ bool PathPlanner::AStar(const nav_msgs::msg::OccupancyGrid &map,
     result_path.poses.push_back(p);
   }
 
-  std::cout << "PathCalculator.->Resulting path by A* has "
-            << result_path.poses.size() << " points." << std::endl;
+  std::cout << "PathCalculator.->Resulting path by A* has " << result_path.poses.size()
+            << " points." << std::endl;
   return true;
 }
 
-nav_msgs::msg::Path PathPlanner::SmoothPath(const nav_msgs::msg::Path &path,
-                                            float weight_data,
-                                            float weight_smooth,
-                                            float tolerance) {
+nav_msgs::msg::Path PathPlanner::SmoothPath(
+  const nav_msgs::msg::Path & path, float weight_data, float weight_smooth, float tolerance)
+{
   nav_msgs::msg::Path newPath;
-  for (int i = 0; i < path.poses.size(); i++)
-    newPath.poses.push_back(path.poses[i]);
+  for (int i = 0; i < path.poses.size(); i++) newPath.poses.push_back(path.poses[i]);
   newPath.header.frame_id = "map";
-  if (path.poses.size() < 3)
-    return newPath;
+  if (path.poses.size() < 3) return newPath;
   int attempts = 0;
   tolerance *= path.poses.size();
   float change = tolerance + 1;
@@ -358,16 +414,16 @@ nav_msgs::msg::Path PathPlanner::SmoothPath(const nav_msgs::msg::Path &path,
       newPath.poses[i].pose.position = new_p;
     }
   }
-  std::cout << "PathCalculator.->Smoothing finished after " << attempts
-            << " attempts" << std::endl;
+  std::cout << "PathCalculator.->Smoothing finished after " << attempts << " attempts" << std::endl;
   return newPath;
 }
 
 // Lower the cost of every cell within `radius` [m] of `via` by `cost_bias`
 // (clamped at 0), making that region attractive to A*.
-void PathPlanner::addViaPointBias(nav_msgs::msg::OccupancyGrid &cost_map,
-                                  const geometry_msgs::msg::Pose &via,
-                                  double radius, int cost_bias) {
+void PathPlanner::addViaPointBias(
+  nav_msgs::msg::OccupancyGrid & cost_map, const geometry_msgs::msg::Pose & via, double radius,
+  int cost_bias)
+{
   int width = cost_map.info.width;
   int height = cost_map.info.height;
   double resolution = cost_map.info.resolution;
@@ -386,8 +442,8 @@ void PathPlanner::addViaPointBias(nav_msgs::msg::OccupancyGrid &cost_map,
         int idx = y * width + x;
         double dist = std::sqrt(dx * dx + dy * dy) * resolution;
         if (dist <= radius) {
-          cost_map.data[idx] = static_cast<int8_t>(
-              std::max(0, static_cast<int>(cost_map.data[idx]) - cost_bias));
+          cost_map.data[idx] =
+            static_cast<int8_t>(std::max(0, static_cast<int>(cost_map.data[idx]) - cost_bias));
         }
       }
     }
@@ -395,44 +451,43 @@ void PathPlanner::addViaPointBias(nav_msgs::msg::OccupancyGrid &cost_map,
 }
 
 bool PathPlanner::AStarWithViaPoints(
-    const nav_msgs::msg::OccupancyGrid &map,
-    const nav_msgs::msg::OccupancyGrid &cost_map,
-    const geometry_msgs::msg::Pose &start_pose,
-    const std::vector<geometry_msgs::msg::Pose> &via_poses,
-    const geometry_msgs::msg::Pose &goal_pose, bool diagonal_paths,
-    nav_msgs::msg::Path &result_path, bool use_online,
-    double max_goal_relocation_dist) {
+  const nav_msgs::msg::OccupancyGrid & map, const nav_msgs::msg::OccupancyGrid & cost_map,
+  const geometry_msgs::msg::Pose & start_pose,
+  const std::vector<geometry_msgs::msg::Pose> & via_poses,
+  const geometry_msgs::msg::Pose & goal_pose, bool diagonal_paths,
+  nav_msgs::msg::Path & result_path, bool use_online, double max_goal_relocation_dist)
+{
   result_path.poses.clear();
   nav_msgs::msg::Path partial_path;
   geometry_msgs::msg::Pose current_start = start_pose;
 
-  for (const auto &via : via_poses) {
+  for (const auto & via : via_poses) {
     nav_msgs::msg::OccupancyGrid biased_cost_map = cost_map;
     PathPlanner::addViaPointBias(biased_cost_map, via, 0.5,
-                                 400); // via costs radius, bias
+                                 400);  // via costs radius, bias
     partial_path.poses.clear();
-    if (!PathPlanner::AStar(map, biased_cost_map, current_start, via,
-                            diagonal_paths, partial_path, use_online))
+    if (!PathPlanner::AStar(
+          map, biased_cost_map, current_start, via, diagonal_paths, partial_path, use_online))
       return false;
-    result_path.poses.insert(result_path.poses.end(),
-                             partial_path.poses.begin(),
-                             partial_path.poses.end());
+    result_path.poses.insert(
+      result_path.poses.end(), partial_path.poses.begin(), partial_path.poses.end());
     current_start = via;
   }
 
   // Only the final goal segment may relocate to the nearest reachable cell;
   // via points are still planned strictly (passing 0.0 above).
   partial_path.poses.clear();
-  if (!PathPlanner::AStar(map, cost_map, current_start, goal_pose,
-                          diagonal_paths, partial_path, use_online,
-                          max_goal_relocation_dist))
+  if (!PathPlanner::AStar(
+        map, cost_map, current_start, goal_pose, diagonal_paths, partial_path, use_online,
+        max_goal_relocation_dist))
     return false;
-  result_path.poses.insert(result_path.poses.end(), partial_path.poses.begin(),
-                           partial_path.poses.end());
+  result_path.poses.insert(
+    result_path.poses.end(), partial_path.poses.begin(), partial_path.poses.end());
   return true;
 }
 
-Node::Node() {
+Node::Node()
+{
   this->index = -1;
   this->g_value = INT_MAX;
   this->f_value = INT_MAX;
@@ -441,4 +496,6 @@ Node::Node() {
   this->parent = NULL;
 }
 
-Node::~Node() {}
+Node::~Node()
+{
+}

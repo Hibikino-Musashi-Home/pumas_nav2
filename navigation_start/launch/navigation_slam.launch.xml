@@ -3,6 +3,13 @@
   <!-- Arguments -->
   <arg name="robot_name" default="$(env ROBOT_NAME)"/>
   <arg name="use_sim_time" default="false"/>
+  <!-- Applies to every node below. This used to be forwarded only to a single
+       node, so simple_move, mvn_pln, map_augmenter, path_planner and
+       potential_fields all ran on the wall clock while a simulator ran on
+       /clock. Their TF lookups still worked (they all use tf2::TimePointZero),
+       which hid the problem, but every timeout and every per-tick ramp was
+       then scaled by the simulator's real-time factor. -->
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
 
   <arg name="prohibition_map_file" default="$(find-pkg-share navigation_start)/maps/prohibition_maps/blank/map.yaml"/>
 
@@ -206,6 +213,7 @@
     <param name="online_behind_clearance" value="$(var online_behind_clearance)"/>
     <param name="diagonal_paths" value="True"/>
     <param name="escape_clear_radius" value="$(var escape_clear_radius)"/>
+    <param name="goal_relocation_radius" value="2.0"/> <!--[m] If the goal is unreachable (boxed in by obstacles), snap it to the nearest reachable cell and continue. Only within this distance of the requested goal (last resort). Disabled if <= 0-->
   </node>
 
   <node name="simple_move"  
