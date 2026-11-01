@@ -32,9 +32,12 @@
 
 // Standard
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <mutex>
+#include <thread>
 #include <vector>
 ///
 
@@ -202,6 +205,14 @@ public:
 
     RCLCPP_INFO(this->get_logger(),
                 "PotentialFields.-> PotentialFieldsNode is ready.");
+    display_thread_ = std::thread(&PotentialFieldsNode::display_loop, this);
+  }
+
+  ~PotentialFieldsNode() override {
+    display_stop_ = true;
+    if (display_thread_.joinable()) {
+      display_thread_.join();
+    }
   }
 
 private:
@@ -241,6 +252,67 @@ private:
 
   // Internal parameter values
   bool debug_, show_img_, use_pot_fields_, use_lidar_, use_cloud_;
+
+  // Latest-frame-wins handoff; never hold this mutex during HighGUI calls.
+  std::mutex display_mutex_;
+  cv::Mat display_mask_;
+  bool display_frame_ready_ = false;
+  std::atomic<bool> display_stop_{false};
+  std::thread display_thread_;
+
+  // All HighGUI calls belong to this thread, including window cleanup.
+  void display_loop() {
+    bool window_created = false;
+    bool display_failed = false;
+    try {
+      while (!display_stop_ && rclcpp::ok()) {
+        const auto next_frame = std::chrono::steady_clock::now() +
+                                std::chrono::milliseconds(33);
+        if (show_img_) {
+          cv::Mat mask;
+          {
+            std::lock_guard<std::mutex> lock(display_mutex_);
+            if (display_frame_ready_) {
+              mask = display_mask_;
+              display_mask_.release();
+              display_frame_ready_ = false;
+            }
+          }
+          if (!mask.empty()) {
+            if (!window_created) {
+              cv::namedWindow("POTENTIAL FIELDS OBSTACLE", cv::WINDOW_AUTOSIZE);
+              window_created = true;
+              RCLCPP_INFO(this->get_logger(),
+                          "PotentialFields display: window opened on display thread.");
+            }
+            cv::imshow("POTENTIAL FIELDS OBSTACLE", mask);
+          }
+        } else if (window_created) {
+          cv::destroyAllWindows();
+          window_created = false;
+        }
+        if (window_created) {
+          cv::waitKey(1);
+        }
+        std::this_thread::sleep_until(next_frame);
+      }
+    } catch (const cv::Exception &e) {
+      display_failed = true;
+      display_stop_ = true;
+      RCLCPP_WARN(this->get_logger(),
+                  "PotentialFields display disabled after OpenCV error; obstacle processing continues: %s",
+                  e.what());
+    }
+    try {
+      cv::destroyAllWindows();
+    } catch (const cv::Exception &e) {
+      if (!display_failed) {
+        RCLCPP_WARN(this->get_logger(),
+                    "PotentialFields display cleanup failed; obstacle processing continues: %s",
+                    e.what());
+      }
+    }
+  }
 
   float laser_min_x_, laser_max_x_, laser_min_y_, laser_max_y_, laser_min_z_,
       laser_max_z_;
@@ -826,9 +898,10 @@ private:
     rejection_force_y =
         (force_count > 0) ? rejection_force_y / force_count : 0.0;
 
-    if (show_img_) {
-      cv::imshow("POTENTIAL FIELDS OBSTACLE", mask);
-      cv::waitKey(30);
+    if (show_img_ && !display_stop_) {
+      std::lock_guard<std::mutex> lock(display_mutex_);
+      display_mask_ = mask.clone();
+      display_frame_ready_ = true;
     }
 
     if (debug_) {
